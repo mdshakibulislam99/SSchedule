@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with academic program, goals, energy level, and preferences",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "university": { "type": "string" },
+        "studyField": { "type": "string" },
+        "year": { "type": "string" },
+        "energyLevel": { "type": "number" },
+        "streak": { "type": "number" },
+        "goals": { "type": "array" },
+        "isOnboarded": { "type": "boolean" },
+        "preferredModel": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Student assignment, exam prep, or study task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "course": { "type": "string" },
+        "deadline": { "type": "string" },
+        "priority": { "type": "string" },
+        "estimatedMinutes": { "type": "number" },
+        "completed": { "type": "boolean" },
+        "subtasks": { "type": "array" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "course", "deadline", "priority", "estimatedMinutes", "completed"]
+    },
+    "ScheduleEvent": {
+      "title": "ScheduleEvent",
+      "description": "Calendar event, class, or study block",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "color": { "type": "string" },
+        "isCompleted": { "type": "boolean" },
+        "location": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "startTime", "endTime", "date", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document owned by the authenticated student"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Student tasks scoped to the user"
+    },
+    "/users/{userId}/schedule/{eventId}": {
+      "schema": "ScheduleEvent",
+      "description": "Student schedule events scoped to the user"
+    }
+  }
+}
