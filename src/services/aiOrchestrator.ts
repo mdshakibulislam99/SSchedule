@@ -9,6 +9,7 @@ import {
   StudyFile,
   ResearchItem,
 } from '../types';
+import { getLocalDateKey } from '../utils/dates';
 
 export interface AIExecutionContext {
   currentTask?: Task | null;
@@ -195,7 +196,8 @@ Respond warmly, concisely, and supportively. Keep responses focused on actionabl
 ${enableSearch ? 'Google Search Grounding is enabled. Provide factual, cited answers.' : ''}
 If the student asks to schedule a study session, move study time, or create tasks, output an action proposal at the end formatted strictly as:
 [ACTION: {"type": "add_schedule", "title": "...", "startTime": "15:00", "endTime": "16:30", "date": "2026-10-03"}]
-or [ACTION: {"type": "create_task", "title": "...", "courseCode": "CS101", "estimatedMinutes": 45}]`;
+or [ACTION: {"type": "create_task", "title": "...", "courseCode": "CS101", "deadline": "2026-10-04", "scheduledDate": "2026-10-03", "scheduledStartTime": "15:00", "recurrence": "none", "reminderEnabled": true, "reminderMinutes": 30, "estimatedMinutes": 45}].
+For repeating tasks, use recurrence "daily", "weekdays", or "weekly" and set scheduledDate to the first day. Use date-only deadlines in YYYY-MM-DD format. Only create an action when the student clearly asks you to add or schedule something.`;
 
     try {
       let rawText = '';
@@ -254,6 +256,42 @@ or [ACTION: {"type": "create_task", "title": "...", "courseCode": "CS101", "esti
     } catch (err: any) {
       console.warn('AI chat error, using intelligent local orchestrator:', err);
       // High-precision heuristic fallback with action proposal
+      const lowerMessage = userMessage.toLowerCase();
+      if (/(add|create|remind|schedule).*(task|assignment|todo|review)/.test(lowerMessage) || lowerMessage.includes('every day')) {
+        const isRecurring = lowerMessage.includes('daily') || lowerMessage.includes('every day');
+        const title = userMessage
+          .replace(/^(please\s+)?(add|create|remind me to|schedule)\s+(a\s+)?(daily\s+|every day\s+)?/i, '')
+          .replace(/^(task|todo|assignment)\s+(to\s+)?/i, '')
+          .replace(/\s+(for|on|at)\s+.*$/i, '')
+          .trim() || 'Study task';
+        const today = getLocalDateKey();
+        return {
+          text: `I prepared a ${isRecurring ? 'daily ' : ''}task for you. Confirm it below to add it to your plan.`,
+          actions: [
+            {
+              id: `act-${Date.now()}`,
+              type: 'create_task',
+              title,
+              description: `${isRecurring ? 'Repeats every day. ' : ''}Planned for today with a 30-minute reminder.`,
+              details: {
+                title,
+                courseCode: 'Other',
+                deadline: today,
+                scheduledDate: today,
+                scheduledStartTime: '18:00',
+                recurrence: isRecurring ? 'daily' : 'none',
+                reminderEnabled: true,
+                reminderMinutes: 30,
+                estimatedMinutes: 30,
+                priority: 'medium',
+              },
+              status: 'pending',
+            },
+          ],
+          suggestedChips: ['Add to my tasks', 'Change the time', 'Make it weekly'],
+        };
+      }
+
       if (userMessage.toLowerCase().includes('schedule') || userMessage.toLowerCase().includes('study')) {
         return {
           text: `I analyzed your calendar for tomorrow. You have a prime 2-hour focus gap from 3:00 PM – 5:00 PM right before your evening break. I can lock this in for your focus session.`,
@@ -267,7 +305,7 @@ or [ACTION: {"type": "create_task", "title": "...", "courseCode": "CS101", "esti
                 title: context.currentTask ? `${context.currentTask.title} Focus` : 'Deep Study Session',
                 startTime: '15:00',
                 endTime: '17:00',
-                date: '2026-10-03',
+                date: getLocalDateKey(),
                 type: 'study',
                 color: '#6366F1',
               },

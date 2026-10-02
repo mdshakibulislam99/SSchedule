@@ -32,21 +32,24 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({ onNavigate, unreadCount 
   ];
 
   return (
-    <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-3xl mx-auto flex flex-col space-y-6 pb-8 animate-fade-in text-slate-900 dark:text-white">
       <div className="flex items-center justify-between pt-2">
-        <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+        <div>
+          <p className="text-mobile-micro uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Workspace</p>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           More Features
-        </h1>
+          </h1>
+        </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {items.map((item) => {
           const Icon = item.icon;
           return (
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
-              className="w-full p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition-all text-left active:scale-[0.99]"
+              className="w-full p-4 rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-[0_8px_24px_rgba(15,23,42,0.04)] hover:-translate-y-0.5 hover:border-indigo-200 dark:hover:border-indigo-900 transition-all text-left active:scale-[0.99]"
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${item.color}`}>

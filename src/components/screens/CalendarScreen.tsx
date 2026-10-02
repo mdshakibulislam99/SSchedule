@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Sparkles, Clock, MapPin, Trash2, Edit3, X } from 'lucide-react';
 import { ScheduleEvent, ScheduleEventType } from '../../types';
+import { getLocalDateKey } from '../../utils/dates';
 
 interface CalendarScreenProps {
   schedule: ScheduleEvent[];
@@ -15,7 +16,9 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   onAddEvent,
   onDeleteEvent,
 }) => {
-  const [selectedDay, setSelectedDay] = useState<number>(2); // 2 = today (April 22 / matching image)
+  const today = new Date();
+  const todayKey = getLocalDateKey(today);
+  const [selectedDate, setSelectedDate] = useState(todayKey);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // New event form state
@@ -25,16 +28,21 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const [type, setType] = useState<ScheduleEventType>('study');
   const [location, setLocation] = useState('');
 
-  // April 2026 day strip matching Screen 10
-  const days = [
-    { dayName: 'Mon', date: 20 },
-    { dayName: 'Tue', date: 21 },
-    { dayName: 'Wed', date: 22, isToday: true },
-    { dayName: 'Thu', date: 23 },
-    { dayName: 'Fri', date: 24 },
-    { dayName: 'Sat', date: 25 },
-    { dayName: 'Sun', date: 26 },
-  ];
+  const weekStart = new Date(`${todayKey}T12:00:00`);
+  const dayOfWeek = weekStart.getDay();
+  weekStart.setDate(weekStart.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    const dateKey = getLocalDateKey(date);
+    return {
+      dayName: date.toLocaleDateString([], { weekday: 'short' }),
+      date: date.getDate(),
+      dateKey,
+      isToday: dateKey === todayKey,
+    };
+  });
+  const visibleSchedule = schedule.filter((event) => event.date === selectedDate);
 
   const handleSaveEvent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +61,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
       title: title.trim(),
       startTime,
       endTime,
-      date: '2026-10-02',
+      date: selectedDate,
       type,
       location: location.trim() || undefined,
       color: colors[type] || '#6366F1',
@@ -71,7 +79,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Schedule</span>
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
-            <span>April 2026</span>
+            <span>{new Date(`${selectedDate}T12:00:00`).toLocaleDateString([], { month: 'long', year: 'numeric' })}</span>
             <ChevronRight className="w-4 h-4 text-slate-400" />
           </h1>
         </div>
@@ -99,11 +107,11 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
       {/* Week Day Strip (Matching Screen 10 in reference image) */}
       <div className="flex items-center justify-between p-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
         {days.map((item, idx) => {
-          const isSelected = selectedDay === idx;
+          const isSelected = selectedDate === item.dateKey;
           return (
             <button
-              key={item.date}
-              onClick={() => setSelectedDay(idx)}
+              key={item.dateKey}
+              onClick={() => setSelectedDate(item.dateKey)}
               className={`flex flex-col items-center justify-center py-2 px-2.5 rounded-xl transition-all ${
                 isSelected
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
@@ -124,11 +132,11 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
       <div className="space-y-3 pt-1">
         <div className="flex items-center justify-between text-xs text-slate-500 font-semibold px-1">
           <span>Timeline View</span>
-          <span>{schedule.length} events scheduled</span>
+          <span>{visibleSchedule.length} events scheduled</span>
         </div>
 
         <div className="space-y-2.5">
-          {schedule.map((event) => (
+          {visibleSchedule.map((event) => (
             <div
               key={event.id}
               className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700 transition-all"
@@ -170,9 +178,9 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
 
       {/* Add Event Modal Sheet */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-16">
           <div
-            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up"
+            className="relative z-[61] w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up max-h-[calc(100dvh-4rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-4" />

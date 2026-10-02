@@ -13,13 +13,15 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Task, SubTask } from '../../types';
+import { getLocalDateKey } from '../../utils/dates';
 
 interface TaskDetailScreenProps {
   task: Task;
   onBack: () => void;
   onStartFocus: (task: Task) => void;
   onAskAI: (task: Task) => void;
-  onAddToSchedule: (task: Task) => void;
+  onToggleTask: (taskId: string) => void;
+  onAddToSchedule: (task: Task, date: string, startTime: string, endTime: string) => void;
   onToggleSubtask: (taskId: string, subtaskId: string) => void;
   onAddSubtask: (taskId: string, title: string) => void;
   onRegenerateAIPlan: (task: Task) => Promise<void>;
@@ -31,6 +33,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
   onBack,
   onStartFocus,
   onAskAI,
+  onToggleTask,
   onAddToSchedule,
   onToggleSubtask,
   onAddSubtask,
@@ -39,10 +42,26 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 }) => {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState(task.scheduledDate || getLocalDateKey());
+  const [scheduleStartTime, setScheduleStartTime] = useState(task.scheduledStartTime || '15:00');
+  const [scheduleEndTime, setScheduleEndTime] = useState('16:00');
 
   const completedCount = task.subtasks.filter((s) => s.completed).length;
-  const progressPercent =
-    task.subtasks.length > 0 ? Math.round((completedCount / task.subtasks.length) * 100) : task.progress;
+  const progressPercent = task.completed
+    ? 100
+    : task.subtasks.length > 0
+    ? Math.round((completedCount / task.subtasks.length) * 100)
+    : task.progress;
+  const taskArea = task.category || (task.courseCode ? 'academic' : 'personal');
+  const recurrenceLabel =
+    task.recurrence === 'daily'
+      ? 'Daily'
+      : task.recurrence === 'weekdays'
+      ? 'Weekdays'
+      : task.recurrence === 'weekly'
+      ? 'Weekly'
+      : null;
 
   const handleRegenerate = async () => {
     setIsRegenerating(true);
@@ -69,8 +88,10 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 
         <button
           onClick={() => {
-            onDeleteTask(task.id);
-            onBack();
+            if (window.confirm(`Delete "${task.title}"?`)) {
+              onDeleteTask(task.id);
+              onBack();
+            }
           }}
           className="p-2 text-slate-400 hover:text-rose-500 rounded-full transition-colors"
           title="Delete Task"
@@ -81,18 +102,33 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 
       {/* Task Header Information */}
       <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
-        <div className="flex items-center gap-2.5">
-          <div
-            className="px-2.5 py-1 rounded-lg text-white text-xs font-bold shadow-sm"
-            style={{ backgroundColor: task.courseColor }}
-          >
-            {task.courseCode}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+            <div
+              className="px-2.5 py-1 rounded-lg text-white text-xs font-bold shadow-sm"
+              style={{ backgroundColor: task.courseColor }}
+            >
+              {task.courseCode || 'Personal'}
+            </div>
+            <span className="text-xs font-bold uppercase text-rose-500">{task.priority} Priority</span>
+            <span className="text-slate-400">·</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Due {new Date(task.deadline).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
           </div>
-          <span className="text-xs font-bold uppercase text-rose-500">{task.priority} Priority</span>
-          <span className="text-slate-400">·</span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Due {new Date(task.deadline).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-          </span>
+
+          <button
+            onClick={() => onToggleTask(task.id)}
+            className={`shrink-0 p-2 rounded-xl border transition-colors ${
+              task.completed
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-300'
+                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-emerald-600 hover:border-emerald-300'
+            }`}
+            aria-label={task.completed ? 'Mark as active' : 'Mark complete'}
+            title={task.completed ? 'Mark as active' : 'Mark complete'}
+          >
+            <CheckCircle2 className="w-5 h-5" />
+          </button>
         </div>
 
         <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
@@ -104,6 +140,28 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
             {task.description}
           </p>
         )}
+
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+          <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 capitalize">{taskArea}</span>
+          <span>{task.type}</span>
+          <span>·</span>
+          <span>{task.estimatedMinutes} min</span>
+          {recurrenceLabel && (
+            <>
+              <span>·</span>
+              <span>{recurrenceLabel}</span>
+            </>
+          )}
+          {task.scheduledDate && (
+            <>
+              <span>·</span>
+              <span>
+                Planned {new Date(`${task.scheduledDate}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                {task.scheduledStartTime ? ` at ${task.scheduledStartTime}` : ''}
+              </span>
+            </>
+          )}
+        </div>
 
         {/* Progress Bar */}
         <div className="space-y-1.5 pt-2">
@@ -167,10 +225,16 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 
         {/* Subtasks List */}
         <div className="space-y-2">
-          {task.subtasks.map((sub, index) => (
-            <div
+          {task.subtasks.length === 0 ? (
+            <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-dashed border-indigo-200 dark:border-indigo-900 text-xs text-slate-500 dark:text-slate-400">
+              No steps yet. Add one below or refresh the AI plan.
+            </div>
+          ) : task.subtasks.map((sub, index) => (
+            <button
+              type="button"
               key={sub.id}
               onClick={() => onToggleSubtask(task.id, sub.id)}
+              aria-pressed={sub.completed}
               className="flex items-center justify-between p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs cursor-pointer active:scale-[0.99] transition-all"
             >
               <div className="flex items-center gap-2.5 min-w-0">
@@ -193,7 +257,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
                   {sub.estimatedMinutes}m
                 </span>
               )}
-            </div>
+            </button>
           ))}
         </div>
 
@@ -227,12 +291,67 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 
         {/* Schedule button */}
         <button
-          onClick={() => onAddToSchedule(task)}
+          onClick={() => setIsScheduleOpen((open) => !open)}
           className="w-full py-2.5 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 font-semibold text-xs flex items-center justify-center gap-2 transition-colors"
         >
           <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-          <span>Add Study Sessions to Schedule</span>
+          <span>{isScheduleOpen ? 'Hide scheduler' : 'Schedule this task'}</span>
         </button>
+
+        {isScheduleOpen && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onAddToSchedule(task, scheduleDate, scheduleStartTime, scheduleEndTime);
+              setIsScheduleOpen(false);
+            }}
+            className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-3"
+          >
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white">Choose a calendar slot</h4>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                This adds a focused work block. Your deadline and reminder stay unchanged.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-3">
+                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={scheduleDate}
+                  onChange={(event) => setScheduleDate(event.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div className="col-span-1">
+                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">Starts</label>
+                <input
+                  type="time"
+                  value={scheduleStartTime}
+                  onChange={(event) => setScheduleStartTime(event.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">Ends</label>
+                <input
+                  type="time"
+                  value={scheduleEndTime}
+                  onChange={(event) => setScheduleEndTime(event.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors"
+            >
+              Add to calendar
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

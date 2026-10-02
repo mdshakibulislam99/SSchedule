@@ -1,6 +1,20 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    color-scheme: light;
+    --app-background: #f5f7fb;
+    --app-surface: #ffffff;
+    --app-border: #e2e8f0;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --app-background: #0f172a;
+    --app-surface: #111c2e;
+    --app-border: #243247;
+  }
+
   html, body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent;
@@ -8,10 +22,20 @@
     font-size: 16px;
     line-height: 24px;
     color: #0f172a;
+    background: var(--app-background);
   }
   
   .dark body {
     color: #f8fafc;
+  }
+
+  button, input, textarea, select {
+    font: inherit;
+  }
+
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
   }
 
   .font-mono {

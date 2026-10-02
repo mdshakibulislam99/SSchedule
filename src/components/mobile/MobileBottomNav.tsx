@@ -23,8 +23,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   ];
 
   return (
-    <div className="w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80 py-1.5 px-3 z-40">
-      <div className="flex items-center justify-around w-full">
+    <div className="w-full bg-white/90 dark:bg-slate-950/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800/80 py-2 px-2 z-40">
+      <div className="flex items-center justify-around w-full max-w-2xl mx-auto">
         {tabs.map((tab) => {
           const isActive = currentTab === tab.id;
           const Icon = tab.icon;
@@ -38,16 +38,16 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 title="StudyAI Assistant"
               >
                 <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-md ${
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                     isActive
-                      ? 'bg-gradient-to-tr from-indigo-600 to-purple-500 text-white shadow-indigo-500/40 ring-2 ring-indigo-400/40 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
-                      : 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   <Icon className="w-5 h-5 fill-current" />
                 </div>
                 <span
-                  className={`text-[10px] font-bold mt-1 tracking-tight ${
+                    className={`text-[10px] font-bold mt-1 tracking-tight ${
                     isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'
                   }`}
                 >
@@ -76,7 +76,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 )}
               </div>
               <span
-                className={`text-[10px] font-semibold mt-1 tracking-tight ${
+                      className={`text-[10px] font-semibold mt-1 tracking-tight ${
                   isActive
                     ? 'text-indigo-600 dark:text-indigo-400'
                     : 'text-slate-500 dark:text-slate-400'

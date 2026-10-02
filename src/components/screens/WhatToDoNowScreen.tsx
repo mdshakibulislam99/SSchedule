@@ -61,7 +61,7 @@ export const WhatToDoNowScreen: React.FC<WhatToDoNowScreenProps> = ({
               className="w-12 h-12 rounded-2xl flex items-center justify-center text-white text-sm font-bold shadow-md"
               style={{ backgroundColor: mainTask.courseColor }}
             >
-              {mainTask.courseCode}
+              {mainTask.courseCode || 'Personal'}
             </div>
             <div>
               <div className="flex items-center gap-2">

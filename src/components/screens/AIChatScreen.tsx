@@ -14,8 +14,9 @@ import {
   Globe,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
-import { AIMessage, AIActionProposal, Task, StudyFile, AIProviderConfig } from '../../types';
+import { AIMessage, AIActionProposal, Task, StudyFile, AIProviderConfig, ScheduleEvent, UserProfile } from '../../types';
 import { AIOrchestrator, AIExecutionContext } from '../../services/aiOrchestrator';
+import { getLocalDateKey } from '../../utils/dates';
 
 interface AIChatScreenProps {
   contextTask?: Task | null;
@@ -25,6 +26,8 @@ interface AIChatScreenProps {
   onExecuteAction: (action: AIActionProposal) => void;
   config: AIProviderConfig;
   allTasks: Task[];
+  schedule?: ScheduleEvent[];
+  user?: UserProfile;
 }
 
 export const AIChatScreen: React.FC<AIChatScreenProps> = ({
@@ -35,6 +38,8 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   onExecuteAction,
   config,
   allTasks,
+  schedule = [],
+  user,
 }) => {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
@@ -60,7 +65,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
             title: contextTask ? `${contextTask.title} Study` : 'CS101 Focus',
             startTime: '15:00',
             endTime: '16:00',
-            date: '2026-10-02',
+            date: getLocalDateKey(),
             type: 'study',
             color: '#6366F1',
           },
@@ -108,6 +113,9 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         currentTask: contextTask || null,
         currentFile: contextFile || null,
         tasks: allTasks,
+        schedule,
+        user,
+        energyLevel: user?.energyLevel,
       };
 
       const aiResponse = await AIOrchestrator.chatWithContext(text, messages, context, config, enableSearch);
@@ -149,7 +157,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   };
 
   return (
-    <div className="w-full flex-1 flex flex-col h-full animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col h-full animate-fade-in text-slate-900 dark:text-white">
       {/* Chat Top Header (Matching Screen 11) */}
       <div className="flex items-center justify-between pb-3 border-b border-slate-200/80 dark:border-slate-800">
         <div className="flex items-center gap-2.5">
@@ -217,10 +225,10 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                 {!isUser && <MascotAvatar size={28} className="shrink-0 mb-1" />}
 
                 <div
-                  className={`p-3.5 rounded-2xl text-xs sm:text-sm leading-relaxed ${
+                    className={`p-3.5 rounded-[1.25rem] text-xs sm:text-sm leading-relaxed ${
                     isUser
-                      ? 'bg-indigo-600 text-white rounded-br-sm shadow-md shadow-indigo-600/20'
-                      : 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-sm shadow-sm'
+                      ? 'bg-indigo-600 text-white rounded-br-sm shadow-sm'
+                      : 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-sm shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
                   }`}
                 >
                   {msg.text}
@@ -233,11 +241,11 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                   {msg.actions.map((action) => (
                     <div
                       key={action.id}
-                      className="p-3.5 rounded-2xl bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800/80 space-y-2"
+                      className="p-4 rounded-[1.25rem] bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2"
                     >
                       <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300 font-bold text-xs">
                         <Calendar className="w-4 h-4 text-indigo-600" />
-                        <span>{action.title}</span>
+                        <span className="text-slate-800 dark:text-slate-100">{action.title}</span>
                       </div>
                       <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug">
                         {action.description}
@@ -247,7 +255,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                         {action.status === 'confirmed' ? (
                           <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>Added to Schedule</span>
+                            <span>{action.type === 'create_task' ? 'Added to Tasks' : 'Added to Schedule'}</span>
                           </div>
                         ) : (
                           <>
@@ -255,7 +263,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                               onClick={() => handleActionConfirm(action)}
                               className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm"
                             >
-                              Add to Schedule
+                              {action.type === 'create_task' ? 'Add to Tasks' : 'Add to Schedule'}
                             </button>
                             <button
                               onClick={() => handleSend('Suggest another time for this study session')}
@@ -300,7 +308,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
 
       {/* Input Bar (Matching Screen 11) */}
       <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">
-        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-2 p-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <button
             onClick={onOpenVoiceModal}
             className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-full transition-colors"

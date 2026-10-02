@@ -99,7 +99,7 @@ export const StudySessionScreen: React.FC<StudySessionScreenProps> = ({
           {task.title}
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          {task.courseCode} · Due {new Date(task.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+          {task.courseCode || 'Personal'} · Due {new Date(task.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })}
         </p>
       </div>
 

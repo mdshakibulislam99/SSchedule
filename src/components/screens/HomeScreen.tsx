@@ -18,6 +18,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { UserProfile, Task, ScheduleEvent, NotificationItem } from '../../types';
+import { getLocalDateKey } from '../../utils/dates';
 
 interface HomeScreenProps {
   user: UserProfile;
@@ -26,7 +27,8 @@ interface HomeScreenProps {
   notifications: NotificationItem[];
   onOpenWhatToDoNow: () => void;
   onOpenAIChat: (initialQuery?: string) => void;
-  onOpenTasks: () => void;
+  onOpenTasks: (courseCode?: string) => void;
+  onOpenCourse: (courseCode: string) => void;
   onOpenCalendar: () => void;
   onOpenNotifications: () => void;
   onOpenSideMenu: () => void;
@@ -45,6 +47,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenWhatToDoNow,
   onOpenAIChat,
   onOpenTasks,
+  onOpenCourse,
   onOpenCalendar,
   onOpenNotifications,
   onOpenSideMenu,
@@ -58,11 +61,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   // Active top recommended task
   const activeTasks = tasks.filter((t) => !t.completed);
+  const todayKey = getLocalDateKey();
+  const isTaskForToday = (task: Task) => {
+    if (task.scheduledDate === todayKey) return true;
+    if (task.recurrence === 'daily' && task.scheduledDate && task.scheduledDate <= todayKey) return true;
+    if (task.recurrence === 'weekdays' && task.scheduledDate && task.scheduledDate <= todayKey) {
+      const day = new Date(`${todayKey}T12:00:00`).getDay();
+      return day > 0 && day < 6;
+    }
+    if (task.recurrence === 'weekly' && task.scheduledDate) {
+      return new Date(`${task.scheduledDate}T12:00:00`).getDay() === new Date(`${todayKey}T12:00:00`).getDay();
+    }
+    return getLocalDateKey(new Date(task.deadline)) === todayKey;
+  };
+  const todayTasks = activeTasks.filter(isTaskForToday);
+  const todaySchedule = schedule
+    .filter((event) => event.date === todayKey)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
   const primaryTask =
     activeTasks.find((t) => t.priority === 'high') || activeTasks[0] || tasks[0];
 
   // Unique courses derived from tasks
-  const courseCodes = Array.from(new Set(tasks.map((t) => t.courseCode)));
+  const courseCodes = Array.from(new Set(tasks.map((t) => t.courseCode).filter(Boolean))) as string[];
   const courseWorkloads = courseCodes.map((code) => {
     const courseTasks = tasks.filter((t) => t.courseCode === code);
     const completed = courseTasks.filter((t) => t.completed).length;
@@ -86,12 +106,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   ];
 
   // Next upcoming event from schedule
-  const nextEvent = schedule[0];
+  const nextEvent = todaySchedule[0];
+  const upcomingTasks = [...activeTasks]
+    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+    .slice(0, 4);
 
   return (
-    <div className="w-full flex flex-col space-y-6 pb-6 text-slate-900 dark:text-slate-100 font-sans">
+    <div className="w-full max-w-6xl mx-auto flex flex-col gap-7 sm:gap-8 pb-8 px-1 sm:px-2 text-slate-900 dark:text-slate-100 font-sans">
       {/* 1. NATIVE TOP APP BAR */}
-      <header className="flex items-center justify-between pt-1 pb-1">
+      <header className="flex items-center justify-between pt-2 pb-0">
         <div className="flex items-center gap-3">
           <button
             onClick={onOpenSideMenu}
@@ -167,7 +190,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                 />
               </svg>
-              <span>Sync</span>
+              <span>Connect Google</span>
             </button>
           )}
 
@@ -185,28 +208,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </header>
 
       {/* 2. KEEP EVERYTHING IN TRACK — MOMENTUM COMMAND CENTER */}
-      <section className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {/* Metric 1: Tasks Due Today */}
         <div
-          onClick={onOpenTasks}
-          className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 shadow-sm cursor-pointer hover:border-indigo-300 transition-all active:scale-[0.98]"
+          onClick={() => onOpenTasks()}
+          className="group p-4 min-h-[112px] rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.04)] cursor-pointer hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md transition-all active:scale-[0.98]"
         >
           <div className="flex items-center justify-between text-mobile-small text-slate-500 dark:text-slate-400 mb-1">
             <span>Due Today</span>
             <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
           </div>
           <div className="text-mobile-h2 font-extrabold text-slate-900 dark:text-white">
-            {activeTasks.length} <span className="text-mobile-small text-slate-400 font-normal">tasks</span>
+            {todayTasks.length} <span className="text-mobile-small text-slate-400 font-normal">tasks</span>
           </div>
           <p className="text-mobile-micro text-slate-500 dark:text-slate-400 mt-1 truncate">
-            {primaryTask ? `Next: ${primaryTask.courseCode}` : 'All caught up'}
+            {primaryTask ? `Next: ${primaryTask.courseCode || 'Personal'}` : 'All caught up'}
           </p>
         </div>
 
         {/* Metric 2: Next Event */}
         <div
           onClick={onOpenCalendar}
-          className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 shadow-sm cursor-pointer hover:border-indigo-300 transition-all active:scale-[0.98]"
+          className="group p-4 min-h-[112px] rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.04)] cursor-pointer hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md transition-all active:scale-[0.98]"
         >
           <div className="flex items-center justify-between text-mobile-small text-slate-500 dark:text-slate-400 mb-1">
             <span>Next Up</span>
@@ -223,7 +246,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* Metric 3: Focus Minutes */}
         <div
           onClick={onOpenWhatToDoNow}
-          className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 shadow-sm cursor-pointer hover:border-indigo-300 transition-all active:scale-[0.98]"
+          className="group p-4 min-h-[112px] rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.04)] cursor-pointer hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md transition-all active:scale-[0.98]"
         >
           <div className="flex items-center justify-between text-mobile-small text-slate-500 dark:text-slate-400 mb-1">
             <span>Study Goal</span>
@@ -238,7 +261,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         {/* Metric 4: Streak */}
-        <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 shadow-sm">
+        <div className="p-4 min-h-[112px] rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
           <div className="flex items-center justify-between text-mobile-small text-slate-500 dark:text-slate-400 mb-1">
             <span>Streak</span>
             <Flame className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
@@ -253,11 +276,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </section>
 
       {/* 3. HERO: "WHAT SHOULD I DO RIGHT NOW?" ACTION DISPATCH */}
-      <section className="relative overflow-hidden rounded-3xl bg-slate-900 dark:bg-slate-850 text-white p-5 border border-slate-800 shadow-md">
-        <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+      <section className="relative overflow-hidden rounded-[2rem] bg-[#152238] text-white p-6 sm:p-8 border border-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
+        <div className="absolute -top-20 -right-16 w-64 h-64 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col space-y-3.5">
-          <div className="flex items-center justify-between">
+        <div className="relative z-10 flex flex-col gap-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-mobile-micro font-extrabold tracking-wide uppercase text-indigo-300">
               <Sparkles className="w-3 h-3 text-indigo-300" />
               <span>Recommended Focus</span>
@@ -269,7 +292,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
 
           <div>
-            <h2 className="text-mobile-h2 text-white leading-snug">
+            <h2 className="text-mobile-h1 text-white leading-tight max-w-2xl">
               {primaryTask ? primaryTask.title : 'Review Course Notes'}
             </h2>
             <p className="text-mobile-compact text-slate-300 mt-1 line-clamp-2 leading-relaxed">
@@ -279,10 +302,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
 
           {/* Quick Action Buttons */}
-          <div className="flex items-center gap-2.5 pt-1">
+          <div className="flex items-center gap-3 pt-1">
             <button
-              onClick={() => onSelectTask(primaryTask)}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-mobile-compact-bold shadow-md shadow-indigo-600/30 transition-all active:scale-95"
+              onClick={() => {
+                if (primaryTask) {
+                  if (onStartFocusTimer) onStartFocusTimer(primaryTask);
+                  else onSelectTask(primaryTask);
+                } else {
+                  onOpenWhatToDoNow();
+                }
+              }}
+              className="flex-1 min-h-11 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-mobile-compact-bold shadow-md shadow-indigo-600/30 transition-all active:scale-95"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
               <span>Start 25m Focus Session</span>
@@ -290,7 +320,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             <button
               onClick={onOpenWhatToDoNow}
-              className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors active:scale-95"
+              className="p-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 transition-colors active:scale-95"
               title="View full AI analysis"
             >
               <ArrowRight className="w-4 h-4" />
@@ -300,8 +330,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </section>
 
       {/* 4. QUICK ENERGY CHECK-IN */}
-      <section className="rounded-2xl p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90">
-        <div className="flex items-center justify-between mb-2">
+      <section className="rounded-[1.5rem] p-4 sm:p-5 bg-slate-100/70 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-1.5 text-mobile-small font-bold text-slate-700 dark:text-slate-300">
             <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
             <span>Energy Check-in</span>
@@ -311,7 +341,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-5 gap-2">
           {energyLabels.map((item) => {
             const isSelected = user.energyLevel === item.level;
             return (
@@ -320,8 +350,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 onClick={() => onUpdateEnergy(item.level)}
                 className={`py-2 px-1 rounded-xl text-center transition-all ${
                   isSelected
-                    ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/30 font-bold'
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 font-medium'
+                    ? 'bg-indigo-600 text-white shadow-md ring-2 ring-indigo-500/25 font-bold'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 font-medium border border-slate-200/70 dark:border-slate-700'
                 }`}
               >
                 <div className="text-sm">{item.icon}</div>
@@ -334,25 +364,25 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
       {/* 5. COURSE WORKLOADS STRIP */}
       {courseWorkloads.length > 0 && (
-        <section className="space-y-2.5">
+        <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-mobile-micro font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Active Courses ({courseWorkloads.length})
             </h3>
             <button
-              onClick={onOpenTasks}
+              onClick={() => onOpenTasks()}
               className="text-mobile-small font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
             >
               All tasks
             </button>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {courseWorkloads.map((cw) => (
               <div
                 key={cw.code}
-                onClick={onOpenTasks}
-                className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+                onClick={() => onOpenCourse(cw.code)}
+                className="p-4 rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.04)] cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 transition-all"
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span
@@ -381,7 +411,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       )}
 
       {/* 6. TODAY'S CHRONOLOGICAL SCHEDULE */}
-      <section className="space-y-3">
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-mobile-h3 text-slate-900 dark:text-white">Today's Schedule</h3>
           <button
@@ -392,12 +422,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </button>
         </div>
 
-        <div className="space-y-2">
-          {schedule.slice(0, 4).map((item) => (
+        <div className="space-y-2.5">
+          {todaySchedule.length === 0 ? (
+            <div className="p-4 rounded-[1.25rem] border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+              No calendar events planned for today.
+            </div>
+          ) : todaySchedule.slice(0, 4).map((item) => (
             <div
               key={item.id}
               onClick={onOpenCalendar}
-              className="flex items-center justify-between p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 hover:border-indigo-300 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
+              className="flex items-center justify-between p-4 rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer active:scale-[0.99]"
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div
@@ -425,30 +459,30 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </section>
 
       {/* 7. UPCOMING DEADLINES */}
-      <section className="space-y-3">
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-mobile-h3 text-slate-900 dark:text-white">Upcoming Deadlines</h3>
           <button
-            onClick={onOpenTasks}
+            onClick={() => onOpenTasks()}
             className="text-mobile-small font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
           >
             Manage tasks →
           </button>
         </div>
 
-        <div className="space-y-2">
-          {activeTasks.slice(0, 4).map((task) => (
+        <div className="space-y-2.5">
+          {upcomingTasks.map((task) => (
             <div
               key={task.id}
               onClick={() => onSelectTask(task)}
-              className="flex items-center justify-between p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800/90 hover:border-indigo-300 transition-all cursor-pointer shadow-sm active:scale-[0.99]"
+              className="flex items-center justify-between p-4 rounded-[1.25rem] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer active:scale-[0.99]"
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div
                   className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-mobile-micro font-extrabold shrink-0 shadow-sm"
                   style={{ backgroundColor: task.courseColor }}
                 >
-                  {task.courseCode}
+                  {task.courseCode || 'Personal'}
                 </div>
                 <div className="min-w-0">
                   <div className="text-mobile-compact-bold text-slate-900 dark:text-white truncate">

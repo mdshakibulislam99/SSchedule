@@ -48,7 +48,7 @@ export const QuickActionsSheet: React.FC<QuickActionsSheetProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
       <div
-        className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up"
+        className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[2rem] border-t border-slate-200 dark:border-slate-800 p-6 shadow-2xl animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Grab Handle */}
@@ -76,7 +76,7 @@ export const QuickActionsSheet: React.FC<QuickActionsSheetProps> = ({
                   onClose();
                   onAction(act.id);
                 }}
-                className="w-full flex items-center gap-3.5 p-3 rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left active:scale-[0.99]"
+                className="w-full flex items-center gap-3.5 p-4 rounded-[1.25rem] border border-slate-200/70 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left active:scale-[0.99]"
               >
                 <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${act.color}`}>
                   <Icon className="w-5 h-5" />

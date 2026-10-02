@@ -1,5 +1,12 @@
 export type PriorityLevel = 'high' | 'medium' | 'low';
-export type TaskType = 'assignment' | 'exam' | 'project' | 'reading' | 'other';
+export type TaskType = 'assignment' | 'exam' | 'project' | 'reading' | 'habit' | 'personal' | 'admin' | 'health' | 'other';
+export type TaskCategory = 'academic' | 'personal' | 'health' | 'admin' | 'work' | 'other';
+export type TaskRecurrence = 'none' | 'daily' | 'weekdays' | 'weekly';
+
+export interface TaskReminder {
+  enabled: boolean;
+  minutesBefore: number;
+}
 
 export interface UserProfile {
   id: string;
@@ -24,7 +31,11 @@ export interface Course {
   name: string;
   color: string;
   professor?: string;
+  term?: string;
+  credits?: number;
   schedulePattern?: string;
+  materialsFileIds: string[];
+  studyPlan: string[];
 }
 
 export interface SubTask {
@@ -39,10 +50,15 @@ export interface Task {
   id: string;
   title: string;
   description?: string;
-  courseCode: string;
+  courseCode?: string;
   courseColor: string;
+  category?: TaskCategory;
   type: TaskType;
   deadline: string; // ISO string
+  scheduledDate?: string; // YYYY-MM-DD; date the student plans to work on it
+  scheduledStartTime?: string; // HH:mm; optional focus/reminder time
+  recurrence?: TaskRecurrence;
+  reminder?: TaskReminder;
   estimatedMinutes: number;
   priority: PriorityLevel;
   progress: number; // 0 - 100

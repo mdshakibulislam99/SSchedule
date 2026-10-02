@@ -25,6 +25,7 @@ import { HomeScreen } from './components/screens/HomeScreen';
 import { WhatToDoNowScreen } from './components/screens/WhatToDoNowScreen';
 import { TasksScreen } from './components/screens/TasksScreen';
 import { TaskDetailScreen } from './components/screens/TaskDetailScreen';
+import { CourseWorkspaceScreen } from './components/screens/CourseWorkspaceScreen';
 import { CalendarScreen } from './components/screens/CalendarScreen';
 import { AIWeekPlannerModal } from './components/screens/AIWeekPlannerModal';
 import { AIChatScreen } from './components/screens/AIChatScreen';
@@ -55,10 +56,19 @@ import {
   NotificationItem,
   ProgressMetrics,
   AIActionProposal,
+  Course,
 } from './types';
 import { StudyStorage } from './utils/storage';
 import { playChime } from './utils/audio';
 import { AIOrchestrator } from './services/aiOrchestrator';
+import { getLocalDateKey } from './utils/dates';
+
+function getEndTime(startTime: string, durationMinutes: number): string {
+  const [hours, minutes] = startTime.split(':').map(Number);
+  const totalMinutes = hours * 60 + minutes + durationMinutes;
+  const normalizedMinutes = totalMinutes % (24 * 60);
+  return `${String(Math.floor(normalizedMinutes / 60)).padStart(2, '0')}:${String(normalizedMinutes % 60).padStart(2, '0')}`;
+}
 
 export default function App() {
   // Theme state
@@ -69,6 +79,7 @@ export default function App() {
 
   // Core Persistent State
   const [user, setUser] = useState<UserProfile>(() => StudyStorage.getUser());
+  const [courses, setCourses] = useState<Course[]>(() => StudyStorage.getCourses());
   const [tasks, setTasks] = useState<Task[]>(() => StudyStorage.getTasks());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>(() => StudyStorage.getSchedule());
   const [goals, setGoals] = useState<Goal[]>(() => StudyStorage.getGoals());
@@ -84,6 +95,8 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
   const [activeSubScreen, setActiveSubScreen] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(tasks[0] || null);
+  const [taskCourseFilter, setTaskCourseFilter] = useState<string | undefined>();
+  const [selectedCourseCode, setSelectedCourseCode] = useState<string | null>(null);
   const [selectedFileForChat, setSelectedFileForChat] = useState<StudyFile | null>(null);
 
   // Modals state
@@ -92,6 +105,7 @@ export default function App() {
   const [isWeekPlannerOpen, setIsWeekPlannerOpen] = useState(false);
   const [isAIMemoryOpen, setIsAIMemoryOpen] = useState(false);
   const [isSideDrawerOpen, setIsSideDrawerOpen] = useState(false);
+  const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
   const [isLockscreenOpen, setIsLockscreenOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!user.isOnboarded);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -207,6 +221,10 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    StudyStorage.saveCourses(courses);
+  }, [courses]);
+
+  useEffect(() => {
     StudyStorage.saveTasks(tasks);
   }, [tasks]);
 
@@ -242,6 +260,58 @@ export default function App() {
     StudyStorage.saveNotifications(notifications);
   }, [notifications]);
 
+  // Surface planned task reminders in-app once per task and calendar day.
+  useEffect(() => {
+    const checkTaskReminders = () => {
+      const now = new Date();
+      const todayKey = getLocalDateKey(now);
+      const todayNumber = new Date(`${todayKey}T12:00:00`).getDay();
+
+      tasks.forEach((task) => {
+        if (task.completed || !task.reminder?.enabled || !task.scheduledDate || !task.scheduledStartTime) return;
+
+        const startsToday =
+          task.scheduledDate === todayKey ||
+          (task.scheduledDate < todayKey && task.recurrence === 'daily') ||
+          (task.scheduledDate < todayKey && task.recurrence === 'weekdays' && todayNumber > 0 && todayNumber < 6) ||
+          (task.scheduledDate < todayKey && task.recurrence === 'weekly' &&
+            new Date(`${task.scheduledDate}T12:00:00`).getDay() === todayNumber);
+        if (!startsToday) return;
+
+        const scheduled = new Date(`${todayKey}T${task.scheduledStartTime}:00`);
+        const reminderAt = scheduled.getTime() - task.reminder.minutesBefore * 60 * 1000;
+        if (now.getTime() < reminderAt || now.getTime() > scheduled.getTime() + 60 * 1000) return;
+
+        const notificationId = `task-reminder-${task.id}-${todayKey}`;
+        setNotifications((prev) => {
+          if (prev.some((notification) => notification.id === notificationId)) return prev;
+          return [
+            {
+              id: notificationId,
+              title: `Reminder: ${task.title}`,
+              message: `Your planned study time is ${task.scheduledStartTime}.`,
+              timestamp: 'Just now',
+              read: false,
+              type: 'reminder',
+              actionLabel: 'Open task',
+            },
+            ...prev,
+          ];
+        });
+
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(`StudyAI reminder: ${task.title}`, {
+            body: `Planned for ${task.scheduledStartTime}.`,
+          });
+        }
+      });
+    };
+
+    checkTaskReminders();
+    const intervalId = window.setInterval(checkTaskReminders, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [tasks]);
+
   useEffect(() => {
     StudyStorage.saveMetrics(metrics);
   }, [metrics]);
@@ -258,6 +328,8 @@ export default function App() {
   // Handle Tab navigation
   const handleTabChange = (tab: NavTab) => {
     setActiveSubScreen(null);
+    setSelectedCourseCode(null);
+    if (tab !== 'tasks') setTaskCourseFilter(undefined);
     setCurrentTab(tab);
   };
 
@@ -273,7 +345,7 @@ export default function App() {
         title: details.title || action.title,
         startTime: details.startTime || '15:00',
         endTime: details.endTime || '16:30',
-        date: details.date || '2026-10-02',
+        date: details.date || getLocalDateKey(),
         type: details.type || 'study',
         color: details.color || '#6366F1',
         isCompleted: false,
@@ -290,6 +362,72 @@ export default function App() {
         type: 'reminder',
       };
       setNotifications((prev) => [notif, ...prev]);
+    } else if (action.type === 'create_task') {
+      const details = action.details || {};
+      const deadline = details.deadline || details.dueDate || new Date(Date.now() + 86400000).toISOString();
+      const courseCode = details.courseCode || undefined;
+      const courseColors: Record<string, string> = {
+        CS101: '#EF4444',
+        Math: '#F59E0B',
+        Project: '#10B981',
+        Other: '#6366F1',
+      };
+      const newTask: Task = {
+        id: `task-${Date.now()}`,
+        title: details.title || action.title || 'New task',
+        description: details.description || '',
+        courseCode,
+        courseColor: details.courseColor || (courseCode ? courseColors[courseCode] : '#64748B') || '#6366F1',
+        category: details.category || (courseCode ? 'academic' : 'personal'),
+        type: details.type || (details.recurrence && details.recurrence !== 'none' ? 'habit' : 'other'),
+        deadline: deadline.includes('T') ? deadline : new Date(`${deadline}T23:59:59`).toISOString(),
+        scheduledDate: details.scheduledDate || details.date || undefined,
+        scheduledStartTime: details.scheduledStartTime || details.time || undefined,
+        recurrence: details.recurrence || 'none',
+        reminder: {
+          enabled: details.reminderEnabled !== false,
+          minutesBefore: Number(details.reminderMinutes) || 30,
+        },
+        estimatedMinutes: Number(details.estimatedMinutes) || 45,
+        priority: details.priority || 'medium',
+        progress: 0,
+        completed: false,
+        subtasks: [],
+        relatedFileIds: [],
+        relatedResearchIds: [],
+        aiPlanReason: 'Created from your StudyAI command.',
+        createdAt: new Date().toISOString(),
+      };
+      setTasks((prev) => [newTask, ...prev]);
+      const scheduledDate = newTask.scheduledDate;
+      const scheduledStartTime = newTask.scheduledStartTime;
+      if (scheduledDate && scheduledStartTime) {
+        setSchedule((prev) => [
+          {
+            id: `sched-${Date.now()}`,
+            title: `${newTask.courseCode ? `${newTask.courseCode} · ` : ''}${newTask.title}`,
+            startTime: scheduledStartTime,
+            endTime: getEndTime(scheduledStartTime, newTask.estimatedMinutes),
+            date: scheduledDate,
+            type: 'study',
+            courseCode: newTask.courseCode,
+            color: newTask.courseColor,
+            isCompleted: false,
+          },
+          ...prev,
+        ]);
+      }
+      setNotifications((prev) => [
+        {
+          id: `notif-${Date.now()}`,
+          title: 'Task added by StudyAI',
+          message: `Created "${newTask.title}"${newTask.scheduledDate ? ` for ${newTask.scheduledDate}` : ''}.`,
+          timestamp: 'Just now',
+          read: false,
+          type: 'reminder',
+        },
+        ...prev,
+      ]);
     }
   };
 
@@ -381,6 +519,39 @@ export default function App() {
 
   // Render SubScreens or Tabs
   const renderCurrentView = () => {
+    const currentSelectedTask = selectedTask
+      ? tasks.find((task) => task.id === selectedTask.id) || selectedTask
+      : null;
+
+    if (activeSubScreen === 'course' && selectedCourseCode) {
+      const course = courses.find((item) => item.code === selectedCourseCode);
+      if (course) {
+        return (
+          <CourseWorkspaceScreen
+            course={course}
+            tasks={tasks}
+            files={files}
+            schedule={schedule}
+            onBack={() => setActiveSubScreen(null)}
+            onSelectTask={(task) => {
+              setSelectedTask(task);
+              setActiveSubScreen('task_detail');
+            }}
+            onOpenFiles={() => setActiveSubScreen('files')}
+            onOpenCalendar={() => {
+              setActiveSubScreen(null);
+              setCurrentTab('calendar');
+            }}
+            onAddPlanStep={(courseId, step) =>
+              setCourses((prev) =>
+                prev.map((item) => (item.id === courseId ? { ...item, studyPlan: [...item.studyPlan, step] } : item))
+              )
+            }
+          />
+        );
+      }
+    }
+
     if (activeSubScreen === 'what_to_do_now') {
       return (
         <WhatToDoNowScreen
@@ -401,10 +572,10 @@ export default function App() {
       );
     }
 
-    if (activeSubScreen === 'task_detail' && selectedTask) {
+    if (activeSubScreen === 'task_detail' && currentSelectedTask) {
       return (
         <TaskDetailScreen
-          task={selectedTask}
+          task={currentSelectedTask}
           onBack={() => setActiveSubScreen(null)}
           onStartFocus={(task) => {
             setSelectedTask(task);
@@ -415,21 +586,29 @@ export default function App() {
             setCurrentTab('ai');
             setActiveSubScreen(null);
           }}
-          onAddToSchedule={(task) => {
+          onToggleTask={handleToggleTask}
+          onAddToSchedule={(task, date, startTime, endTime) => {
             const newEv: ScheduleEvent = {
               id: `sched-${Date.now()}`,
-              title: `${task.courseCode} Study: ${task.title}`,
-              startTime: '15:00',
-              endTime: '16:00',
-              date: '2026-10-02',
+              title: `${task.courseCode ? `${task.courseCode} · ` : ''}${task.title}`,
+              startTime,
+              endTime,
+              date,
               type: 'study',
               courseCode: task.courseCode,
               color: task.courseColor,
               isCompleted: false,
             };
             setSchedule((prev) => [...prev, newEv]);
+            setTasks((prev) =>
+              prev.map((item) =>
+                item.id === task.id
+                  ? { ...item, scheduledDate: date, scheduledStartTime: startTime }
+                  : item
+              )
+            );
             playChime('success');
-            showToast(`Added "${newEv.title}" to today's schedule at 3:00 PM!`);
+            showToast(`Added "${newEv.title}" to your calendar on ${date} at ${startTime}.`);
           }}
           onToggleSubtask={handleToggleSubtask}
           onAddSubtask={handleAddSubtask}
@@ -638,10 +817,17 @@ export default function App() {
             notifications={notifications}
             onOpenWhatToDoNow={() => setActiveSubScreen('what_to_do_now')}
             onOpenAIChat={(q) => setCurrentTab('ai')}
-            onOpenTasks={() => setCurrentTab('tasks')}
+            onOpenTasks={(courseCode) => {
+              setTaskCourseFilter(courseCode);
+              setCurrentTab('tasks');
+            }}
             onOpenCalendar={() => setCurrentTab('calendar')}
             onOpenNotifications={() => setActiveSubScreen('notifications')}
             onOpenSideMenu={() => setIsSideDrawerOpen(true)}
+            onOpenCourse={(courseCode) => {
+              setSelectedCourseCode(courseCode);
+              setActiveSubScreen('course');
+            }}
             onUpdateEnergy={(lvl) => setUser((prev) => ({ ...prev, energyLevel: lvl }))}
             onSelectTask={(task) => {
               setSelectedTask(task);
@@ -660,6 +846,9 @@ export default function App() {
         return (
           <TasksScreen
             tasks={tasks}
+            schedule={schedule}
+            courseCodeFilter={taskCourseFilter}
+            onClearCourseFilter={() => setTaskCourseFilter(undefined)}
             onSelectTask={(task) => {
               setSelectedTask(task);
               setActiveSubScreen('task_detail');
@@ -670,10 +859,15 @@ export default function App() {
                 id: `task-${Date.now()}`,
                 title: taskData.title || 'New Task',
                 description: taskData.description || '',
-                courseCode: taskData.courseCode || 'CS101',
-                courseColor: taskData.courseColor || '#EF4444',
+                  courseCode: taskData.courseCode,
+                  courseColor: taskData.courseColor || (taskData.courseCode ? '#EF4444' : '#64748B'),
+                  category: taskData.category || (taskData.courseCode ? 'academic' : 'personal'),
                 type: taskData.type || 'assignment',
                 deadline: taskData.deadline || '2026-10-04T23:59:00Z',
+                scheduledDate: taskData.scheduledDate,
+                scheduledStartTime: taskData.scheduledStartTime,
+                recurrence: taskData.recurrence || 'none',
+                reminder: taskData.reminder || { enabled: false, minutesBefore: 30 },
                 estimatedMinutes: taskData.estimatedMinutes || 45,
                 priority: taskData.priority || 'high',
                 progress: 0,
@@ -689,8 +883,27 @@ export default function App() {
                 createdAt: new Date().toISOString(),
               };
               setTasks((prev) => [newT, ...prev]);
+              const scheduledDate = taskData.scheduledDate;
+              const scheduledStartTime = taskData.scheduledStartTime;
+              if (scheduledDate && scheduledStartTime) {
+                setSchedule((prev) => [
+                  {
+                    id: `sched-${Date.now()}`,
+                    title: `${taskData.courseCode ? `${taskData.courseCode} · ` : ''}${newT.title}`,
+                    startTime: scheduledStartTime,
+                    endTime: getEndTime(scheduledStartTime, newT.estimatedMinutes),
+                    date: scheduledDate,
+                    type: 'study',
+                    courseCode: taskData.courseCode,
+                    color: newT.courseColor,
+                    isCompleted: false,
+                  },
+                  ...prev,
+                ]);
+              }
               playChime('success');
             }}
+            onComposerStateChange={setIsTaskComposerOpen}
           />
         );
 
@@ -707,6 +920,8 @@ export default function App() {
             onExecuteAction={handleExecuteAction}
             config={aiConfig}
             allTasks={tasks}
+            schedule={schedule}
+            user={user}
           />
         );
 
@@ -741,8 +956,8 @@ export default function App() {
   };
 
   return (
-    <div className="w-full min-h-[100dvh] flex flex-col bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors">
-      <div className="w-full flex-1 flex flex-col justify-between min-h-[100dvh] relative">
+    <div className="w-full min-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors">
+      <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between min-h-[100dvh] relative bg-slate-50 dark:bg-slate-950">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
           <OnboardingFlow
@@ -774,18 +989,20 @@ export default function App() {
             )}
 
             {/* Scrollable Viewport Content */}
-            <div className="flex-1 overflow-y-auto px-4 pt-3 pb-24 no-scrollbar">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24 no-scrollbar">
               {renderCurrentView()}
             </div>
 
             {/* Fixed Mobile Bottom Nav Bar */}
-            <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
-              <MobileBottomNav
-                currentTab={currentTab}
-                onTabChange={handleTabChange}
-                unreadCount={notifications.filter((n) => !n.read).length}
-              />
-            </div>
+            {!isTaskComposerOpen && (
+              <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+                <MobileBottomNav
+                  currentTab={currentTab}
+                  onTabChange={handleTabChange}
+                  unreadCount={notifications.filter((n) => !n.read).length}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -825,7 +1042,7 @@ export default function App() {
               title: s.title,
               startTime: '14:00',
               endTime: '15:30',
-              date: '2026-10-02',
+              date: getLocalDateKey(),
               type: 'study',
               color: s.color,
               isCompleted: false,
@@ -856,6 +1073,7 @@ export default function App() {
           isOpen={isSideDrawerOpen}
           onClose={() => setIsSideDrawerOpen(false)}
           user={user}
+          onSignOut={handleSignOut}
           onNavigate={(dest) => {
             if (dest === 'home' || dest === 'tasks' || dest === 'ai' || dest === 'calendar') {
               setCurrentTab(dest as NavTab);

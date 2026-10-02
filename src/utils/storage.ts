@@ -1,5 +1,6 @@
 import {
   UserProfile,
+  Course,
   Task,
   ScheduleEvent,
   Goal,
@@ -12,9 +13,13 @@ import {
   NotificationItem,
   ProgressMetrics,
 } from '../types';
+import { getLocalDateKey } from './dates';
+
+const INITIAL_SCHEDULE_DATE = getLocalDateKey();
 
 const STORAGE_KEYS = {
   USER: 'studyai_user_profile',
+  COURSES: 'studyai_courses',
   TASKS: 'studyai_tasks',
   SCHEDULE: 'studyai_schedule',
   GOALS: 'studyai_goals',
@@ -41,6 +46,45 @@ export const INITIAL_USER: UserProfile = {
   energyLevel: 4, // 1-5 scale (Good energy)
   isOnboarded: true, // Default to ready, user can re-trigger onboarding from menu
 };
+
+export const INITIAL_COURSES: Course[] = [
+  {
+    id: 'course-cs101',
+    code: 'CS101',
+    name: 'Algorithms & Data Structures',
+    color: '#EF4444',
+    professor: 'Dr. Morgan Lee',
+    term: 'Fall 2026',
+    credits: 4,
+    schedulePattern: 'Mon / Wed · 08:00',
+    materialsFileIds: ['file-1'],
+    studyPlan: ['Review lecture foundations', 'Complete Assignment 2', 'Practice exam problems'],
+  },
+  {
+    id: 'course-math',
+    code: 'Math',
+    name: 'Calculus III',
+    color: '#F59E0B',
+    professor: 'Prof. Rivera',
+    term: 'Fall 2026',
+    credits: 4,
+    schedulePattern: 'Tue / Thu · 10:00',
+    materialsFileIds: ['file-2'],
+    studyPlan: ['Review vector calculus concepts', 'Complete practice set', 'Prepare for exam'],
+  },
+  {
+    id: 'course-project',
+    code: 'Project',
+    name: 'Capstone Project',
+    color: '#10B981',
+    professor: 'Project Studio',
+    term: 'Fall 2026',
+    credits: 3,
+    schedulePattern: 'Weekly milestone',
+    materialsFileIds: ['file-3'],
+    studyPlan: ['Confirm milestone requirements', 'Build the next deliverable', 'Review with teammates'],
+  },
+];
 
 export const INITIAL_TASKS: Task[] = [
   {
@@ -153,7 +197,7 @@ export const INITIAL_SCHEDULE: ScheduleEvent[] = [
     type: 'class',
     startTime: '08:00',
     endTime: '09:30',
-    date: '2026-10-02',
+    date: INITIAL_SCHEDULE_DATE,
     courseCode: 'CS101',
     location: 'Turing Hall 102',
     color: '#EF4444',
@@ -165,7 +209,7 @@ export const INITIAL_SCHEDULE: ScheduleEvent[] = [
     type: 'break',
     startTime: '12:00',
     endTime: '13:00',
-    date: '2026-10-02',
+    date: INITIAL_SCHEDULE_DATE,
     location: 'Student Union Cafeteria',
     color: '#10B981',
     isCompleted: false,
@@ -176,7 +220,7 @@ export const INITIAL_SCHEDULE: ScheduleEvent[] = [
     type: 'study',
     startTime: '14:00',
     endTime: '16:00',
-    date: '2026-10-02',
+    date: INITIAL_SCHEDULE_DATE,
     courseCode: 'Math',
     location: 'Green Library 2nd Floor',
     color: '#F59E0B',
@@ -188,7 +232,7 @@ export const INITIAL_SCHEDULE: ScheduleEvent[] = [
     type: 'gym',
     startTime: '18:00',
     endTime: '19:00',
-    date: '2026-10-02',
+    date: INITIAL_SCHEDULE_DATE,
     location: 'Campus Fitness Center',
     color: '#10B981',
     isCompleted: false,
@@ -199,7 +243,7 @@ export const INITIAL_SCHEDULE: ScheduleEvent[] = [
     type: 'study',
     startTime: '20:00',
     endTime: '21:00',
-    date: '2026-10-02',
+    date: INITIAL_SCHEDULE_DATE,
     courseCode: 'CS101',
     color: '#6366F1',
     isCompleted: false,
@@ -420,6 +464,18 @@ export const StudyStorage = {
   },
   saveUser(user: UserProfile) {
     localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  },
+
+  getCourses(): Course[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.COURSES);
+      return data ? JSON.parse(data) : INITIAL_COURSES;
+    } catch {
+      return INITIAL_COURSES;
+    }
+  },
+  saveCourses(courses: Course[]) {
+    localStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify(courses));
   },
 
   getTasks(): Task[] {
