@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { Award, TrendingUp, Sparkles, Clock, CheckCircle2, ChevronRight, BarChart2 } from 'lucide-react';
+import { Award, TrendingUp, Sparkles, Clock, CheckCircle2, ChevronRight, BarChart2, ChevronLeft } from 'lucide-react';
 import { ProgressMetrics } from '../../types';
 
 interface ProgressScreenProps {
   metrics: ProgressMetrics;
+  onBack: () => void;
   onAskAIHowDoing: () => void;
   onOpenGoals: () => void;
 }
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   metrics,
+  onBack,
   onAskAIHowDoing,
   onOpenGoals,
 }) => {
@@ -18,7 +20,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center gap-1 pt-2">
+        <button
+          onClick={onBack}
+          className="p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-full transition-colors shrink-0"
+          aria-label="Back"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Analytics</span>
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">

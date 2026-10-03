@@ -144,7 +144,8 @@ export default function App() {
 
   // Navigation state
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
-  const [activeSubScreen, setActiveSubScreen] = useState<string | null>(null);
+  const [activeSubScreen, setActiveSubScreenRaw] = useState<string | null>(null);
+  const [subScreenStack, setSubScreenStack] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(tasks[0] || null);
   const [taskCourseFilter, setTaskCourseFilter] = useState<string | undefined>();
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
@@ -154,6 +155,31 @@ export default function App() {
   const [courseTutorCardsResourceId, setCourseTutorCardsResourceId] = useState<string | undefined>();
   const [courseTutorTab, setCourseTutorTab] = useState<'learn' | 'tutor' | 'quiz' | 'cards' | undefined>();
   const [selectedFileForChat, setSelectedFileForChat] = useState<StudyFile | null>(null);
+
+  /**
+   * Sub-screen navigation with a small history stack, so every settings/option
+   * page can offer a back action that returns to the previous page.
+   */
+  const setActiveSubScreen = (next: string | null) => {
+    if (next === null) {
+      setSubScreenStack([]);
+      setActiveSubScreenRaw(null);
+      return;
+    }
+    setSubScreenStack((stack) =>
+      activeSubScreen && activeSubScreen !== next ? [...stack, activeSubScreen] : stack,
+    );
+    setActiveSubScreenRaw(next);
+  };
+
+  const goBackSubScreen = () => {
+    if (subScreenStack.length === 0) {
+      setActiveSubScreenRaw(null);
+      return;
+    }
+    setActiveSubScreenRaw(subScreenStack[subScreenStack.length - 1]);
+    setSubScreenStack(subScreenStack.slice(0, -1));
+  };
 
   // Modals state
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
@@ -1073,7 +1099,7 @@ export default function App() {
           onAISetupRequired={() => setIsAISetupPromptOpen(true)}
           initialTab={courseWorkspaceInitialTab}
           onBack={() => {
-            setActiveSubScreen(null);
+            goBackSubScreen();
             setSelectedResourceId(null);
           }}
           onSelectTask={(task) => {
@@ -1128,7 +1154,7 @@ export default function App() {
             resource={resource}
             course={selectedCourse}
             config={aiConfig}
-            onBack={() => setActiveSubScreen('course')}
+            onBack={goBackSubScreen}
             onUpdateReading={handleUpdateReading}
             annotations={annotations.filter((annotation) => annotation.resourceId === resource.id)}
             onSaveAnnotation={handleSaveAnnotation}
@@ -1153,7 +1179,7 @@ export default function App() {
           initialQuizResourceId={courseTutorQuizResourceId}
           initialCardsResourceId={courseTutorCardsResourceId}
           initialTab={courseTutorTab}
-          onBack={() => setActiveSubScreen('course')}
+          onBack={goBackSubScreen}
           onSaveQuiz={handleSaveQuiz}
           onSaveFlashcards={handleSaveFlashcards}
           aiConfigured={isAIProviderConfigured(aiConfig)}
@@ -1168,7 +1194,7 @@ export default function App() {
           tasks={tasks}
           schedule={schedule}
           user={user}
-          onBack={() => setActiveSubScreen(null)}
+          onBack={goBackSubScreen}
           onStartFocus={(task) => {
             setSelectedTask(task);
             setActiveSubScreen('study_session');
@@ -1188,7 +1214,7 @@ export default function App() {
       return (
         <TaskDetailScreen
           task={currentSelectedTask}
-          onBack={() => setActiveSubScreen(null)}
+          onBack={goBackSubScreen}
           onStartFocus={(task) => {
             setSelectedTask(task);
             setActiveSubScreen('study_session');
@@ -1242,7 +1268,7 @@ export default function App() {
       return (
         <StudySessionScreen
           task={selectedTask}
-          onClose={() => setActiveSubScreen(null)}
+          onClose={goBackSubScreen}
           onAskAIHelp={(task) => {
             requireAIProvider(() => {
               setSelectedTask(task);
@@ -1268,6 +1294,7 @@ export default function App() {
       return (
         <ResearchScreen
           researchItems={research}
+          onBack={goBackSubScreen}
           onSaveToNotes={(title, content) => {
             const newNote: StudyNote = {
               id: `note-${Date.now()}`,
@@ -1295,6 +1322,7 @@ export default function App() {
         <FilesScreen
           files={files}
           notes={notes}
+          onBack={goBackSubScreen}
           onUploadFile={handleUploadFile}
           onAddNote={(title, content) => {
             const n: StudyNote = {
@@ -1347,6 +1375,7 @@ export default function App() {
       return (
         <ProgressScreen
           metrics={metrics}
+          onBack={goBackSubScreen}
           onAskAIHowDoing={() => {
             requireAIProvider(() => {
               setCurrentTab('ai');
@@ -1362,6 +1391,7 @@ export default function App() {
       return (
         <GoalsScreen
           goals={goals}
+          onBack={goBackSubScreen}
           onAddGoal={(g) => {
             const newG: Goal = { ...g, id: `goal-${Date.now()}` };
             setGoals((prev) => [...prev, newG]);
@@ -1377,6 +1407,7 @@ export default function App() {
           user={user}
           config={aiConfig}
           calendarSync={calendarSync}
+          onBack={goBackSubScreen}
           onOpenAIProvider={() => setActiveSubScreen('ai_provider')}
           onOpenNotifications={() => setActiveSubScreen('notifications')}
           onOpenProfile={() => setActiveSubScreen('profile')}
@@ -1394,7 +1425,7 @@ export default function App() {
         <GoogleCalendarSyncScreen
           calendarSync={calendarSync}
           isSyncing={gcal.isSyncing}
-          onBack={() => setActiveSubScreen('settings')}
+          onBack={goBackSubScreen}
           onConnect={gcal.connect}
           onDisconnect={gcal.disconnect}
           onSyncNow={gcal.syncNow}
@@ -1407,7 +1438,7 @@ export default function App() {
         <AIProviderScreen
           config={aiConfig}
           onSaveConfig={(newC) => setAIConfig(newC)}
-          onBack={() => setActiveSubScreen('settings')}
+          onBack={goBackSubScreen}
         />
       );
     }
@@ -1418,7 +1449,7 @@ export default function App() {
           user={user}
           metrics={metrics}
           onUpdateUser={(patch) => setUser((prev) => ({ ...prev, ...patch }))}
-          onBack={() => setActiveSubScreen('settings')}
+          onBack={goBackSubScreen}
           onOpenGoals={() => setActiveSubScreen('goals')}
           onOpenStats={() => setActiveSubScreen('progress')}
           onRestartOnboarding={() => setShowOnboarding(true)}
@@ -1433,7 +1464,7 @@ export default function App() {
       return (
         <NotificationsScreen
           notifications={notifications}
-          onBack={() => setActiveSubScreen(null)}
+          onBack={goBackSubScreen}
           onSimulateLockscreen={() => setIsLockscreenOpen(true)}
         />
       );
@@ -1558,13 +1589,7 @@ export default function App() {
         return (
           <MoreScreen
             onNavigate={(dest) => {
-              if (dest === 'courses' || dest === 'ai' || dest === 'calendar') {
-                if (dest === 'ai') {
-                  requireAIProvider(() => setCurrentTab('ai'));
-                } else {
-                  setCurrentTab(dest as NavTab);
-                }
-              } else if (dest === 'research') {
+              if (dest === 'research') {
                 requireAIProvider(() => setActiveSubScreen('research'));
               } else {
                 setActiveSubScreen(dest);

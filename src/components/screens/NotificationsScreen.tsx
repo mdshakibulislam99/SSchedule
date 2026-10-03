@@ -34,6 +34,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         <button
           onClick={onBack}
           className="p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-full transition-colors flex items-center gap-1 text-xs font-semibold"
+          aria-label="Back"
         >
           <ChevronLeft className="w-6 h-6" />
           <span>Back</span>

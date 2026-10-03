@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Target, Plus, ChevronRight, CheckCircle2, Sparkles, X } from 'lucide-react';
+import { Target, Plus, ChevronRight, CheckCircle2, Sparkles, X, ChevronLeft } from 'lucide-react';
 import { Goal } from '../../types';
 
 interface GoalsScreenProps {
   goals: Goal[];
+  onBack: () => void;
   onAddGoal: (goal: Omit<Goal, 'id'>) => void;
   onSelectGoal?: (goal: Goal) => void;
 }
 
-export const GoalsScreen: React.FC<GoalsScreenProps> = ({ goals, onAddGoal, onSelectGoal }) => {
+export const GoalsScreen: React.FC<GoalsScreenProps> = ({ goals, onBack, onAddGoal, onSelectGoal }) => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('Assignments');
@@ -32,14 +33,23 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = ({ goals, onAddGoal, onSe
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
-      <div className="flex items-center justify-between pt-2">
-        <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          Study Goals
-        </h1>
+      <div className="flex items-center justify-between pt-2 gap-2">
+        <div className="flex items-center gap-1 min-w-0">
+          <button
+            onClick={onBack}
+            className="p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-full transition-colors shrink-0"
+            aria-label="Back"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white truncate">
+            Study Goals
+          </h1>
+        </div>
 
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95"
+          className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95 shrink-0"
           title="Add Goal"
         >
           <Plus className="w-4 h-4" />

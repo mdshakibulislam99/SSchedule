@@ -1,7 +1,5 @@
 import React from 'react';
 import {
-  Sparkles,
-  Calendar,
   FileText,
   Search,
   BarChart2,
@@ -9,9 +7,6 @@ import {
   Settings,
   User,
   ChevronRight,
-  Shield,
-  Bell,
-  GraduationCap,
 } from 'lucide-react';
 import { NavTab } from '../mobile/MobileBottomNav';
 
@@ -22,9 +17,6 @@ interface MoreScreenProps {
 
 export const MoreScreen: React.FC<MoreScreenProps> = ({ onNavigate, unreadCount = 0 }) => {
   const items = [
-    { id: 'courses', label: 'Courses', desc: 'Course workspaces, resources & AI learning', icon: GraduationCap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
-    { id: 'ai', label: 'AI Chat', desc: 'Ask StudyAI anything', icon: Sparkles, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
-    { id: 'calendar', label: 'Calendar', desc: 'Schedule & time blocking', icon: Calendar, color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/60' },
     { id: 'files', label: 'Files & Notes', desc: 'Uploaded documents & summaries', icon: FileText, color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/60' },
     { id: 'research', label: 'AI Research', desc: 'Deep topic synthesis', icon: Search, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
     { id: 'progress', label: 'Progress & Stats', desc: 'Focus score & weekly metrics', icon: BarChart2, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60' },

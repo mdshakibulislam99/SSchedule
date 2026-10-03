@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw } from 'lucide-react';
+import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft } from 'lucide-react';
 import { CourseResource, StudyFile, StudyNote, Task } from '../../types';
 import { FileViewer } from '../course/FileViewer';
 import { saveFileBlob } from '../../utils/fileStorage';
@@ -50,6 +50,7 @@ function createViewerResource(file: StudyFile): CourseResource {
 interface FilesScreenProps {
   files: StudyFile[];
   notes: StudyNote[];
+  onBack: () => void;
   onUploadFile: (file: Partial<StudyFile> & { extractedContent?: string }) => void;
   onAddNote: (title: string, content: string) => void;
   onAskAIAboutFile: (file: StudyFile) => void;
@@ -61,6 +62,7 @@ interface FilesScreenProps {
 export const FilesScreen: React.FC<FilesScreenProps> = ({
   files,
   notes,
+  onBack,
   onUploadFile,
   onAddNote,
   onAskAIAboutFile,
@@ -130,15 +132,24 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
-      <div className="flex items-center justify-between pt-2">
-        <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          Files & Notes
-        </h1>
+      <div className="flex items-center justify-between pt-2 gap-2">
+        <div className="flex items-center gap-1 min-w-0">
+          <button
+            onClick={onBack}
+            className="p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-full transition-colors shrink-0"
+            aria-label="Back"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white truncate">
+            Files & Notes
+          </h1>
+        </div>
 
         {activeTab === 'notes' && (
           <button
             onClick={() => setIsNoteModalOpen(true)}
-            className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95"
+            className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md active:scale-95 shrink-0"
             title="Add Note"
           >
             <Plus className="w-4 h-4" />

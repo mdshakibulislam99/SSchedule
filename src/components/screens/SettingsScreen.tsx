@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Sparkles,
   ChevronRight,
+  ChevronLeft,
   User,
   Sliders,
   Bell,
@@ -19,6 +20,7 @@ interface SettingsScreenProps {
   user: UserProfile;
   config: AIProviderConfig;
   calendarSync: GoogleCalendarSyncState;
+  onBack: () => void;
   onOpenAIProvider: () => void;
   onOpenNotifications: () => void;
   onOpenProfile: () => void;
@@ -33,6 +35,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   user,
   config,
   calendarSync,
+  onBack,
   onOpenAIProvider,
   onOpenNotifications,
   onOpenProfile,
@@ -45,7 +48,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center gap-1 pt-2">
+        <button
+          onClick={onBack}
+          className="p-2 -ml-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-full transition-colors"
+          aria-label="Back"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
         <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           Settings
         </h1>
