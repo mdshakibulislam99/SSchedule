@@ -1,33 +1,92 @@
-# Implementation Plan: Pure Native App UI (Removal of Virtual Device Shell)
+# Compact & Modern Task Detail View Plan
 
-Remove the simulated phone hardware bezel, fake Dynamic Island, and duplicate OS status bar so the application renders directly and seamlessly as a true, edge-to-edge Android/mobile application.
+Redesign the Task Detail inside view into a high-density, modern, and ergonomic layout that displays all task context, actions, and milestones in minimal vertical space without clutter.
 
-## 1. Problem Analysis & Objective
-- **Current State**: The interface wrapped the app inside a simulated smartphone chassis (`border-[10px]`, `rounded-[48px]`, desktop bezel switcher, and `MobileStatusBar` showing fake "9:41", battery, and signal icons). When opened on an actual mobile device or Android runtime, this creates an unnatural "phone inside a phone" appearance.
-- **Target State**: A pure, native Android-style application layout that occupies `100%` of the viewport with zero artificial hardware borders. The app features a native top App Bar, smooth scrolling content area, and sleek bottom navigation bar (or side navigation on tablet/foldables) that respects system safe areas.
+---
 
-## 2. Proposed Changes
+## User Review & Critical Decisions
 
-### A. Remove Skeuomorphic Virtual Hardware Elements
-- **Delete / Deprecate `MobileStatusBar.tsx`**: Remove the fake "9:41" carrier/battery simulation bar. The real Android or iOS OS already renders system status bars.
-- **Remove Device Bezel & Wrapper in `App.tsx`**:
-  - Eliminate `border-[10px]`, `rounded-[48px]`, outer device shadows, and fixed container constraints.
-  - Remove the desktop "View: Phone Bezel / Full Mobile" floating toggle.
-  - Set the root container to `w-full min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between`.
+> [!IMPORTANT]
+> Based on your direct feedback:
+> 1. **Single-Line Action Buttons**: The three primary actions (*Focus Timer*, *Ask AI*, and *Calendar Schedule*) will sit side-by-side in **one single compact row** on all screen widths rather than stacking as giant full-width buttons.
+> 2. **Ultra-Compact Task Card**: The oversized "dashboard" card will be condensed into a sleek, space-efficient summary header with quiet metadata, inline status, and a slim progress meter.
+> 3. **Dense Action Plan & Subtask Milestones**: Subtasks will be displayed with minimal vertical padding, inline add controls, and clean monospace estimates, minimizing scroll height.
 
-### B. Polish Native Mobile App Bar & Navigation
-- Provide a clean, native Material 3 / Android style Top App Bar with:
-  - App avatar / brand identity or title
-  - Contextual quick actions (AI pulse, notifications, energy level)
-  - Profile / drawer trigger
-- Keep the ergonomic `MobileBottomNav` anchored at the bottom with safe-area padding for Android gesture navigation bars (`pb-safe` / `env(safe-area-inset-bottom)`).
-- Ensure all screens (Home, Tasks, Task Detail, Calendar, AIChat, Research, Files, Progress, Goals, Settings) render full width with appropriate mobile touch targets (minimum 44x44px).
+- **Confirmed Decision 1**: Single-row compact action bar (`flex items-center gap-2`) with equal or icon-labeled buttons.
+- **Confirmed Decision 2**: Reduced vertical footprint so task overview and primary actions fit cleanly in the top fold.
 
-### C. Safe Area & Responsive Android PWA Support
-- Configure viewport meta tag with `viewport-fit=cover` and dynamic viewport height (`100dvh` / `h-screen`).
-- Provide fluid scrolling without double scrollbars or awkward letterboxing.
+---
 
-## 3. Verification Plan
-- Verify that no fake phone bezels, borders, or simulated clock/battery status bars appear.
-- Run `compile_applet` and `lint_applet` to confirm zero compilation or TypeScript errors.
-- Test responsive viewports from small mobile screens (360px Android width) up to tablet and desktop screens.
+## 1. Overview & Core Concept
+
+- **What It Delivers**: A condensed, distraction-free task interior screen. Students can view the task title, due date, course tag, priority, and progress at a glance, execute quick actions in one tap, and manage subtasks without getting lost in giant cards or endless scrolling.
+- **Target Persona**: Fast-moving university students switching between classes and assignments who need fast execution and concise information density.
+- **Key Value**: Maximum information and action reach in minimum vertical height.
+
+---
+
+## 2. User Experience & Visual Design
+
+### 2.1 Viewport Composition & Density Math
+- **Top Navigation Bar**:
+  - Breadcrumb `← Tasks` with compact touch target.
+  - Right-aligned quick status toggle: compact `Mark done` button with `CheckCircle2` icon + discreet trash icon.
+- **Compact Task Header (Zero Bloat)**:
+  - Line 1 (Context): Monospace course code tag (`CS101`), priority indicator (`High`), and deadline (`Due Oct 6`) separated by `·` glyphs.
+  - Line 2 (Core Title): Bold, clean title (`text-base sm:text-lg`) with strikethrough state when completed.
+  - Line 3 (Description): Brief description text in compact typography (`text-xs text-slate-500 leading-snug`).
+  - Line 4 (Progress & Schedule): Slim hairline progress bar alongside a quiet schedule tag if already planned.
+- **Single-Line Action Toolbar**:
+  - Three compact buttons in **one continuous row**:
+    1. **Focus**: `[▶ 25m Focus]` (Primary filled indigo button, icon + short text).
+    2. **Study AI**: `[✨ Ask AI]` (Subtle surface button, icon + short text).
+    3. **Schedule**: `[📅 Schedule]` (Subtle surface button, icon + short text).
+- **Inline Compact Scheduler (When Expanded)**:
+  - Collapsible single-row time selector with date, start time, end time, and confirm checkmark.
+- **Dense Action Plan (Checklist)**:
+  - Compact list items with tight padding (`py-2 px-3`).
+  - Checkbox toggle + step number + title + tabular minute tag (`15m`).
+  - Single-line "Add step" input with enter-to-submit.
+  - Quiet editorial AI rationale note without purple gradient container.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Single-Row Action Bar vs. Stacked Cards**
+  - *Chosen Approach*: `flex items-center gap-2` with flexible auto-width buttons so all 3 actions stay on one line on mobile and desktop alike.
+  - *Why*: Eliminates ~160px of unnecessary vertical height and keeps the primary controls immediately reachable.
+- **Decision 2: Integrated Compact Header vs. Multi-Card Dashboard**
+  - *Chosen Approach*: Unify course tag, priority, due date, title, and progress into one tight container (padding `p-3.5 sm:p-4`).
+  - *Why*: Avoids "cards within cards" and keeps subtasks visible without scrolling on standard screens.
+
+---
+
+## 4. Technical Architecture & Component Hierarchy
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   TaskDetailScreen                     │
+├────────────────────────────────────────────────────────┤
+│ [← Tasks]                         [Mark done] [Trash]  │
+├────────────────────────────────────────────────────────┤
+│ ┌────────────────────────────────────────────────────┐ │
+│ │ CS101 · High · Due Oct 6 · ~45m                    │ │
+│ │ Algorithm Analysis Homework                        │ │
+│ │ Write complexity proofs for Divide & Conquer.      │ │
+│ │ ─────── 60% ───────                                │ │
+│ └────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────┤
+│ [▶ 25m Focus]      [✨ Ask AI]      [📅 Schedule]     │
+├────────────────────────────────────────────────────────┤
+│ (Optional Collapsible Inline Schedule Bar)             │
+├────────────────────────────────────────────────────────┤
+│ Action Plan (2/3 done)            [↺ Regenerate Plan] │
+│ ┌────────────────────────────────────────────────────┐ │
+│ │ [✓] 1. Read Chapter 4 Foundations              15m │ │
+│ │ [✓] 2. Draft Proof Lemma A                     20m │ │
+│ │ [○] 3. Verify Master Theorem Bounds            10m │ │
+│ │ [+ Add next step...                  ] [Add]       │ │
+│ └────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────┘
+```

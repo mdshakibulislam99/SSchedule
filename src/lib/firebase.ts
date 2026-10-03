@@ -16,6 +16,7 @@ import {
   collection,
   getDocs,
   writeBatch,
+  deleteDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource } from '../types';
@@ -166,5 +167,21 @@ export async function syncResourcesToFirestore(userId: string, resources: Course
     await batch.commit();
   } catch (err) {
     console.warn('Failed to sync course resources to Firestore:', err);
+  }
+}
+
+export async function deleteTaskFromFirestore(userId: string, taskId: string) {
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'tasks', taskId));
+  } catch (err) {
+    console.warn('Failed to delete task from Firestore:', err);
+  }
+}
+
+export async function deleteCourseFromFirestore(userId: string, courseId: string) {
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'courses', courseId));
+  } catch (err) {
+    console.warn('Failed to delete course from Firestore:', err);
   }
 }

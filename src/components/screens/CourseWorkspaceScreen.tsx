@@ -24,6 +24,7 @@ import {
   Target,
   Upload,
   X,
+  Trash2,
 } from 'lucide-react';
 import {
   AIProviderConfig,
@@ -160,6 +161,10 @@ interface CourseWorkspaceScreenProps {
   onAddTask: (taskData: Partial<Task>, autoPlan: boolean) => void;
   /** Toggles completion directly from the course task list. */
   onToggleTask: (taskId: string) => void;
+  /** Deletes a task from inside the course. */
+  onDeleteTask?: (taskId: string) => void;
+  /** Deletes this course workspace. */
+  onDeleteCourse?: (courseId: string, deleteAssociatedData?: boolean) => void;
   /** Jumps to the Tasks tab filtered to this course (secondary action). */
   onViewAllTasks: (courseCode: string) => void;
 }
@@ -190,12 +195,17 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
   onUploadFile,
   onAddTask,
   onToggleTask,
+  onDeleteTask,
+  onDeleteCourse,
   onViewAllTasks,
 }) => {
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
   const [newPlanStep, setNewPlanStep] = useState('');
   const [isAddResourceOpen, setIsAddResourceOpen] = useState(false);
   const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [isDeleteCourseOpen, setIsDeleteCourseOpen] = useState(false);
+  const [deleteAssociatedData, setDeleteAssociatedData] = useState(true);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [resTitle, setResTitle] = useState('');
   const [resContent, setResContent] = useState('');
   const [resType, setResType] = useState<CourseResource['type']>('text');
@@ -667,7 +677,23 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
           <span>Courses</span>
         </button>
         <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Course Workspace</span>
-        <div className="w-16" />
+        {onDeleteCourse ? (
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteAssociatedData(true);
+              setIsDeleteCourseOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+            title="Delete course"
+            aria-label="Delete course"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+            <span className="hidden sm:inline">Delete course</span>
+          </button>
+        ) : (
+          <div className="w-16" />
+        )}
       </header>
 
       {uploadNotice && (
@@ -1024,6 +1050,28 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                 </button>
               </form>
             </section>
+
+            {onDeleteCourse && (
+              <section className="rounded-2xl bg-white dark:bg-slate-900 border border-rose-200/60 dark:border-rose-950/40 p-4 sm:p-5 space-y-2 lg:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Course workspace options</h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Permanently remove this course and its materials.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteAssociatedData(true);
+                      setIsDeleteCourseOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/60 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 text-xs font-bold hover:bg-rose-100 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete course</span>
+                  </button>
+                </div>
+              </section>
+            )}
           </div>
         </div>
       )}
@@ -1124,6 +1172,21 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                     <span className="text-[10px] font-bold uppercase text-slate-400 shrink-0">
                       {task.priority}
                     </span>
+
+                    {onDeleteTask && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTaskToDelete(task);
+                        }}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors shrink-0"
+                        title="Delete task"
+                        aria-label={`Delete task ${task.title}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2114,6 +2177,137 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                   Open Document
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Course Confirmation Modal */}
+      {isDeleteCourseOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Delete course</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Remove course workspace</p>
+              </div>
+            </div>
+
+            {/* Course Identity Card */}
+            <div
+              className="p-3.5 rounded-xl text-white flex items-center gap-2.5 shadow-xs"
+              style={{ backgroundColor: course.color }}
+            >
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-lg shrink-0">
+                {course.coverEmoji || '📘'}
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-white/20 uppercase">
+                  {course.code}
+                </span>
+                <p className="font-bold text-xs truncate mt-0.5">{course.name}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Are you sure you want to delete <b className="text-slate-900 dark:text-white">{course.name}</b>? This workspace will be permanently removed.
+            </p>
+
+            {(courseTasks.length > 0 || resources.length > 0) && (
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={deleteAssociatedData}
+                  onChange={(e) => setDeleteAssociatedData(e.target.checked)}
+                  className="mt-0.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                />
+                <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 block">
+                    Delete associated tasks & study materials
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400 block mt-0.5">
+                    {courseTasks.length} task{courseTasks.length === 1 ? '' : 's'} and {resources.length} reading{resources.length === 1 ? '' : 's'}. If unchecked, tasks are preserved as personal tasks.
+                  </span>
+                </div>
+              </label>
+            )}
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsDeleteCourseOpen(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteCourseOpen(false);
+                  if (onDeleteCourse) {
+                    onDeleteCourse(course.id, deleteAssociatedData);
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Course</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Task Confirmation Modal */}
+      {taskToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Delete task</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 text-xs">
+              <p className="font-bold text-slate-800 dark:text-slate-200 truncate">{taskToDelete.title}</p>
+              {taskToDelete.courseCode && (
+                <span
+                  className="inline-block mt-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded text-white uppercase"
+                  style={{ backgroundColor: taskToDelete.courseColor }}
+                >
+                  {taskToDelete.courseCode}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setTaskToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (taskToDelete && onDeleteTask) {
+                    onDeleteTask(taskToDelete.id);
+                  }
+                  setTaskToDelete(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Task</span>
+              </button>
             </div>
           </div>
         </div>

@@ -19,6 +19,8 @@ import {
   syncCoursesToFirestore,
   syncResourcesToFirestore,
   fetchUserDataFromFirestore,
+  deleteTaskFromFirestore,
+  deleteCourseFromFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -462,6 +464,44 @@ export default function App() {
     playChime('success');
   };
 
+  const handleDeleteCourse = (courseId: string, deleteAssociatedData: boolean = true) => {
+    const course = courses.find((c) => c.id === courseId);
+    if (!course) return;
+
+    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+
+    if (deleteAssociatedData) {
+      setTasks((prev) => prev.filter((t) => t.courseCode !== course.code));
+      setResources((prev) => prev.filter((r) => r.courseId !== courseId && r.courseCode !== course.code));
+    } else {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.courseCode === course.code
+            ? { ...t, courseCode: undefined, courseColor: '#64748B', category: 'personal' }
+            : t
+        )
+      );
+    }
+
+    if (selectedCourseId === courseId) {
+      setSelectedCourseId(null);
+      if (activeSubScreen === 'course' || activeSubScreen === 'resource_reader' || activeSubScreen === 'course_tutor') {
+        setActiveSubScreen(null);
+      }
+    }
+
+    if (taskCourseFilter === course.code) {
+      setTaskCourseFilter(undefined);
+    }
+
+    if (firebaseUser) {
+      deleteCourseFromFirestore(firebaseUser.uid, courseId);
+    }
+
+    showToast(`Deleted course "${course.name}"`);
+    playChime('reminder');
+  };
+
   const handleToggleModule = (courseId: string, moduleId: string) => {
     setCourses((prev) =>
       prev.map((c) =>
@@ -879,6 +919,22 @@ export default function App() {
     );
   };
 
+  const handleDeleteTask = (taskId: string) => {
+    const targetTask = tasks.find((t) => t.id === taskId);
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+
+    if (selectedTask?.id === taskId) {
+      setSelectedTask(null);
+    }
+
+    if (firebaseUser) {
+      deleteTaskFromFirestore(firebaseUser.uid, taskId);
+    }
+
+    showToast(`Deleted task "${targetTask?.title || 'Task'}"`);
+    playChime('reminder');
+  };
+
   const handleToggleSubtask = (taskId: string, subtaskId: string) => {
     setTasks((prev) =>
       prev.map((t) => {
@@ -960,6 +1016,7 @@ export default function App() {
           resources={resources}
           onOpenCourse={openCourseById}
           onCreateCourse={handleCreateCourse}
+          onDeleteCourse={handleDeleteCourse}
         />
       );
     }
@@ -1015,6 +1072,8 @@ export default function App() {
           onUploadFile={handleUploadFile}
           onAddTask={handleCreateTask}
           onToggleTask={handleToggleTask}
+          onDeleteTask={handleDeleteTask}
+          onDeleteCourse={handleDeleteCourse}
           onViewAllTasks={(courseCode) => {
             setTaskCourseFilter(courseCode);
             setActiveSubScreen(null);
@@ -1137,7 +1196,7 @@ export default function App() {
             }
             await handleRegenerateAIPlan(task);
           }}
-          onDeleteTask={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
+          onDeleteTask={handleDeleteTask}
         />
       );
     }
@@ -1351,6 +1410,7 @@ export default function App() {
               setSelectedTask(task);
               setActiveSubScreen('task_detail');
             }}
+            onToggleTask={handleToggleTask}
             onStartFocusTimer={(task) => {
               setSelectedTask(task);
               setActiveSubScreen('study_session');
@@ -1368,6 +1428,7 @@ export default function App() {
             resources={resources}
             onOpenCourse={openCourseById}
             onCreateCourse={handleCreateCourse}
+            onDeleteCourse={handleDeleteCourse}
           />
         );
 
@@ -1384,6 +1445,7 @@ export default function App() {
             }}
             onToggleTask={handleToggleTask}
             onAddTask={handleCreateTask}
+            onDeleteTask={handleDeleteTask}
             onComposerStateChange={setIsTaskComposerOpen}
           />
         );
