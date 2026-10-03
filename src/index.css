@@ -15,7 +15,7 @@
     --app-border: #243247;
   }
 
-  html, body {
+  html, body, #root {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
@@ -23,6 +23,10 @@
     line-height: 24px;
     color: #0f172a;
     background: var(--app-background);
+    height: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
   }
   
   .dark body {

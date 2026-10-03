@@ -1275,8 +1275,8 @@ export default function App() {
   };
 
   return (
-    <div className="w-full min-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors">
-      <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between min-h-[100dvh] relative bg-slate-50 dark:bg-slate-950">
+    <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
+      <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
           <OnboardingFlow
@@ -1308,13 +1308,19 @@ export default function App() {
             )}
 
             {/* Scrollable Viewport Content */}
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24 no-scrollbar">
+            <div
+              className={`flex-1 min-h-0 ${
+                activeSubScreen === 'resource_reader'
+                  ? 'overflow-hidden flex flex-col p-0 h-full'
+                  : 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24'
+              } no-scrollbar`}
+            >
               {renderCurrentView()}
             </div>
 
             {/* Fixed Mobile Bottom Nav Bar */}
             {!isTaskComposerOpen && (
-              <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+              <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
                 <MobileBottomNav
                   currentTab={currentTab}
                   onTabChange={handleTabChange}

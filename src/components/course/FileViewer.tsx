@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Download, ExternalLink, Maximize2, Minus, Plus, X } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Download, ExternalLink, Maximize2, Minus, Plus, X, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CourseResource, ResourceAnnotation } from '../../types';
@@ -52,26 +52,39 @@ interface PdfPagesProps {
   onAnnotationsChange?: (annotations: ResourceAnnotation[]) => void;
 }
 
-const PdfPages: React.FC<PdfPagesProps> = ({
-  src,
-  title,
-  resourceId,
+interface PdfSinglePageProps {
+  pdfDoc: any;
+  pageNumber: number;
+  shouldRender: boolean;
+  aspectRatio: number;
+  scaleFactor: number;
+  annotations: ResourceAnnotation[];
+  editMode: boolean;
+  annotationTool: 'pen' | 'highlight' | 'eraser';
+  onAnnotationsChange?: (annotations: ResourceAnnotation[]) => void;
+  resourceId: string;
+}
+
+const PdfSinglePage: React.FC<PdfSinglePageProps> = ({
+  pdfDoc,
   pageNumber,
-  onPageChange,
+  shouldRender,
+  aspectRatio,
+  scaleFactor,
   annotations,
   editMode,
   annotationTool,
   onAnnotationsChange,
+  resourceId,
 }) => {
-  const scrollRef = React.useRef<HTMLDivElement>(null);
-  const pagesRef = React.useRef<HTMLDivElement>(null);
-  const overlayRefs = React.useRef(new Map<number, HTMLCanvasElement>());
-  const activePoints = React.useRef<{ x: number; y: number }[]>([]);
-  const activePage = React.useRef<number | null>(null);
-  const [status, setStatus] = useState('Loading PDF…');
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
+  const activePoints = useRef<{ x: number; y: number }[]>([]);
+  const [isRendered, setIsRendered] = useState(false);
 
-  const redraw = (pageNumber: number) => {
-    const canvas = overlayRefs.current.get(pageNumber);
+  const redrawAnnotations = () => {
+    const canvas = overlayRef.current;
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
@@ -97,6 +110,62 @@ const PdfPages: React.FC<PdfPagesProps> = ({
       });
   };
 
+  useEffect(() => {
+    redrawAnnotations();
+  }, [annotations]);
+
+  useEffect(() => {
+    if (!shouldRender || !pdfDoc) return;
+    let cancelled = false;
+
+    async function renderPage() {
+      try {
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch {}
+        }
+
+        const page = await pdfDoc.getPage(pageNumber);
+        if (cancelled) return;
+
+        // Render at crisp 1.6 scale
+        const viewport = page.getViewport({ scale: 1.6 * scaleFactor });
+        const canvas = canvasRef.current;
+        const overlay = overlayRef.current;
+        if (!canvas || !overlay) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        overlay.width = viewport.width;
+        overlay.height = viewport.height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const task = page.render({
+          canvasContext: ctx,
+          viewport,
+        });
+        renderTaskRef.current = task;
+        await task.promise;
+
+        if (cancelled) return;
+        setIsRendered(true);
+        redrawAnnotations();
+      } catch (err: any) {
+        if (!cancelled && err?.name !== 'RenderingCancelledException') {
+          console.warn(`Page ${pageNumber} render error:`, err);
+        }
+      }
+    }
+
+    void renderPage();
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldRender, pdfDoc, pageNumber, scaleFactor]);
+
   const pointFromEvent = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     return {
@@ -105,142 +174,395 @@ const PdfPages: React.FC<PdfPagesProps> = ({
     };
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    const pages = pagesRef.current;
-    if (!pages) return undefined;
-    pages.replaceChildren();
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!editMode || !onAnnotationsChange) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    activePoints.current = [pointFromEvent(event)];
+  };
 
-    const renderPdf = async () => {
-      try {
-        const response = await fetch(src);
-        if (!response.ok) throw new Error(`Unable to load PDF (${response.status})`);
-        const data = await response.arrayBuffer();
-        const pdf = await getDocument({
-          data,
-          cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/cmaps/',
-          cMapPacked: true,
-          standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/standard_fonts/',
-          wasmUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/wasm/',
-        }).promise;
-        if (cancelled) return;
-        setStatus('');
-        onPageChange?.(pageNumber, pdf.numPages);
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!editMode || !activePoints.current.length) return;
+    const pt = pointFromEvent(event);
+    activePoints.current.push(pt);
 
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-          if (cancelled) return;
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1.35 });
-          const wrapper = document.createElement('div');
-          wrapper.className = 'relative w-full overflow-hidden bg-white shadow-xl';
-          wrapper.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          canvas.className = 'absolute inset-0 block h-full w-full';
-          canvas.setAttribute('aria-label', `${title}, page ${pageNumber}`);
-          const overlay = document.createElement('canvas');
-          overlay.width = viewport.width;
-          overlay.height = viewport.height;
-          overlay.className = `absolute inset-0 block h-full w-full ${editMode ? 'cursor-crosshair' : 'pointer-events-none'}`;
-          overlayRefs.current.set(pageNumber, overlay);
-          overlay.onpointerdown = (event) => {
-            if (!editMode || !onAnnotationsChange) return;
-            overlay.setPointerCapture(event.pointerId);
-            activePage.current = pageNumber;
-            activePoints.current = [pointFromEvent(event as unknown as React.PointerEvent<HTMLCanvasElement>)];
-          };
-          overlay.onpointermove = (event) => {
-            if (!editMode || activePage.current !== pageNumber || !activePoints.current.length) return;
-            activePoints.current.push(pointFromEvent(event as unknown as React.PointerEvent<HTMLCanvasElement>));
-            redraw(pageNumber);
-            const context = overlay.getContext('2d');
-            if (!context) return;
-            context.beginPath();
-            activePoints.current.forEach((point, index) => {
-              const x = point.x * overlay.width;
-              const y = point.y * overlay.height;
-              if (index === 0) context.moveTo(x, y);
-              else context.lineTo(x, y);
-            });
-            context.strokeStyle = annotationTool === 'highlight' ? '#facc15' : '#ef4444';
-            context.lineWidth = (annotationTool === 'highlight' ? 0.05 : 0.006) * overlay.width;
-            context.lineCap = 'round';
-            context.globalAlpha = annotationTool === 'highlight' ? 0.28 : 1;
-            context.stroke();
-            context.globalAlpha = 1;
-          };
-          overlay.onpointerup = () => {
-            if (!editMode || activePage.current !== pageNumber || !activePoints.current.length || !onAnnotationsChange) return;
-            const points = activePoints.current;
-            const last = points[points.length - 1];
-            if (annotationTool === 'eraser') {
-              onAnnotationsChange(
-                annotations.filter(
-                  (annotation) =>
-                    !annotation.points?.some((point) => Math.hypot(point.x - last.x, point.y - last.y) < 0.06)
-                )
-              );
-            } else {
-              const now = new Date().toISOString();
-              onAnnotationsChange([
-                ...annotations,
-                {
-                  id: `annotation-${Date.now()}`,
-                  resourceId,
-                  pageNumber,
-                  kind: annotationTool === 'highlight' ? 'highlight' : 'ink',
-                  points,
-                  color: annotationTool === 'highlight' ? '#facc15' : '#ef4444',
-                  width: annotationTool === 'highlight' ? 0.05 : 0.006,
-                  createdAt: now,
-                  updatedAt: now,
-                },
-              ]);
-            }
-            activePoints.current = [];
-            activePage.current = null;
-          };
-          wrapper.appendChild(canvas);
-          wrapper.appendChild(overlay);
-          wrapper.dataset.page = String(pageNumber);
-          pages.appendChild(wrapper);
-          await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-          redraw(pageNumber);
-        }
-      } catch {
-        if (!cancelled) setStatus('This PDF could not be rendered. Use Download to open the original file.');
-      }
-    };
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const context = overlay.getContext('2d');
+    if (!context) return;
 
-    void renderPdf();
-    return () => {
-      cancelled = true;
-      pages.replaceChildren();
-    };
-  }, [src, title, resourceId, editMode, annotationTool, annotations]);
+    const pts = activePoints.current;
+    if (pts.length < 2) return;
+    const p1 = pts[pts.length - 2];
+    const p2 = pts[pts.length - 1];
 
-  useEffect(() => {
-    const target = pagesRef.current?.querySelector<HTMLElement>(`[data-page="${pageNumber}"]`);
-    target?.scrollIntoView({ block: 'start' });
-  }, [pageNumber]);
+    context.beginPath();
+    context.moveTo(p1.x * overlay.width, p1.y * overlay.height);
+    context.lineTo(p2.x * overlay.width, p2.y * overlay.height);
+    context.strokeStyle = annotationTool === 'highlight' ? '#facc15' : '#ef4444';
+    context.lineWidth = (annotationTool === 'highlight' ? 0.05 : 0.006) * overlay.width;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.globalAlpha = annotationTool === 'highlight' ? 0.28 : 1;
+    context.stroke();
+    context.globalAlpha = 1;
+  };
+
+  const handlePointerUp = () => {
+    if (!editMode || !activePoints.current.length || !onAnnotationsChange) return;
+    const points = activePoints.current;
+    const last = points[points.length - 1];
+    if (annotationTool === 'eraser') {
+      onAnnotationsChange(
+        annotations.filter(
+          (annotation) =>
+            annotation.pageNumber !== pageNumber ||
+            !annotation.points?.some((point) => Math.hypot(point.x - last.x, point.y - last.y) < 0.06)
+        )
+      );
+    } else {
+      const now = new Date().toISOString();
+      onAnnotationsChange([
+        ...annotations,
+        {
+          id: `annotation-${Date.now()}-${pageNumber}`,
+          resourceId,
+          pageNumber,
+          kind: annotationTool === 'highlight' ? 'highlight' : 'ink',
+          points,
+          color: annotationTool === 'highlight' ? '#facc15' : '#ef4444',
+          width: annotationTool === 'highlight' ? 0.05 : 0.006,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+    }
+    activePoints.current = [];
+  };
 
   return (
     <div
-      ref={scrollRef}
-      onScroll={(event) => {
-        const container = event.currentTarget;
-        const wrappers = Array.from(container.querySelectorAll<HTMLElement>('[data-page]'));
-        const visible = wrappers.reduce((closest, wrapper) => {
-          const distance = Math.abs(wrapper.getBoundingClientRect().top - container.getBoundingClientRect().top);
-          return distance < closest.distance ? { distance, page: Number(wrapper.dataset.page) } : closest;
-        }, { distance: Number.POSITIVE_INFINITY, page: pageNumber });
-        if (visible.page) onPageChange?.(visible.page, wrappers.length);
+      className="relative w-full shadow-lg rounded-lg overflow-hidden bg-white border border-slate-200/90 dark:border-slate-800 shrink-0 select-none"
+      style={{
+        aspectRatio: `${aspectRatio}`,
       }}
-      className="h-full overflow-auto bg-white p-0 sm:p-2"
     >
-      {status && <p className="flex min-h-full items-center justify-center text-center text-sm text-white/70">{status}</p>}
-      <div ref={pagesRef} className="mx-auto flex max-w-4xl flex-col gap-4" />
+      {/* Canvas layer */}
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 w-full h-full block transition-opacity duration-200 ${isRendered ? 'opacity-100' : 'opacity-0'}`}
+      />
+
+      {/* Overlay canvas for drawing annotations */}
+      <canvas
+        ref={overlayRef}
+        className={`absolute inset-0 w-full h-full block ${editMode ? 'cursor-crosshair' : 'pointer-events-none'}`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      />
+
+      {/* Placeholder / skeleton before render */}
+      {!isRendered && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-400 gap-1.5 animate-pulse">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Page {pageNumber}</span>
+          <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin opacity-60" />
+        </div>
+      )}
+
+      {/* Page number badge in corner */}
+      <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/40 backdrop-blur-xs text-[10px] font-bold text-white pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
+        {pageNumber}
+      </div>
+    </div>
+  );
+};
+
+const PdfPages: React.FC<PdfPagesProps> = ({
+  src,
+  title,
+  resourceId,
+  pageNumber,
+  onPageChange,
+  annotations,
+  editMode,
+  annotationTool,
+  onAnnotationsChange,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pdfDocRef = useRef<any>(null);
+  const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const isUserScrollingRef = useRef<boolean>(false);
+  const scrollTimeoutRef = useRef<any>(null);
+
+  const [numPages, setNumPages] = useState<number>(1);
+  const [aspectRatio, setAspectRatio] = useState<number>(0.75); // standard letter/A4 ~0.707 - 0.77
+  const [loadingDoc, setLoadingDoc] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [renderedPages, setRenderedPages] = useState<Set<number>>(new Set([1, 2]));
+  const [zoom, setZoom] = useState<number>(1);
+
+  const pinchStartDistanceRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1);
+  const lastTapRef = useRef<number>(0);
+
+  // 1. Two-finger pinch-to-zoom touch gesture listener
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        const dist = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+        pinchStartDistanceRef.current = dist;
+        pinchStartZoomRef.current = zoom;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && pinchStartDistanceRef.current !== null) {
+        if (e.cancelable) e.preventDefault();
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        const dist = Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+        if (pinchStartDistanceRef.current > 0) {
+          const ratio = dist / pinchStartDistanceRef.current;
+          const newZoom = Math.min(3.0, Math.max(1.0, +(pinchStartZoomRef.current * ratio).toFixed(2)));
+          setZoom(newZoom);
+        }
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        pinchStartDistanceRef.current = null;
+      }
+      // Double tap to quickly zoom in/out (when not drawing)
+      if (!editMode && e.changedTouches.length === 1 && e.touches.length === 0) {
+        const now = Date.now();
+        if (now - lastTapRef.current < 300) {
+          setZoom((prev) => (prev > 1.15 ? 1.0 : 1.75));
+          lastTapRef.current = 0;
+        } else {
+          lastTapRef.current = now;
+        }
+      }
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const delta = -e.deltaY * 0.01;
+        setZoom((prev) => Math.min(3.0, Math.max(1.0, +(prev + delta).toFixed(2))));
+      }
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [zoom, editMode]);
+
+  // 1. Load document once and establish baseline aspect ratio
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingDoc(true);
+    setErrorMsg(null);
+
+    async function loadDocument() {
+      try {
+        let pdf: any;
+        try {
+          const loadingTask = getDocument({
+            url: src,
+            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/cmaps/',
+            cMapPacked: true,
+          });
+          pdf = await loadingTask.promise;
+        } catch {
+          const response = await fetch(src);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const buffer = await response.arrayBuffer();
+          const loadingTask = getDocument({
+            data: buffer,
+            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/cmaps/',
+            cMapPacked: true,
+          });
+          pdf = await loadingTask.promise;
+        }
+
+        if (cancelled) return;
+        pdfDocRef.current = pdf;
+        setNumPages(pdf.numPages);
+
+        // Fetch page 1 to establish natural document aspect ratio
+        try {
+          const page1 = await pdf.getPage(1);
+          const vp = page1.getViewport({ scale: 1 });
+          if (!cancelled && vp.width && vp.height) {
+            setAspectRatio(vp.width / vp.height);
+          }
+        } catch {}
+
+        setRenderedPages(new Set([1, 2]));
+        setLoadingDoc(false);
+        onPageChange?.(pageNumber, pdf.numPages);
+      } catch (err: any) {
+        if (!cancelled) {
+          console.warn('PDF load error:', err);
+          setErrorMsg('Could not load PDF in browser. You can download the original file.');
+          setLoadingDoc(false);
+        }
+      }
+    }
+
+    void loadDocument();
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  // 2. Set up IntersectionObserver to lazy-render pages as user continuously scrolls
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || loadingDoc || numPages <= 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const pageNum = Number(entry.target.getAttribute('data-page'));
+            if (pageNum) {
+              setRenderedPages((prev) => {
+                if (prev.has(pageNum)) return prev;
+                const next = new Set(prev);
+                next.add(pageNum);
+                return next;
+              });
+            }
+          }
+        });
+      },
+      {
+        root: container,
+        rootMargin: '350px 0px', // Pre-render 350px before entering viewport
+        threshold: 0.01,
+      }
+    );
+
+    Object.values(pageRefs.current).forEach((el) => {
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [loadingDoc, numPages]);
+
+  // 3. Track current visible page during continuous scroll
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    isUserScrollingRef.current = true;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+    }, 250);
+
+    const containerTop = container.getBoundingClientRect().top;
+    let closestPage = pageNumber;
+    let minDistance = Infinity;
+
+    for (let p = 1; p <= numPages; p++) {
+      const el = pageRefs.current[p];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const dist = Math.abs(rect.top - containerTop - 15);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestPage = p;
+      }
+    }
+
+    if (closestPage !== pageNumber) {
+      onPageChange?.(closestPage, numPages);
+    }
+  };
+
+  // 4. Smooth scroll to page when pageNumber changes externally (header controls)
+  useEffect(() => {
+    if (!isUserScrollingRef.current && pageRefs.current[pageNumber]) {
+      pageRefs.current[pageNumber]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [pageNumber]);
+
+  return (
+    <div className="relative w-full h-full flex flex-col min-h-0 bg-slate-100 dark:bg-slate-950">
+      {/* Continuous Scroll Viewport */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className={`w-full flex-1 min-h-0 overflow-y-auto ${zoom > 1.05 ? 'overflow-x-auto' : 'overflow-x-hidden'} p-2.5 sm:p-4 pb-8 flex flex-col items-center gap-3 sm:gap-4 no-scrollbar select-none`}
+      >
+        {loadingDoc && (
+          <div className="flex flex-col items-center justify-center my-auto min-h-[300px] text-slate-500 gap-2">
+            <div className="w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-semibold">Opening PDF document…</p>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="flex flex-col items-center justify-center my-auto min-h-[300px] text-center p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm max-w-sm">
+            <p className="text-xs text-rose-500 font-semibold mb-3">{errorMsg}</p>
+            <a
+              href={src}
+              download={title}
+              className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold inline-flex items-center gap-1.5"
+            >
+              <Download className="w-4 h-4" /> Download PDF
+            </a>
+          </div>
+        )}
+
+        {!loadingDoc && !errorMsg && (
+          <div
+            className="mx-auto flex flex-col items-center gap-3 sm:gap-4 transition-all duration-75 origin-top"
+            style={{
+              width: `${Math.round(zoom * 100)}%`,
+              maxWidth: zoom <= 1 ? '36rem' : `${Math.round(zoom * 36)}rem`,
+            }}
+          >
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((p) => (
+              <div
+                key={p}
+                data-page={p}
+                ref={(el) => {
+                  pageRefs.current[p] = el;
+                }}
+                className="w-full"
+              >
+                <PdfSinglePage
+                  pdfDoc={pdfDocRef.current}
+                  pageNumber={p}
+                  shouldRender={renderedPages.has(p)}
+                  aspectRatio={aspectRatio}
+                  scaleFactor={zoom}
+                  annotations={annotations}
+                  editMode={editMode}
+                  annotationTool={annotationTool}
+                  onAnnotationsChange={onAnnotationsChange}
+                  resourceId={resourceId}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -381,7 +703,7 @@ export const FileViewer: React.FC<FileViewerProps> = ({
 
   /** The actual surface — reused by both inline and focus layouts. */
   const surface = (
-    <div className={`w-full h-full min-h-[320px] relative ${viewer === 'pdf' ? 'bg-white' : 'bg-slate-900 dark:bg-black'}`}>
+    <div className={`w-full h-full flex-1 min-h-0 relative flex flex-col overflow-hidden ${viewer === 'pdf' ? 'bg-slate-100 dark:bg-slate-950' : 'bg-slate-900 dark:bg-black'}`}>
       {viewer === 'pdf' && resolvedFileUrl && (
         <PdfPages
           src={resolvedFileUrl}
@@ -517,7 +839,7 @@ export const FileViewer: React.FC<FileViewerProps> = ({
     );
   }
 
-  return <div className="h-full overflow-hidden">{surface}</div>;
+  return <div className="w-full h-full flex-1 min-h-0 overflow-hidden flex flex-col">{surface}</div>;
 };
 
 export default FileViewer;
