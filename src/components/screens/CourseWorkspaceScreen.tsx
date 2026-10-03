@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { Course, CourseProgress, CourseResource, ScheduleEvent, StudyFile, Task } from '../../types';
 import { TaskComposer } from '../tasks/TaskComposer';
+import { saveFileBlob } from '../../utils/fileStorage';
+import { FileViewer } from '../course/FileViewer';
 
 /** Which panel of the "Add resource" flow is showing. */
 type AddStep = 'choose' | 'files' | 'manual' | 'review';
@@ -34,6 +36,7 @@ interface ReviewDraft {
   file?: File;
   /** Base64 data URL of the bytes, when the file is small enough to keep. */
   dataUrl?: string;
+  fileStorageKey?: string;
   /** MIME type reported by the browser for this file. */
   mime?: string;
 }
@@ -80,25 +83,6 @@ function readFileAsText(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result ?? ''));
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
-  });
-}
-
-/**
- * Largest file we keep in localStorage as a data URL. Base64 inflates by ~33%,
- * and the whole app shares the origin quota, so stay conservative.
- */
-const MAX_STORE_BYTES = 2.5 * 1024 * 1024;
-
-function canStoreFile(file: { size: number }): boolean {
-  return file.size > 0 && file.size <= MAX_STORE_BYTES;
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
   });
 }
 
@@ -189,6 +173,8 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
   const [resType, setResType] = useState<CourseResource['type']>('text');
   const [addStep, setAddStep] = useState<AddStep>('choose');
   const [review, setReview] = useState<ReviewDraft | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+    const [isReviewPreviewOpen, setIsReviewPreviewOpen] = useState(false);
   const [reviewBack, setReviewBack] = useState<'choose' | 'files'>('choose');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -216,6 +202,8 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
       estimatedReadMinutes: estimateMinutes(resContent.trim()),
       tags: ['notes'],
     });
+    setUploadNotice(`${resTitle.trim()} added to ${course.code}`);
+    window.setTimeout(() => setUploadNotice(null), 3500);
     setResTitle('');
     setResContent('');
     setResType('text');
@@ -242,34 +230,30 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
 
     const type = typeFromFilename(file.name);
     const fileSize = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-    const title = stripExtension(file.name);
     const mime = file.type || undefined;
-    let content: string;
-    let dataUrl: string | undefined;
+    const fileStorageKey = await saveFileBlob(file, `file-${crypto.randomUUID()}`);
 
-    if (isTextFile(file.name)) {
-      try {
-        const raw = await readFileAsText(file);
-        const body = raw.length > 200000 ? `${raw.slice(0, 200000)}\n\n> Preview truncated…` : raw;
-        content = `# ${title}\n\n${body}`;
-      } catch {
-        content = buildFileStub({ title, type, size: fileSize });
-      }
-    } else {
-      content = buildFileStub({ title, type, size: fileSize });
-      // Keep the real bytes so the reader can open it full-screen (PDF/image).
-      if (canStoreFile(file)) {
-        try {
-          dataUrl = await readFileAsDataUrl(file);
-        } catch {
-          dataUrl = undefined;
-        }
-      }
-    }
-
-    setReview({ title, type, content, fileName: file.name, fileSize, file, dataUrl, mime });
-    setReviewBack('choose');
-    setAddStep('review');
+    onUploadFile?.({
+      name: file.name,
+      size: fileSize,
+      type: studyFileType(file.name),
+      courseCode: course.code,
+      fileStorageKey,
+    });
+    onAddResource({
+      title: file.name,
+      type,
+      content: '',
+      fileName: file.name,
+      mime,
+      fileStorageKey,
+      estimatedReadMinutes: 1,
+      tags: [],
+    });
+    setUploadNotice(`${file.name} added to ${course.code}`);
+    window.setTimeout(() => setUploadNotice(null), 3500);
+    setIsAddResourceOpen(false);
+    setAddStep('choose');
   };
 
   /** Step 1b: an already-uploaded file was picked from the library. */
@@ -289,6 +273,7 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
       fileName: f.name,
       fileSize: f.size,
       dataUrl: f.dataUrl,
+      fileStorageKey: f.fileStorageKey,
       mime: undefined,
     });
     setReviewBack('files');
@@ -310,6 +295,7 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
         summary: `Added to ${course.code} as a readable resource.`,
         keyTopics: [course.code, 'Course library'],
         dataUrl: review.dataUrl,
+        fileStorageKey: review.fileStorageKey,
       });
     }
 
@@ -320,9 +306,13 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
       fileName: review.fileName,
       mime: review.mime,
       fileData: review.dataUrl,
+      fileStorageKey: review.fileStorageKey,
       estimatedReadMinutes: estimateMinutes(review.content),
       tags: ['file', review.type],
     });
+
+    setUploadNotice(`${review.fileName} added to ${course.code}`);
+    window.setTimeout(() => setUploadNotice(null), 3500);
 
     setReview(null);
     setAddStep('choose');
@@ -350,6 +340,13 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
         <span className="text-sm font-bold">Course workspace</span>
         <div className="w-16" />
       </header>
+
+      {uploadNotice && (
+        <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300 animate-fade-in">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">✓</span>
+          {uploadNotice}
+        </div>
+      )}
 
       <section
         className="rounded-[1.75rem] p-6 sm:p-8 text-white shadow-[0_18px_45px_rgba(15,23,42,0.16)]"
@@ -947,6 +944,17 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
 
             {addStep === 'review' && review && (
               <form onSubmit={handleSaveReview} className="space-y-3 py-3">
+                                {(review.fileStorageKey || review.dataUrl) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsReviewPreviewOpen(true)}
+                                    className="w-full py-3 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold"
+                                  >
+                                    View original {review.type.toUpperCase()} before adding
+                                  </button>
+                                )}
+                                    Summary / notes (optional)
+                                    The original file is opened with the preview button above. This text is only supporting context.
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
                   <span className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 flex items-center justify-center shrink-0">
                     <FileText className="w-4 h-4" />
@@ -1014,6 +1022,28 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
                 </button>
               </form>
             )}
+                {isReviewPreviewOpen && review && (
+                  <FileViewer
+                    resource={{
+                      id: 'review-preview',
+                      courseId: course.id,
+                      courseCode: course.code,
+                      title: review.title,
+                      type: review.type,
+                      content: review.content,
+                      fileName: review.fileName,
+                      mime: review.mime,
+                      fileData: review.dataUrl,
+                      fileStorageKey: review.fileStorageKey,
+                      estimatedReadMinutes: 1,
+                      tags: [],
+                      createdAt: new Date().toISOString(),
+                      reading: { percent: 0, lastPosition: 0, completed: false },
+                    }}
+                    mode="focus"
+                    onExitFocus={() => setIsReviewPreviewOpen(false)}
+                  />
+                )}
           </div>
         </div>
       )}

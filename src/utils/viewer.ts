@@ -18,6 +18,16 @@ export function detectViewer(
   if (m.includes('pdf') || n.endsWith('.pdf') || type === 'pdf') return 'pdf';
   if (m.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(n)) return 'image';
   if (m.startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv)$/.test(n) || type === 'video') return 'video';
-  if (type === 'slide' || type === 'docx') return 'document';
+  if (type === 'text' || /\.(txt|md|markdown|csv|json|log|rtf|odt)$/.test(n) || m.includes('text')) return 'document';
+  if (
+    type === 'slide' ||
+    type === 'docx' ||
+    /\.(ppt|pptx|key|odp|doc|docx|rtf|odt|xlsx|xls)$/.test(n) ||
+    m.includes('powerpoint') ||
+    m.includes('word') ||
+    m.includes('sheet')
+  ) {
+    return 'document';
+  }
   return null;
 }

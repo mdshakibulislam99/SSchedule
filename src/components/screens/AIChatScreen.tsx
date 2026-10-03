@@ -28,6 +28,8 @@ interface AIChatScreenProps {
   allTasks: Task[];
   schedule?: ScheduleEvent[];
   user?: UserProfile;
+  aiConfigured: boolean;
+  onAISetupRequired: () => void;
 }
 
 export const AIChatScreen: React.FC<AIChatScreenProps> = ({
@@ -40,6 +42,8 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   allTasks,
   schedule = [],
   user,
+  aiConfigured,
+  onAISetupRequired,
 }) => {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
@@ -96,6 +100,10 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   const handleSend = async (textToSend?: string) => {
     const text = textToSend || inputText;
     if (!text.trim()) return;
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
 
     const userMsg: AIMessage = {
       id: `user-${Date.now()}`,

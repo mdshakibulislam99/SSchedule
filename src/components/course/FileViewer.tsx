@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Download, ExternalLink, Maximize2, Minus, Plus, X } from 'lucide-react';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CourseResource } from '../../types';
 import { detectViewer } from '../../utils/viewer';
+import { loadFileBlob } from '../../utils/fileStorage';
+
+GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
 interface FileViewerProps {
   resource: CourseResource;
@@ -25,6 +30,58 @@ function dataUrlToBlobUrl(dataUrl: string): string | null {
   }
 }
 
+function buildGoogleViewerUrl(fileUrl: string): string {
+  return `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(fileUrl)}`;
+}
+
+const PdfPages: React.FC<{ src: string; title: string }> = ({ src, title }) => {
+  const pagesRef = React.useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState('Loading PDF…');
+
+  useEffect(() => {
+    let cancelled = false;
+    const pages = pagesRef.current;
+    if (!pages) return undefined;
+    pages.replaceChildren();
+
+    const renderPdf = async () => {
+      try {
+        const pdf = await getDocument({ url: src }).promise;
+        if (cancelled) return;
+        setStatus('');
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          if (cancelled) return;
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.35 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.className = 'block w-full h-auto bg-white shadow-xl';
+          canvas.setAttribute('aria-label', `${title}, page ${pageNumber}`);
+          pages.appendChild(canvas);
+          await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
+        }
+      } catch {
+        if (!cancelled) setStatus('This PDF could not be rendered. Use Download to open the original file.');
+      }
+    };
+
+    void renderPdf();
+    return () => {
+      cancelled = true;
+      pages.replaceChildren();
+    };
+  }, [src, title]);
+
+  return (
+    <div className="h-full overflow-auto bg-white p-0 sm:p-2">
+      {status && <p className="flex min-h-full items-center justify-center text-center text-sm text-white/70">{status}</p>}
+      <div ref={pagesRef} className="mx-auto flex max-w-4xl flex-col gap-4" />
+    </div>
+  );
+};
+
 const VIEWER_LABEL: Record<string, string> = {
   pdf: 'PDF',
   image: 'Image',
@@ -41,10 +98,13 @@ export const FileViewer: React.FC<FileViewerProps> = ({ resource, mode, onExitFo
   const viewer = detectViewer(resource.type, resource.mime, resource.fileName);
   const [zoom, setZoom] = useState(1);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [storedBlobUrl, setStoredBlobUrl] = useState<string | null>(null);
 
   const isImage = viewer === 'image';
-  const hasData = Boolean(resource.fileData);
+  const hasData = Boolean(resource.fileData || resource.fileStorageKey);
   const downloadName = resource.fileName || resource.title;
+  const officeUrl = blobUrl || storedBlobUrl || resource.fileData || undefined;
+  const googleViewerUrl = officeUrl ? buildGoogleViewerUrl(officeUrl) : undefined;
 
   // Non-image payloads are re-hydrated from base64 into an object URL.
   useEffect(() => {
@@ -56,26 +116,43 @@ export const FileViewer: React.FC<FileViewerProps> = ({ resource, mode, onExitFo
     };
   }, [resource.fileData, isImage]);
 
+  useEffect(() => {
+    let active = true;
+    if (!resource.fileStorageKey) return undefined;
+    loadFileBlob(resource.fileStorageKey)
+      .then((blob) => {
+        if (active && blob) setStoredBlobUrl(URL.createObjectURL(blob));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      setStoredBlobUrl((url) => {
+        if (url) URL.revokeObjectURL(url);
+        return null;
+      });
+    };
+  }, [resource.fileStorageKey]);
+
   if (!hasData) return null;
 
-  const href = resource.fileData || blobUrl || undefined;
+  const resolvedFileUrl = blobUrl || storedBlobUrl;
+  const href = resource.fileData || resolvedFileUrl || undefined;
 
   /** The actual surface — reused by both inline and focus layouts. */
   const surface = (
-    <div className="w-full h-full min-h-[320px] bg-slate-900 dark:bg-black relative">
-      {viewer === 'pdf' && blobUrl && (
-        <iframe
-          src={blobUrl}
-          title={resource.title}
-          allow="fullscreen"
-          className="w-full h-full min-h-[320px] border-0 bg-slate-900"
-        />
+    <div className={`w-full h-full min-h-[320px] relative ${viewer === 'pdf' ? 'bg-white' : 'bg-slate-900 dark:bg-black'}`}>
+      {viewer === 'pdf' && resolvedFileUrl && <PdfPages src={resolvedFileUrl} title={resource.title} />}
+
+      {viewer === 'pdf' && !resolvedFileUrl && (
+        <div className="w-full h-full min-h-[320px] flex items-center justify-center text-sm text-white/70">
+          Loading original PDF…
+        </div>
       )}
 
       {viewer === 'image' && (
         <div className="w-full h-full overflow-auto p-4 flex items-start justify-center no-scrollbar">
           <img
-            src={resource.fileData}
+            src={resource.fileData || storedBlobUrl || undefined}
             alt={resource.title}
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
             className="max-w-full rounded-lg shadow-2xl transition-transform"
@@ -83,11 +160,19 @@ export const FileViewer: React.FC<FileViewerProps> = ({ resource, mode, onExitFo
         </div>
       )}
 
-      {viewer === 'video' && blobUrl && (
-        <video src={blobUrl} controls playsInline className="w-full h-full object-contain bg-black" />
+      {viewer === 'video' && (blobUrl || storedBlobUrl) && (
+        <video src={blobUrl || storedBlobUrl || undefined} controls playsInline className="w-full h-full object-contain bg-black" />
       )}
 
-      {viewer === 'document' && (
+      {viewer === 'document' && googleViewerUrl && (
+        <iframe
+          src={googleViewerUrl}
+          title={resource.title}
+          className="w-full h-full min-h-[320px] border-0 bg-slate-900"
+        />
+      )}
+
+      {viewer === 'document' && !googleViewerUrl && (
         <div className="w-full h-full flex items-center justify-center p-6">
           <div className="max-w-md w-full rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 text-center space-y-4">
             <p className="text-4xl">📄</p>
@@ -96,12 +181,11 @@ export const FileViewer: React.FC<FileViewerProps> = ({ resource, mode, onExitFo
                 {resource.fileName || resource.title}
               </p>
               <p className="text-[11px] text-slate-500 mt-1">
-                {VIEWER_LABEL.document} previews need the original app.
+                {VIEWER_LABEL.document} preview is not available offline.
               </p>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Open it below in PowerPoint / Keynote / Word, or export it as a PDF and add that
-              instead to read it right here with no distractions.
+              Open it below in the original app or keep a PDF version for a native in-app preview.
             </p>
             <div className="flex gap-2">
               <a
@@ -179,11 +263,7 @@ export const FileViewer: React.FC<FileViewerProps> = ({ resource, mode, onExitFo
     );
   }
 
-  return (
-    <div className="h-full rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800">
-      {surface}
-    </div>
-  );
+  return <div className="h-full overflow-hidden">{surface}</div>;
 };
 
 export default FileViewer;

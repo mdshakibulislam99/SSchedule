@@ -1,6 +1,50 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight } from 'lucide-react';
-import { StudyFile, StudyNote } from '../../types';
+import { CourseResource, StudyFile, StudyNote } from '../../types';
+import { FileViewer } from '../course/FileViewer';
+import { saveFileBlob } from '../../utils/fileStorage';
+
+function createViewerResource(file: StudyFile): CourseResource {
+  const lower = file.name.toLowerCase();
+  const mime = lower.endsWith('.pdf')
+    ? 'application/pdf'
+    : lower.endsWith('.ppt') || lower.endsWith('.pptx')
+      ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      : lower.endsWith('.doc') || lower.endsWith('.docx')
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : lower.match(/\.(png|jpe?g|gif|webp|svg|bmp)$/)
+          ? `image/${lower.endsWith('.svg') ? 'svg+xml' : lower.split('.').pop()}`
+          : undefined;
+
+  const type: CourseResource['type'] =
+    file.type === 'pdf'
+      ? 'pdf'
+      : file.type === 'ppt'
+        ? 'slide'
+        : file.type === 'docx'
+          ? 'docx'
+          : file.type === 'image'
+            ? 'link'
+            : 'text';
+
+  return {
+    id: file.id,
+    courseId: '',
+    courseCode: file.courseCode || '',
+    title: file.name,
+    type,
+    sourceUrl: undefined,
+    content: file.summary || 'This uploaded resource is ready to read in app.',
+    fileName: file.name,
+    mime,
+    fileData: file.dataUrl,
+    fileStorageKey: file.fileStorageKey,
+    estimatedReadMinutes: 5,
+    tags: file.keyTopics || [],
+    createdAt: file.uploadedAt,
+    reading: { percent: 0, lastPosition: 0, completed: false },
+  };
+}
 
 interface FilesScreenProps {
   files: StudyFile[];
@@ -21,24 +65,48 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'notes'>('files');
   const [selectedFile, setSelectedFile] = useState<StudyFile | null>(null);
+  const [readerFile, setReaderFile] = useState<StudyFile | null>(null);
+  const [fileTab, setFileTab] = useState<'file' | 'summary'>('file');
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
 
-  const handleSimulateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const canReadInApp = useMemo(() => (file: StudyFile) => Boolean(file.dataUrl || file.fileStorageKey), []);
+
+  const handleSimulateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const uploaded = e.target.files?.[0];
-    if (uploaded) {
-      onUploadFile({
-        name: uploaded.name,
-        size: `${(uploaded.size / (1024 * 1024)).toFixed(1)} MB`,
-        type: uploaded.name.endsWith('.pdf') ? 'pdf' : 'docx',
-        summary: 'Analyzed course syllabus and lecture notes with extracted deadlines.',
-        extractedDeadlines: [
-          { title: `${uploaded.name.replace(/\.[^/.]+$/, '')} Final Milestone`, date: 'April 28, 11:59 PM' },
-        ],
-        keyTopics: ['Core Theory', 'Weekly Readings', 'Exam Weights'],
-      });
+    if (!uploaded) return;
+
+    const ext = uploaded.name.split('.').pop()?.toLowerCase() || '';
+    const type: StudyFile['type'] =
+      ext === 'pdf'
+        ? 'pdf'
+        : ext === 'ppt' || ext === 'pptx'
+          ? 'ppt'
+          : ['doc', 'docx', 'rtf', 'odt'].includes(ext)
+            ? 'docx'
+            : ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)
+              ? 'image'
+              : 'text';
+
+    let fileStorageKey: string | undefined;
+
+    try {
+      fileStorageKey = await saveFileBlob(uploaded, `file-${crypto.randomUUID()}`);
+    } catch {
+      fileStorageKey = undefined;
     }
+
+    onUploadFile({
+      name: uploaded.name,
+      size: `${(uploaded.size / (1024 * 1024)).toFixed(1)} MB`,
+      type,
+      fileStorageKey,
+    });
+    setUploadNotice(`${uploaded.name} added`);
+    window.setTimeout(() => setUploadNotice(null), 3500);
+    e.target.value = '';
   };
 
   const handleSaveNote = (e: React.FormEvent) => {
@@ -68,6 +136,13 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
           </button>
         )}
       </div>
+
+      {uploadNotice && (
+        <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300 animate-fade-in">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">✓</span>
+          {uploadNotice}
+        </div>
+      )}
 
       {/* Tabs (Matching Screen 13: Files / Notes) */}
       <div className="flex items-center gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs font-semibold">
@@ -99,7 +174,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
           <label className="border-2 border-dashed border-indigo-200 dark:border-indigo-900/60 rounded-3xl p-6 bg-indigo-50/40 dark:bg-indigo-950/20 hover:bg-indigo-50/70 transition-colors flex flex-col items-center justify-center text-center cursor-pointer group">
             <input
               type="file"
-              accept=".pdf,.docx,.txt,image/*"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,image/*,video/*"
               onChange={handleSimulateUpload}
               className="hidden"
             />
@@ -110,7 +185,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               Tap to upload
             </span>
             <span className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              PDF, DOC, TXT, or image (max 10MB)
+              PDF, PPT, DOC, TXT, image, or video
             </span>
           </label>
 
@@ -124,7 +199,10 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               {files.map((file) => (
                 <div
                   key={file.id}
-                  onClick={() => setSelectedFile(file)}
+                  onClick={() => {
+                    setSelectedFile(file);
+                    setFileTab('file');
+                  }}
                   className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer active:scale-[0.99]"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -202,64 +280,51 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               </button>
             </div>
 
-            {/* AI File Summary */}
-            <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 space-y-2">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>AI Document Analysis</span>
-              </div>
-              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-                {selectedFile.summary || 'Document analyzed by StudyAI intelligence engine.'}
-              </p>
+            <div className="flex items-center gap-1 rounded-2xl bg-slate-100 dark:bg-slate-950 p-1 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setFileTab('file')}
+                className={`flex-1 rounded-xl py-2.5 transition-colors ${fileTab === 'file' ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500'}`}
+              >
+                File
+              </button>
+              <button
+                type="button"
+                onClick={() => setFileTab('summary')}
+                className={`flex-1 rounded-xl py-2.5 transition-colors ${fileTab === 'summary' ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500'}`}
+              >
+                Summary
+              </button>
             </div>
 
-            {/* Extracted Deadlines */}
-            {selectedFile.extractedDeadlines && selectedFile.extractedDeadlines.length > 0 && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                  Extracted Deadlines & Exams
-                </h4>
-                <div className="space-y-1.5">
-                  {selectedFile.extractedDeadlines.map((dl, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 text-xs"
-                    >
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{dl.title}</span>
-                      <span className="font-mono text-rose-500 font-bold">{dl.date}</span>
-                    </div>
-                  ))}
-                </div>
+            {fileTab === 'file' && (
+              <div className="h-[58vh] min-h-[320px] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
+                {canReadInApp(selectedFile) ? (
+                  <FileViewer resource={createViewerResource(selectedFile)} mode="inline" />
+                ) : (
+                  <div className="flex h-full items-center justify-center p-6 text-center text-xs text-slate-500">
+                    The original file is unavailable. Re-upload it to view it here.
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="space-y-2 pt-2">
-              <button
-                onClick={() => {
-                  const f = selectedFile;
-                  setSelectedFile(null);
-                  onAskAIAboutFile(f);
-                }}
-                className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-indigo-600/30"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>Ask AI About This File</span>
-              </button>
+            {fileTab === 'summary' && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                {selectedFile.summary || 'No summary is available for this file.'}
+              </div>
+            )}
 
-              <button
-                onClick={() => {
-                  onCreateTasksFromFile(selectedFile);
-                  setSelectedFile(null);
-                }}
-                className="w-full py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center justify-center gap-1.5"
-              >
-                <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Extract Tasks to Schedule</span>
-              </button>
-            </div>
           </div>
         </div>
+      )}
+
+      {readerFile && (
+        <FileViewer
+          resource={createViewerResource(readerFile)}
+          mode="focus"
+          onExitFocus={() => setReaderFile(null)}
+        />
       )}
 
       {/* Add Note Modal */}

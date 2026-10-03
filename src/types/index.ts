@@ -81,6 +81,8 @@ export interface CourseResource {
    * storage threshold; large files fall back to metadata only.
    */
   fileData?: string;
+  /** IndexedDB key for the original file when it is too large for localStorage. */
+  fileStorageKey?: string;
   estimatedReadMinutes: number;
   tags: string[];
   createdAt: string;
@@ -217,7 +219,7 @@ export interface StudyFile {
   id: string;
   name: string;
   size: string;
-  type: 'pdf' | 'docx' | 'image' | 'text';
+  type: 'pdf' | 'docx' | 'ppt' | 'image' | 'text';
   uploadedAt: string;
   summary?: string;
   extractedDeadlines?: { title: string; date: string }[];
@@ -225,6 +227,8 @@ export interface StudyFile {
   courseCode?: string;
   /** Base64 data URL of the file bytes (set when small enough to store). */
   dataUrl?: string;
+  /** IndexedDB key for larger files that cannot fit in localStorage. */
+  fileStorageKey?: string;
 }
 
 export interface StudyNote {

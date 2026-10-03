@@ -1,18 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
+  FileText,
   Maximize2,
-  Minus,
-  Plus,
   Volume2,
   VolumeX,
   CheckCircle2,
   Circle,
   Sparkles,
   ListChecks,
-  Lightbulb,
-  GraduationCap,
-  AlignLeft,
   X,
 } from 'lucide-react';
 import { AIProviderConfig, Course, CourseResource, CourseResourceReading } from '../../types';
@@ -26,17 +22,9 @@ interface ResourceReaderScreenProps {
   config: AIProviderConfig;
   onBack: () => void;
   onUpdateReading: (resourceId: string, patch: Partial<CourseResourceReading>) => void;
-  onAskTutor: (resource: CourseResource) => void;
-  onStartQuiz: (resource: CourseResource) => void;
+  aiConfigured: boolean;
+  onAISetupRequired: () => void;
 }
-
-type ReaderTheme = 'light' | 'sepia' | 'dark';
-
-const THEME_STYLES: Record<ReaderTheme, { bg: string; text: string; label: string }> = {
-  light: { bg: 'bg-white dark:bg-slate-900', text: 'text-slate-800 dark:text-slate-200', label: 'Light' },
-  sepia: { bg: 'bg-[#f6ecd9]', text: 'text-[#4a3b28]', label: 'Sepia' },
-  dark: { bg: 'bg-slate-950', text: 'text-slate-200', label: 'Dark' },
-};
 
 /** Strip markdown-ish syntax so text-to-speech reads clean prose. */
 function toSpeechText(content: string): string {
@@ -56,24 +44,22 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
   config,
   onBack,
   onUpdateReading,
-  onAskTutor,
-  onStartQuiz,
+  aiConfigured,
+  onAISetupRequired,
 }) => {
-  const [theme, setTheme] = useState<ReaderTheme>('light');
-  const [fontScale, setFontScale] = useState(1);
-  const [lineHeight, setLineHeight] = useState(1.7);
+  const hasFile = Boolean(resource.fileData || resource.fileStorageKey);
   const [progress, setProgress] = useState(resource.reading.percent);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [aiPanel, setAiPanel] = useState<{ title: string; body: string } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [focus, setFocus] = useState(false);
-  const hasFile = Boolean(resource.fileData);
+  const [readerTab, setReaderTab] = useState<'view' | 'summarize'>(hasFile ? 'view' : 'summarize');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(resource.reading.percent);
 
   const reading = resource.reading;
-  const themeStyle = THEME_STYLES[theme];
+  const themeStyle = { bg: 'bg-white dark:bg-slate-900', text: 'text-slate-800 dark:text-slate-200' };
 
   // Resume from the last saved scroll position on mount.
   useEffect(() => {
@@ -147,19 +133,26 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
     }
   };
 
-  const handleSummarize = () =>
-    runAi('Summary', () => AIOrchestrator.summarizeResource(resource, config));
+  const handleSummarize = () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
+    setReaderTab('summarize');
+    return runAi('Summary', () => AIOrchestrator.summarizeResource(resource, config));
+  };
 
-  const handleExplain = (level: 'simple' | 'advanced') =>
-    runAi(level === 'simple' ? 'Explained simply' : 'In-depth explanation', () =>
-      AIOrchestrator.explainConcept(resource.content, level, config)
-    );
-
-  const handleKeyTerms = () =>
-    runAi('Key terms', async () => {
+  const handleKeyTerms = () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
+    setReaderTab('summarize');
+    return runAi('Key terms', async () => {
       const terms = await AIOrchestrator.extractKeyTerms(resource, config);
       return terms.map((t) => `${t.term} — ${t.definition}`).join('\n');
     });
+  };
 
   return (
     <div className="w-full flex flex-col h-full text-slate-900 dark:text-white">
@@ -193,43 +186,22 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
       </div>
 
       {/* Screen-reader controls */}
-      <div className="flex flex-wrap items-center gap-2 py-3">
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-3">
         <button
-          onClick={() => setFocus(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shrink-0"
+          onClick={() => setReaderTab('view')}
+          disabled={!hasFile}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${readerTab === 'view' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'} ${!hasFile ? 'cursor-not-allowed opacity-40' : ''}`}
         >
-          <Maximize2 className="w-3.5 h-3.5" /> Focus
+          <FileText className="w-3.5 h-3.5" /> View
         </button>
 
-        <div className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
-          <button onClick={() => setFontScale((s) => Math.max(0.85, +(s - 0.15).toFixed(2)))} className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300" aria-label="Decrease font size">
-            <Minus className="w-4 h-4" />
-          </button>
-          <span className="text-xs font-bold px-1">A</span>
-          <button onClick={() => setFontScale((s) => Math.min(1.6, +(s + 0.15).toFixed(2)))} className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300" aria-label="Increase font size">
-            <Plus className="w-4 h-4" />
-          </button>
-        </div>
-
-        <button
-          onClick={() => setLineHeight((l) => (l >= 2 ? 1.4 : +(l + 0.3).toFixed(1)))}
-          className="flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold"
-        >
-          <AlignLeft className="w-4 h-4" />
-          {lineHeight.toFixed(1)}
+        <button onClick={handleKeyTerms} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold shrink-0">
+          <ListChecks className="w-3.5 h-3.5" /> Key terms
         </button>
 
-        <div className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
-          {(Object.keys(THEME_STYLES) as ReaderTheme[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTheme(t)}
-              className={`px-2 py-1 rounded-lg text-[11px] font-bold ${theme === t ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm' : 'text-slate-500'}`}
-            >
-              {THEME_STYLES[t].label}
-            </button>
-          ))}
-        </div>
+        <button onClick={handleSummarize} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold shrink-0">
+          <Sparkles className="w-3.5 h-3.5" /> Summarize
+        </button>
 
         <button
           onClick={toggleSpeech}
@@ -238,27 +210,12 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
           {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           {isSpeaking ? 'Stop' : 'Read aloud'}
         </button>
-      </div>
 
-      {/* AI toolbar */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3">
-        <button onClick={handleSummarize} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold shrink-0">
-          <Sparkles className="w-3.5 h-3.5" /> Summarize
-        </button>
-        <button onClick={() => handleExplain('simple')} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold shrink-0">
-          <Lightbulb className="w-3.5 h-3.5" /> Explain simply
-        </button>
-        <button onClick={() => handleExplain('advanced')} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold shrink-0">
-          <GraduationCap className="w-3.5 h-3.5" /> Go deeper
-        </button>
-        <button onClick={handleKeyTerms} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold shrink-0">
-          <ListChecks className="w-3.5 h-3.5" /> Key terms
-        </button>
-        <button onClick={() => onAskTutor(resource)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-bold shrink-0">
-          <Sparkles className="w-3.5 h-3.5" /> Ask tutor
-        </button>
-        <button onClick={() => onStartQuiz(resource)} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold shrink-0">
-          <ListChecks className="w-3.5 h-3.5" /> Quiz me
+        <button
+          onClick={() => setFocus(true)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shrink-0"
+        >
+          <Maximize2 className="w-3.5 h-3.5" /> Focus
         </button>
       </div>
 
@@ -266,16 +223,20 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className={`flex-1 overflow-y-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-8 pb-24 no-scrollbar ${themeStyle.bg} ${themeStyle.text}`}
+        className={`flex-1 overflow-y-auto no-scrollbar ${readerTab === 'view' ? 'p-0' : `rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-8 pb-24 ${themeStyle.bg} ${themeStyle.text}`}`}
       >
-        {hasFile && (
-          <div className="mb-5 h-[75vh] min-h-[320px]">
+        {readerTab === 'view' && hasFile && (
+          <div className="h-full min-h-[320px]">
             <FileViewer resource={resource} mode="inline" />
           </div>
         )}
-        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight mb-1">{resource.title}</h1>
-        <p className="text-[11px] text-slate-400 mb-4">{course.name}</p>
-        <ResourceContent content={resource.content} fontScale={fontScale} lineHeight={lineHeight} />
+        {readerTab === 'summarize' && (
+          <>
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight mb-1">{resource.title}</h1>
+            <p className="text-[11px] text-slate-400 mb-4">{course.name}</p>
+            <ResourceContent content={resource.content} fontScale={1} lineHeight={1.7} />
+          </>
+        )}
       </div>
 
       {/* Distraction-free focus mode — hides all app chrome */}
@@ -303,8 +264,8 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
             <div className="max-w-2xl mx-auto">
               <ResourceContent
                 content={resource.content}
-                fontScale={Math.max(fontScale, 1.05)}
-                lineHeight={lineHeight}
+                fontScale={1.05}
+                lineHeight={1.7}
               />
             </div>
           </div>
@@ -313,8 +274,8 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
 
       {/* AI result panel */}
       {aiPanel && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-24 sm:pb-6">
-          <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in sm:items-center">
+          <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-sm font-bold flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-indigo-600" />

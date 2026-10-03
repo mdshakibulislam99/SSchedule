@@ -47,6 +47,7 @@ import { MoreScreen } from './components/screens/MoreScreen';
 import { SideDrawer } from './components/screens/SideDrawer';
 import { AIMemoryModal } from './components/screens/AIMemoryModal';
 import { LockscreenNotificationModal } from './components/screens/LockscreenNotificationModal';
+import { AISetupPrompt } from './components/mobile/AISetupPrompt';
 
 import {
   UserProfile,
@@ -123,6 +124,7 @@ export default function App() {
   const [isSideDrawerOpen, setIsSideDrawerOpen] = useState(false);
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
   const [isLockscreenOpen, setIsLockscreenOpen] = useState(false);
+  const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!user.isOnboarded);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -133,6 +135,22 @@ export default function App() {
     setTimeout(() => {
       setToastMessage((current) => (current === msg ? null : current));
     }, 3500);
+  };
+
+  const isAIProviderConfigured = (config: AIProviderConfig) => {
+    if (config.activeProvider === 'puter') return Boolean(config.puterUser);
+    if (config.activeProvider === 'gemini') return Boolean(config.apiKeys.gemini);
+    if (config.activeProvider === 'openai') return Boolean(config.apiKeys.openai);
+    if (config.activeProvider === 'claude') return Boolean(config.apiKeys.claude);
+    return Boolean(config.apiKeys.custom && config.customEndpoint);
+  };
+
+  const requireAIProvider = (action: () => void) => {
+    if (!isAIProviderConfigured(aiConfig)) {
+      setIsAISetupPromptOpen(true);
+      return;
+    }
+    action();
   };
 
   // Listen to Firebase Auth state
@@ -375,6 +393,10 @@ export default function App() {
 
   // Handle Tab navigation
   const handleTabChange = (tab: NavTab) => {
+    if (tab === 'ai' && !isAIProviderConfigured(aiConfig)) {
+      setIsAISetupPromptOpen(true);
+      return;
+    }
     setActiveSubScreen(null);
     setSelectedCourseId(null);
     setSelectedResourceId(null);
@@ -452,6 +474,7 @@ export default function App() {
       fileName: data.fileName,
       mime: data.mime,
       fileData: data.fileData,
+      fileStorageKey: data.fileStorageKey,
       estimatedReadMinutes: data.estimatedReadMinutes || 5,
       tags: data.tags || [],
       createdAt: new Date().toISOString(),
@@ -477,6 +500,7 @@ export default function App() {
       keyTopics: newF.keyTopics || ['Study Notes'],
       courseCode: newF.courseCode,
       dataUrl: newF.dataUrl,
+      fileStorageKey: newF.fileStorageKey,
     };
     setFiles((prev) => [f, ...prev]);
     playChime('success');
@@ -798,9 +822,11 @@ export default function App() {
             setActiveSubScreen('resource_reader');
           }}
           onOpenTutor={() => {
-            setCourseTutorPrefill(undefined);
-            setCourseTutorQuizResourceId(undefined);
-            setActiveSubScreen('course_tutor');
+            requireAIProvider(() => {
+              setCourseTutorPrefill(undefined);
+              setCourseTutorQuizResourceId(undefined);
+              setActiveSubScreen('course_tutor');
+            });
           }}
           onAddResource={(data) => handleAddResource(selectedCourse.id, selectedCourse.code, data)}
           onUploadFile={handleUploadFile}
@@ -825,16 +851,8 @@ export default function App() {
             config={aiConfig}
             onBack={() => setActiveSubScreen('course')}
             onUpdateReading={handleUpdateReading}
-            onAskTutor={(res) => {
-              setCourseTutorPrefill(`Help me understand "${res.title}" from ${selectedCourse.code}.`);
-              setCourseTutorQuizResourceId(undefined);
-              setActiveSubScreen('course_tutor');
-            }}
-            onStartQuiz={(res) => {
-              setCourseTutorPrefill(undefined);
-              setCourseTutorQuizResourceId(res.id);
-              setActiveSubScreen('course_tutor');
-            }}
+              aiConfigured={isAIProviderConfigured(aiConfig)}
+              onAISetupRequired={() => setIsAISetupPromptOpen(true)}
           />
         );
       }
@@ -854,6 +872,8 @@ export default function App() {
           onBack={() => setActiveSubScreen('course')}
           onSaveQuiz={handleSaveQuiz}
           onSaveFlashcards={handleSaveFlashcards}
+          aiConfigured={isAIProviderConfigured(aiConfig)}
+          onAISetupRequired={() => setIsAISetupPromptOpen(true)}
         />
       );
     }
@@ -870,9 +890,11 @@ export default function App() {
             setActiveSubScreen('study_session');
           }}
           onAskAIAboutTask={(task) => {
-            setSelectedTask(task);
-            setCurrentTab('ai');
-            setActiveSubScreen(null);
+            requireAIProvider(() => {
+              setSelectedTask(task);
+              setCurrentTab('ai');
+              setActiveSubScreen(null);
+            });
           }}
         />
       );
@@ -888,9 +910,11 @@ export default function App() {
             setActiveSubScreen('study_session');
           }}
           onAskAI={(task) => {
-            setSelectedTask(task);
-            setCurrentTab('ai');
-            setActiveSubScreen(null);
+            requireAIProvider(() => {
+              setSelectedTask(task);
+              setCurrentTab('ai');
+              setActiveSubScreen(null);
+            });
           }}
           onToggleTask={handleToggleTask}
           onAddToSchedule={(task, date, startTime, endTime) => {
@@ -918,7 +942,13 @@ export default function App() {
           }}
           onToggleSubtask={handleToggleSubtask}
           onAddSubtask={handleAddSubtask}
-          onRegenerateAIPlan={handleRegenerateAIPlan}
+          onRegenerateAIPlan={async (task) => {
+            if (!isAIProviderConfigured(aiConfig)) {
+              setIsAISetupPromptOpen(true);
+              return;
+            }
+            await handleRegenerateAIPlan(task);
+          }}
           onDeleteTask={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
         />
       );
@@ -930,9 +960,11 @@ export default function App() {
           task={selectedTask}
           onClose={() => setActiveSubScreen(null)}
           onAskAIHelp={(task) => {
-            setSelectedTask(task);
-            setCurrentTab('ai');
-            setActiveSubScreen(null);
+            requireAIProvider(() => {
+              setSelectedTask(task);
+              setCurrentTab('ai');
+              setActiveSubScreen(null);
+            });
           }}
           onCompleteSession={(task, minutes) => {
             setMetrics((prev) => ({
@@ -968,6 +1000,8 @@ export default function App() {
             setActiveSubScreen(null);
           }}
           config={aiConfig}
+          aiConfigured={isAIProviderConfigured(aiConfig)}
+          onAISetupRequired={() => setIsAISetupPromptOpen(true)}
         />
       );
     }
@@ -990,9 +1024,11 @@ export default function App() {
             playChime('success');
           }}
           onAskAIAboutFile={(f) => {
-            setSelectedFileForChat(f);
-            setCurrentTab('ai');
-            setActiveSubScreen(null);
+            requireAIProvider(() => {
+              setSelectedFileForChat(f);
+              setCurrentTab('ai');
+              setActiveSubScreen(null);
+            });
           }}
           onCreateTasksFromFile={(f) => {
             if (f.extractedDeadlines && f.extractedDeadlines.length > 0) {
@@ -1026,8 +1062,10 @@ export default function App() {
         <ProgressScreen
           metrics={metrics}
           onAskAIHowDoing={() => {
-            setCurrentTab('ai');
-            setActiveSubScreen(null);
+            requireAIProvider(() => {
+              setCurrentTab('ai');
+              setActiveSubScreen(null);
+            });
           }}
           onOpenGoals={() => setActiveSubScreen('goals')}
         />
@@ -1109,7 +1147,7 @@ export default function App() {
             schedule={schedule}
             notifications={notifications}
             onOpenWhatToDoNow={() => setActiveSubScreen('what_to_do_now')}
-            onOpenAIChat={(q) => setCurrentTab('ai')}
+            onOpenAIChat={(q) => requireAIProvider(() => setCurrentTab('ai'))}
             onOpenTasks={(courseCode) => {
               setTaskCourseFilter(courseCode);
               setCurrentTab('tasks');
@@ -1169,12 +1207,14 @@ export default function App() {
               setSelectedTask(null);
               setSelectedFileForChat(null);
             }}
-            onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
+            onOpenVoiceModal={() => requireAIProvider(() => setIsVoiceModalOpen(true))}
             onExecuteAction={handleExecuteAction}
             config={aiConfig}
             allTasks={tasks}
             schedule={schedule}
             user={user}
+            aiConfigured={isAIProviderConfigured(aiConfig)}
+            onAISetupRequired={() => setIsAISetupPromptOpen(true)}
           />
         );
 
@@ -1182,7 +1222,7 @@ export default function App() {
         return (
           <CalendarScreen
             schedule={schedule}
-            onOpenWeekPlanner={() => setIsWeekPlannerOpen(true)}
+            onOpenWeekPlanner={() => requireAIProvider(() => setIsWeekPlannerOpen(true))}
             onAddEvent={(ev) => {
               const newEvent: ScheduleEvent = { ...ev, id: `sched-${Date.now()}` };
               setSchedule((prev) => [...prev, newEvent]);
@@ -1197,7 +1237,13 @@ export default function App() {
           <MoreScreen
             onNavigate={(dest) => {
               if (dest === 'courses' || dest === 'ai' || dest === 'calendar') {
-                setCurrentTab(dest as NavTab);
+                if (dest === 'ai') {
+                  requireAIProvider(() => setCurrentTab('ai'));
+                } else {
+                  setCurrentTab(dest as NavTab);
+                }
+              } else if (dest === 'research') {
+                requireAIProvider(() => setActiveSubScreen('research'));
               } else {
                 setActiveSubScreen(dest);
               }
@@ -1256,6 +1302,16 @@ export default function App() {
                 />
               </div>
             )}
+
+            {isAISetupPromptOpen && (
+              <AISetupPrompt
+                onClose={() => setIsAISetupPromptOpen(false)}
+                onOpenSettings={() => {
+                  setIsAISetupPromptOpen(false);
+                  setActiveSubScreen('ai_provider');
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -1267,7 +1323,7 @@ export default function App() {
             if (act === 'add_task') {
               setCurrentTab('tasks');
             } else if (act === 'ask_ai') {
-              setCurrentTab('ai');
+              requireAIProvider(() => setCurrentTab('ai'));
             } else if (act === 'add_file') {
               setActiveSubScreen('files');
             } else if (act === 'view_calendar') {
@@ -1280,7 +1336,7 @@ export default function App() {
           isOpen={isVoiceModalOpen}
           onClose={() => setIsVoiceModalOpen(false)}
           onSubmitVoice={(transcript) => {
-            setCurrentTab('ai');
+            requireAIProvider(() => setCurrentTab('ai'));
           }}
         />
 

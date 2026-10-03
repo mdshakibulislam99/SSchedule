@@ -37,6 +37,8 @@ interface CourseTutorScreenProps {
   onBack: () => void;
   onSaveQuiz: (quiz: CourseQuiz) => void;
   onSaveFlashcards: (cards: CourseFlashcard[]) => void;
+  aiConfigured: boolean;
+  onAISetupRequired: () => void;
 }
 
 type TutorTab = 'learn' | 'tutor' | 'quiz' | 'cards';
@@ -53,6 +55,8 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   onBack,
   onSaveQuiz,
   onSaveFlashcards,
+  aiConfigured,
+  onAISetupRequired,
 }) => {
   const courseResources = useMemo(() => getCourseResources(course, resources), [course, resources]);
   const courseQuizzes = useMemo(() => quizzes.filter((q) => q.courseId === course.id), [quizzes, course.id]);
@@ -95,6 +99,10 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const [flipped, setFlipped] = useState(false);
 
   const generatePath = async () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
     setPathLoading(true);
     try {
       const result = await AIOrchestrator.generateCourseLearningPath(course, courseResources, courseTasks, config);
@@ -105,6 +113,10 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   };
 
   const generateInsight = async () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
     setInsightLoading(true);
     try {
       const text = await AIOrchestrator.courseProgressInsight(course, progress, config);
@@ -117,6 +129,10 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const sendMessage = async () => {
     const text = chatInput.trim();
     if (!text || chatLoading) return;
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
     setMessages((prev) => [...prev, { id: `u-${Date.now()}`, sender: 'user', text, timestamp: 'Now' }]);
     setChatInput('');
     setChatLoading(true);
@@ -148,6 +164,10 @@ Answer with accurate, course-specific help. Keep replies clear and concise.`;
   };
 
   const startQuiz = async () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
     const resource = courseResources.find((r) => r.id === quizResourceId);
     if (!resource) return;
     setQuizLoading(true);
@@ -192,6 +212,10 @@ Answer with accurate, course-specific help. Keep replies clear and concise.`;
   };
 
   const generateCards = async () => {
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
     const resource = courseResources.find((r) => r.id === cardsResourceId);
     if (!resource) return;
     setCardsLoading(true);

@@ -8,6 +8,8 @@ interface ResearchScreenProps {
   onSaveToNotes: (title: string, content: string) => void;
   onAskFollowUp: (query: string) => void;
   config: AIProviderConfig;
+  aiConfigured: boolean;
+  onAISetupRequired: () => void;
 }
 
 export const ResearchScreen: React.FC<ResearchScreenProps> = ({
@@ -15,6 +17,8 @@ export const ResearchScreen: React.FC<ResearchScreenProps> = ({
   onSaveToNotes,
   onAskFollowUp,
   config,
+  aiConfigured,
+  onAISetupRequired,
 }) => {
   const [activeTab, setActiveTab] = useState<'summary' | 'sources' | 'notes'>('summary');
   const [searchTopic, setSearchTopic] = useState('');
@@ -25,6 +29,10 @@ export const ResearchScreen: React.FC<ResearchScreenProps> = ({
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchTopic.trim()) return;
+    if (!aiConfigured) {
+      onAISetupRequired();
+      return;
+    }
 
     setIsSearching(true);
     try {
