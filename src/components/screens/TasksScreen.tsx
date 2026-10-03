@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, Search, ChevronRight, ChevronDown, CheckCircle2, Circle, Trash2, X, Check } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Plus, Search, ChevronLeft, ChevronRight, ChevronDown, CheckCircle2, Circle, Trash2, X, Check } from 'lucide-react';
 import { Task, TaskCategory, ScheduleEvent } from '../../types';
 import { getLocalDateKey } from '../../utils/dates';
 import { TaskComposer } from '../tasks/TaskComposer';
@@ -42,6 +42,9 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isFinishedExpanded, setIsFinishedExpanded] = useState(false);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
 
   const todayKey = getLocalDateKey();
   const isTaskForToday = (task: Task) => {
@@ -91,6 +94,23 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const dueCount = tasks.filter((t) => !t.completed).length;
   const finishedCount = tasks.filter((t) => t.completed).length;
 
+  // Track horizontal overflow of the filter tabs so the scroll affordances appear only when needed
+  useEffect(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      setCanScrollTabsLeft(el.scrollLeft > 4);
+      setCanScrollTabsRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      el.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [allFinishedTasks.length]);
+
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col space-y-4 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Task workspace header */}
@@ -126,35 +146,55 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         </div>
       </header>
 
-      {/* Segmented View Filter Tabs */}
-      <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs font-semibold">
-        {(['all', 'today', 'week', 'overdue', 'finished'] as const).map((tab) => {
-          const isActive = filter === tab;
-          const label =
-            tab === 'all'
-              ? 'Due'
-              : tab === 'today'
-              ? 'Today'
-              : tab === 'week'
-              ? 'This week'
-              : tab === 'overdue'
-              ? 'Overdue'
-              : `Finished (${allFinishedTasks.length})`;
+      {/* Segmented View Filter Tabs — horizontally scrollable on narrow screens */}
+      <div className="relative">
+        <div
+          ref={tabsScrollRef}
+          className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs font-semibold overflow-x-auto no-scrollbar"
+        >
+          {(['all', 'today', 'week', 'overdue', 'finished'] as const).map((tab) => {
+            const isActive = filter === tab;
+            const label =
+              tab === 'all'
+                ? 'Due'
+                : tab === 'today'
+                ? 'Today'
+                : tab === 'week'
+                ? 'This week'
+                : tab === 'overdue'
+                ? 'Overdue'
+                : `Finished (${allFinishedTasks.length})`;
 
-          return (
-            <button
-              key={tab}
-              onClick={() => setFilter(tab)}
-              className={`flex-1 py-1.5 px-2 rounded-lg transition-all capitalize cursor-pointer text-center truncate ${
-                isActive
-                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs font-bold'
-                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
+            return (
+              <button
+                key={tab}
+                onClick={(e) => {
+                  setFilter(tab);
+                  e.currentTarget.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                }}
+                className={`shrink-0 whitespace-nowrap py-1.5 px-3 rounded-lg transition-all capitalize cursor-pointer ${
+                  isActive
+                    ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs font-bold'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Scroll affordances: fade + chevron, shown only when more tabs exist off-screen */}
+        {canScrollTabsLeft && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-9 flex items-center rounded-l-xl bg-gradient-to-r from-slate-100 via-slate-100/85 to-transparent dark:from-slate-900 dark:via-slate-900/85">
+            <ChevronLeft className="w-4 h-4 text-slate-500 dark:text-slate-400 ml-0.5" />
+          </div>
+        )}
+        {canScrollTabsRight && (
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-9 flex items-center justify-end rounded-r-xl bg-gradient-to-l from-slate-100 via-slate-100/85 to-transparent dark:from-slate-900 dark:via-slate-900/85">
+            <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400 mr-0.5" />
+          </div>
+        )}
       </div>
 
       {/* Category Area Pills & Search */}

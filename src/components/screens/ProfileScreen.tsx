@@ -1,23 +1,25 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
   Edit3,
   Target,
   BarChart2,
-  HelpCircle,
   LogOut,
   Flame,
-  Award,
-  CheckCircle2,
-  Cloud,
   Check,
+  Cloud,
+  Plus,
+  X,
+  Save,
+  User,
 } from 'lucide-react';
 import { UserProfile, ProgressMetrics } from '../../types';
 
 interface ProfileScreenProps {
   user: UserProfile;
   metrics: ProgressMetrics;
+  onUpdateUser?: (patch: Partial<UserProfile>) => void;
   onBack: () => void;
   onOpenGoals: () => void;
   onOpenStats: () => void;
@@ -27,9 +29,38 @@ interface ProfileScreenProps {
   isFirebaseSynced?: boolean;
 }
 
+const YEAR_OPTIONS = ['1st Year', '2nd Year', '3rd Year', '4th Year', "Master's", 'PhD'];
+
+const ENERGY_OPTIONS: { level: 1 | 2 | 3 | 4 | 5; label: string; icon: string }[] = [
+  { level: 1, label: 'Very Low', icon: '😴' },
+  { level: 2, label: 'Low', icon: '😐' },
+  { level: 3, label: 'Okay', icon: '🙂' },
+  { level: 4, label: 'Good', icon: '😃' },
+  { level: 5, label: 'Excellent', icon: '🤩' },
+];
+
+interface ProfileForm {
+  name: string;
+  email: string;
+  university: string;
+  studyField: string;
+  year: string;
+  energyLevel: 1 | 2 | 3 | 4 | 5;
+}
+
+const formFromUser = (user: UserProfile): ProfileForm => ({
+  name: user.name || '',
+  email: user.email || '',
+  university: user.university || '',
+  studyField: user.studyField || '',
+  year: user.year || '',
+  energyLevel: user.energyLevel || 3,
+});
+
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   user,
   metrics,
+  onUpdateUser,
   onBack,
   onOpenGoals,
   onOpenStats,
@@ -38,6 +69,60 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onSignOut,
   isFirebaseSynced = false,
 }) => {
+  const [form, setForm] = useState<ProfileForm>(() => formFromUser(user));
+  const [goals, setGoals] = useState<string[]>(user.goals || []);
+  const [newGoal, setNewGoal] = useState('');
+  const [justSaved, setJustSaved] = useState(false);
+
+  // Keep the form in sync when the profile changes elsewhere (e.g. Google sign-in).
+  useEffect(() => {
+    setForm(formFromUser(user));
+    setGoals(user.goals || []);
+  }, [user]);
+
+  const update = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  const isDirty =
+    form.name !== user.name ||
+    form.email !== user.email ||
+    form.university !== user.university ||
+    form.studyField !== user.studyField ||
+    form.year !== user.year ||
+    form.energyLevel !== user.energyLevel ||
+    JSON.stringify(goals) !== JSON.stringify(user.goals || []);
+
+  const handleSave = () => {
+    if (!onUpdateUser) return;
+    onUpdateUser({
+      name: form.name.trim() || user.name,
+      email: form.email.trim() || user.email,
+      university: form.university.trim(),
+      studyField: form.studyField.trim(),
+      year: form.year,
+      energyLevel: form.energyLevel,
+      goals,
+    });
+    setJustSaved(true);
+    window.setTimeout(() => setJustSaved(false), 2000);
+  };
+
+  const handleReset = () => {
+    setForm(formFromUser(user));
+    setGoals(user.goals || []);
+  };
+
+  const addGoal = () => {
+    const value = newGoal.trim();
+    if (!value) return;
+    setGoals((prev) => [...prev, value]);
+    setNewGoal('');
+  };
+
+  const yearOptions = YEAR_OPTIONS.includes(form.year) || !form.year
+    ? YEAR_OPTIONS
+    : [form.year, ...YEAR_OPTIONS];
+
   return (
     <div className="w-full flex flex-col space-y-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
@@ -50,7 +135,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <span>Back</span>
         </button>
 
-        <span className="text-sm font-bold">Student Profile</span>
+        <span className="text-sm font-bold">Profile Settings</span>
         <div className="w-12" />
       </div>
 
@@ -83,6 +168,203 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Editable Account Details */}
+      <section className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+              <User className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-bold text-slate-900 dark:text-white">Account Details</span>
+          </div>
+          {isDirty && (
+            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+              Unsaved
+            </span>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+              Full name
+            </label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => update('name', e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+              Email
+            </label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => update('email', e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+            />
+            {isFirebaseSynced && (
+              <p className="text-[10px] text-slate-400 mt-1">
+                Synced with your Google account email.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+              University / School
+            </label>
+            <input
+              type="text"
+              value={form.university}
+              onChange={(e) => update('university', e.target.value)}
+              placeholder="e.g. Stanford University"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                Study field
+              </label>
+              <input
+                type="text"
+                value={form.studyField}
+                onChange={(e) => update('studyField', e.target.value)}
+                placeholder="e.g. Computer Science"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                Year
+              </label>
+              <select
+                value={form.year}
+                onChange={(e) => update('year', e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+              >
+                {yearOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Energy level */}
+          <div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+              Typical energy level
+            </label>
+            <div className="flex items-center gap-1.5">
+              {ENERGY_OPTIONS.map((option) => (
+                <button
+                  key={option.level}
+                  type="button"
+                  onClick={() => update('energyLevel', option.level)}
+                  title={option.label}
+                  className={`flex-1 py-2 rounded-xl border text-sm transition-all ${
+                    form.energyLevel === option.level
+                      ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800 scale-105'
+                      : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  <span className="block text-base leading-none">{option.icon}</span>
+                  <span className="block text-[9px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+                    {option.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Study goals */}
+          <div>
+            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
+              Study goals
+            </label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {goals.length === 0 && (
+                <span className="text-[11px] text-slate-400">No goals added yet.</span>
+              )}
+              {goals.map((goal, index) => (
+                <span
+                  key={`${goal}-${index}`}
+                  className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold text-slate-700 dark:text-slate-200"
+                >
+                  {goal}
+                  <button
+                    type="button"
+                    onClick={() => setGoals((prev) => prev.filter((_, i) => i !== index))}
+                    className="p-0.5 rounded text-slate-400 hover:text-rose-500"
+                    aria-label={`Remove goal ${goal}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newGoal}
+                onChange={(e) => setNewGoal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addGoal();
+                  }
+                }}
+                placeholder="Add a goal and press Enter"
+                className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs focus:outline-none focus:border-indigo-500"
+              />
+              <button
+                type="button"
+                onClick={addGoal}
+                className="p-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 active:scale-95 transition-all"
+                aria-label="Add goal"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!isDirty}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white text-xs font-bold shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save changes</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            disabled={!isDirty}
+            className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+          >
+            Reset
+          </button>
+        </div>
+
+        {justSaved && (
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            <Check className="w-3.5 h-3.5" />
+            <span>Profile updated</span>
+          </div>
+        )}
+      </section>
 
       {/* Cloud Account Sync Card */}
       <div className="p-4 rounded-3xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-3">

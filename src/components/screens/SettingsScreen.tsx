@@ -9,18 +9,21 @@ import {
   Shield,
   HelpCircle,
   BrainCircuit,
+  CalendarClock,
   LogOut,
   RotateCcw,
 } from 'lucide-react';
-import { UserProfile, AIProviderConfig } from '../../types';
+import { UserProfile, AIProviderConfig, GoogleCalendarSyncState } from '../../types';
 
 interface SettingsScreenProps {
   user: UserProfile;
   config: AIProviderConfig;
+  calendarSync: GoogleCalendarSyncState;
   onOpenAIProvider: () => void;
   onOpenNotifications: () => void;
   onOpenProfile: () => void;
   onOpenAIMemory: () => void;
+  onOpenCalendarSync: () => void;
   onToggleTheme: () => void;
   isDark: boolean;
   onResetData: () => void;
@@ -29,10 +32,12 @@ interface SettingsScreenProps {
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   user,
   config,
+  calendarSync,
   onOpenAIProvider,
   onOpenNotifications,
   onOpenProfile,
   onOpenAIMemory,
+  onOpenCalendarSync,
   onToggleTheme,
   isDark,
   onResetData,
@@ -123,6 +128,35 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
           </div>
           <ChevronRight className="w-4 h-4 text-slate-400" />
+        </button>
+
+        {/* Google Calendar Sync */}
+        <button
+          onClick={onOpenCalendarSync}
+          className="w-full p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-sm hover:border-slate-300 text-left transition-all active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+              <CalendarClock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-slate-900 dark:text-white">Google Calendar</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                {calendarSync.connected
+                  ? `Synced${calendarSync.email ? ` · ${calendarSync.email}` : ''}`
+                  : 'Two-way sync with your Google Calendar'}
+              </div>
+            </div>
+          </div>
+          <span
+            className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+              calendarSync.connected
+                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            {calendarSync.connected ? 'On' : 'Off'}
+          </span>
         </button>
 
         {/* Appearance (Theme) */}

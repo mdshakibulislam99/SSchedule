@@ -21,6 +21,7 @@ import {
   fetchUserDataFromFirestore,
   deleteTaskFromFirestore,
   deleteCourseFromFirestore,
+  syncGoogleCalendarStateToFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -43,10 +44,10 @@ import { GoalsScreen } from './components/screens/GoalsScreen';
 import { StudySessionScreen } from './components/screens/StudySessionScreen';
 import { SettingsScreen } from './components/screens/SettingsScreen';
 import { AIProviderScreen } from './components/screens/AIProviderScreen';
+import { GoogleCalendarSyncScreen } from './components/screens/GoogleCalendarSyncScreen';
 import { ProfileScreen } from './components/screens/ProfileScreen';
 import { NotificationsScreen } from './components/screens/NotificationsScreen';
 import { MoreScreen } from './components/screens/MoreScreen';
-import { SideDrawer } from './components/screens/SideDrawer';
 import { AIMemoryModal } from './components/screens/AIMemoryModal';
 import { LockscreenNotificationModal } from './components/screens/LockscreenNotificationModal';
 import { AISetupPrompt } from './components/mobile/AISetupPrompt';
@@ -70,12 +71,14 @@ import {
   ResourceAnnotation,
   CourseQuiz,
   CourseFlashcard,
+  GoogleCalendarSyncState,
 } from './types';
 import { StudyStorage } from './utils/storage';
 import { playChime } from './utils/audio';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
+import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
 
 function getEndTime(startTime: string, durationMinutes: number): string {
   const [hours, minutes] = startTime.split(':').map(Number);
@@ -108,6 +111,36 @@ export default function App() {
   const [aiMemory, setAIMemory] = useState<AIMemoryItem[]>(() => StudyStorage.getAIMemory());
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => StudyStorage.getNotifications());
   const [metrics, setMetrics] = useState<ProgressMetrics>(() => StudyStorage.getMetrics());
+  const [calendarSync, setCalendarSync] = useState<GoogleCalendarSyncState>(() => StudyStorage.getCalendarSync());
+
+  const gcal = useGoogleCalendarSync({ schedule, setSchedule, calendarSync, setCalendarSync });
+
+  // Central schedule mutations — every local change is queued for Google Calendar.
+  const addScheduleEvent = (
+    event: Omit<ScheduleEvent, 'id' | 'source' | 'updatedAt'> & { id?: string },
+  ): ScheduleEvent => {
+    const newEvent: ScheduleEvent = {
+      ...event,
+      id: event.id || `sched-${Date.now()}`,
+      source: 'local',
+      updatedAt: new Date().toISOString(),
+    };
+    setSchedule((prev) => [...prev, newEvent]);
+    if (calendarSync.connected) gcal.queueCreate(newEvent);
+    return newEvent;
+  };
+
+  const deleteScheduleEvent = (id: string) => {
+    const target = schedule.find((s) => s.id === id);
+    if (target && calendarSync.connected) gcal.queueDelete(target);
+    setSchedule((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const updateScheduleEvent = (event: ScheduleEvent) => {
+    const updated: ScheduleEvent = { ...event, updatedAt: new Date().toISOString() };
+    setSchedule((prev) => prev.map((e) => (e.id === event.id ? updated : e)));
+    if (calendarSync.connected) gcal.queueUpdate(updated);
+  };
 
   // Navigation state
   const [currentTab, setCurrentTab] = useState<NavTab>('home');
@@ -127,7 +160,6 @@ export default function App() {
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isWeekPlannerOpen, setIsWeekPlannerOpen] = useState(false);
   const [isAIMemoryOpen, setIsAIMemoryOpen] = useState(false);
-  const [isSideDrawerOpen, setIsSideDrawerOpen] = useState(false);
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
   const [isLockscreenOpen, setIsLockscreenOpen] = useState(false);
   const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
@@ -203,6 +235,9 @@ export default function App() {
           }
           if (cloudData.resources && cloudData.resources.length > 0) {
             setResources(cloudData.resources);
+          }
+          if (cloudData.calendarSync) {
+            setCalendarSync(cloudData.calendarSync);
           }
           showToast(`Cloud connected: ${fUser.displayName || 'Google Account'}`);
         } catch (e) {
@@ -307,6 +342,16 @@ export default function App() {
   useEffect(() => {
     StudyStorage.saveSchedule(schedule);
   }, [schedule]);
+
+  useEffect(() => {
+    StudyStorage.saveCalendarSync(calendarSync);
+  }, [calendarSync]);
+
+  useEffect(() => {
+    if (firebaseUser) {
+      syncGoogleCalendarStateToFirestore(firebaseUser.uid, calendarSync);
+    }
+  }, [calendarSync, firebaseUser]);
 
   useEffect(() => {
     StudyStorage.saveGoals(goals);
@@ -760,7 +805,7 @@ export default function App() {
         color: details.color || '#6366F1',
         isCompleted: false,
       };
-      setSchedule((prev) => [...prev, newEvent]);
+      addScheduleEvent(newEvent);
 
       // Add notification record
       const notif: NotificationItem = {
@@ -812,20 +857,16 @@ export default function App() {
       const scheduledDate = newTask.scheduledDate;
       const scheduledStartTime = newTask.scheduledStartTime;
       if (scheduledDate && scheduledStartTime) {
-        setSchedule((prev) => [
-          {
-            id: `sched-${Date.now()}`,
-            title: `${newTask.courseCode ? `${newTask.courseCode} · ` : ''}${newTask.title}`,
-            startTime: scheduledStartTime,
-            endTime: getEndTime(scheduledStartTime, newTask.estimatedMinutes),
-            date: scheduledDate,
-            type: 'study',
-            courseCode: newTask.courseCode,
-            color: newTask.courseColor,
-            isCompleted: false,
-          },
-          ...prev,
-        ]);
+        addScheduleEvent({
+          title: `${newTask.courseCode ? `${newTask.courseCode} · ` : ''}${newTask.title}`,
+          startTime: scheduledStartTime,
+          endTime: getEndTime(scheduledStartTime, newTask.estimatedMinutes),
+          date: scheduledDate,
+          type: 'study',
+          courseCode: newTask.courseCode,
+          color: newTask.courseColor,
+          isCompleted: false,
+        });
       }
       setNotifications((prev) => [
         {
@@ -879,20 +920,16 @@ export default function App() {
     const scheduledDate = taskData.scheduledDate;
     const scheduledStartTime = taskData.scheduledStartTime;
     if (scheduledDate && scheduledStartTime) {
-      setSchedule((prev) => [
-        {
-          id: `sched-${Date.now()}`,
-          title: `${taskData.courseCode ? `${taskData.courseCode} · ` : ''}${newT.title}`,
-          startTime: scheduledStartTime,
-          endTime: getEndTime(scheduledStartTime, newT.estimatedMinutes),
-          date: scheduledDate,
-          type: 'study',
-          courseCode: taskData.courseCode,
-          color: newT.courseColor,
-          isCompleted: false,
-        },
-        ...prev,
-      ]);
+      addScheduleEvent({
+        title: `${taskData.courseCode ? `${taskData.courseCode} · ` : ''}${newT.title}`,
+        startTime: scheduledStartTime,
+        endTime: getEndTime(scheduledStartTime, newT.estimatedMinutes),
+        date: scheduledDate,
+        type: 'study',
+        courseCode: taskData.courseCode,
+        color: newT.courseColor,
+        isCompleted: false,
+      });
     }
     playChime('success');
     void autoPlan;
@@ -1176,7 +1213,7 @@ export default function App() {
               color: task.courseColor,
               isCompleted: false,
             };
-            setSchedule((prev) => [...prev, newEv]);
+            addScheduleEvent(newEv);
             setTasks((prev) =>
               prev.map((item) =>
                 item.id === task.id
@@ -1339,13 +1376,28 @@ export default function App() {
         <SettingsScreen
           user={user}
           config={aiConfig}
+          calendarSync={calendarSync}
           onOpenAIProvider={() => setActiveSubScreen('ai_provider')}
           onOpenNotifications={() => setActiveSubScreen('notifications')}
           onOpenProfile={() => setActiveSubScreen('profile')}
           onOpenAIMemory={() => setIsAIMemoryOpen(true)}
+          onOpenCalendarSync={() => setActiveSubScreen('calendar_sync')}
           onToggleTheme={() => setIsDark(!isDark)}
           isDark={isDark}
           onResetData={handleResetData}
+        />
+      );
+    }
+
+    if (activeSubScreen === 'calendar_sync') {
+      return (
+        <GoogleCalendarSyncScreen
+          calendarSync={calendarSync}
+          isSyncing={gcal.isSyncing}
+          onBack={() => setActiveSubScreen('settings')}
+          onConnect={gcal.connect}
+          onDisconnect={gcal.disconnect}
+          onSyncNow={gcal.syncNow}
         />
       );
     }
@@ -1365,6 +1417,7 @@ export default function App() {
         <ProfileScreen
           user={user}
           metrics={metrics}
+          onUpdateUser={(patch) => setUser((prev) => ({ ...prev, ...patch }))}
           onBack={() => setActiveSubScreen('settings')}
           onOpenGoals={() => setActiveSubScreen('goals')}
           onOpenStats={() => setActiveSubScreen('progress')}
@@ -1403,7 +1456,6 @@ export default function App() {
             }}
             onOpenCalendar={() => setCurrentTab('calendar')}
             onOpenNotifications={() => setActiveSubScreen('notifications')}
-            onOpenSideMenu={() => setIsSideDrawerOpen(true)}
             onOpenCourse={(courseCode) => openCourseByCode(courseCode)}
             onUpdateEnergy={(lvl) => setUser((prev) => ({ ...prev, energyLevel: lvl }))}
             onSelectTask={(task) => {
@@ -1487,13 +1539,18 @@ export default function App() {
         return (
           <CalendarScreen
             schedule={schedule}
+            calendarSync={calendarSync}
+            isSyncing={gcal.isSyncing}
             onOpenWeekPlanner={() => requireAIProvider(() => setIsWeekPlannerOpen(true))}
             onAddEvent={(ev) => {
-              const newEvent: ScheduleEvent = { ...ev, id: `sched-${Date.now()}` };
-              setSchedule((prev) => [...prev, newEvent]);
+              addScheduleEvent(ev);
               playChime('success');
             }}
-            onDeleteEvent={(id) => setSchedule((prev) => prev.filter((s) => s.id !== id))}
+            onUpdateEvent={updateScheduleEvent}
+            onDeleteEvent={deleteScheduleEvent}
+            onConnectGoogle={() => gcal.connect()}
+            onSyncNow={() => gcal.syncNow()}
+            onOpenSyncSettings={() => setActiveSubScreen('calendar_sync')}
           />
         );
 
@@ -1617,17 +1674,17 @@ export default function App() {
           tasks={tasks}
           schedule={schedule}
           onAddPlanToSchedule={(sessions) => {
-            const newEvents: ScheduleEvent[] = sessions.map((s, idx) => ({
-              id: `sched-plan-${Date.now()}-${idx}`,
-              title: s.title,
-              startTime: '14:00',
-              endTime: '15:30',
-              date: getLocalDateKey(),
-              type: 'study',
-              color: s.color,
-              isCompleted: false,
-            }));
-            setSchedule((prev) => [...prev, ...newEvents]);
+            sessions.forEach((s) => {
+              addScheduleEvent({
+                title: s.title,
+                startTime: '14:00',
+                endTime: '15:30',
+                date: getLocalDateKey(),
+                type: 'study',
+                color: s.color,
+                isCompleted: false,
+              });
+            });
             playChime('success');
           }}
         />
@@ -1647,21 +1704,6 @@ export default function App() {
             playChime('success');
           }}
           onDeleteMemory={(id) => setAIMemory((prev) => prev.filter((m) => m.id !== id))}
-        />
-
-        <SideDrawer
-          isOpen={isSideDrawerOpen}
-          onClose={() => setIsSideDrawerOpen(false)}
-          user={user}
-          onSignOut={handleSignOut}
-          onNavigate={(dest) => {
-            if (dest === 'home' || dest === 'tasks' || dest === 'courses' || dest === 'ai' || dest === 'calendar') {
-              setCurrentTab(dest as NavTab);
-              setActiveSubScreen(null);
-            } else {
-              setActiveSubScreen(dest);
-            }
-          }}
         />
 
         <LockscreenNotificationModal

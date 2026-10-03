@@ -16,6 +16,8 @@ import {
   CourseQuiz,
   CourseFlashcard,
   ResourceAnnotation,
+  GoogleCalendarSyncState,
+  CalendarOutboxItem,
 } from '../types';
 import { getLocalDateKey } from './dates';
 
@@ -40,6 +42,13 @@ const STORAGE_KEYS = {
   QUIZZES: 'studyai_course_quizzes',
   FLASHCARDS: 'studyai_course_flashcards',
   ANNOTATIONS: 'studyai_resource_annotations',
+  CALENDAR_SYNC: 'studyai_calendar_sync',
+  CALENDAR_OUTBOX: 'studyai_calendar_outbox',
+};
+
+export const INITIAL_CALENDAR_SYNC: GoogleCalendarSyncState = {
+  connected: false,
+  calendarId: 'primary',
 };
 
 export const INITIAL_USER: UserProfile = {
@@ -1017,5 +1026,29 @@ export const StudyStorage = {
   },
   saveMetrics(metrics: ProgressMetrics) {
     localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(metrics));
+  },
+
+  getCalendarSync(): GoogleCalendarSyncState {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CALENDAR_SYNC);
+      return data ? { ...INITIAL_CALENDAR_SYNC, ...JSON.parse(data) } : INITIAL_CALENDAR_SYNC;
+    } catch {
+      return INITIAL_CALENDAR_SYNC;
+    }
+  },
+  saveCalendarSync(state: GoogleCalendarSyncState) {
+    localStorage.setItem(STORAGE_KEYS.CALENDAR_SYNC, JSON.stringify(state));
+  },
+
+  getCalendarOutbox(): CalendarOutboxItem[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CALENDAR_OUTBOX);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveCalendarOutbox(items: CalendarOutboxItem[]) {
+    localStorage.setItem(STORAGE_KEYS.CALENDAR_OUTBOX, JSON.stringify(items));
   },
 };

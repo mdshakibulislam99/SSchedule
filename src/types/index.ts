@@ -232,6 +232,8 @@ export interface Goal {
 
 export type ScheduleEventType = 'class' | 'study' | 'break' | 'gym' | 'exam' | 'project';
 
+export type ScheduleEventSource = 'local' | 'google';
+
 export interface ScheduleEvent {
   id: string;
   title: string;
@@ -244,6 +246,36 @@ export interface ScheduleEvent {
   color: string;
   isCompleted?: boolean;
   isMissed?: boolean;
+  /** Google Calendar event id when this block is linked to a Google event. */
+  googleEventId?: string;
+  /** Which Google calendar the linked event lives in (normally 'primary'). */
+  googleCalendarId?: string;
+  /** Google 'etag' at the last sync, used for conflict detection. */
+  googleEtag?: string;
+  /** Google 'updated' timestamp at the last sync. */
+  googleUpdatedAt?: string;
+  /** Where this block originated. */
+  source?: ScheduleEventSource;
+  /** ISO timestamp of the last local edit (last-write-wins reconciliation). */
+  updatedAt?: string;
+}
+
+/** Persisted state for the two-way Google Calendar connection. */
+export interface GoogleCalendarSyncState {
+  connected: boolean;
+  email?: string;
+  calendarId: string; // Google calendar id, normally 'primary'
+  syncToken?: string; // incremental sync token
+  lastSyncedAt?: string;
+  lastSyncError?: string;
+}
+
+/** A pending Google Calendar write that has not yet been confirmed. */
+export interface CalendarOutboxItem {
+  id: string;
+  op: 'create' | 'update' | 'delete';
+  event: ScheduleEvent;
+  attempts: number;
 }
 
 export interface StudyFile {

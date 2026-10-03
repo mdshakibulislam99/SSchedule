@@ -19,7 +19,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource } from '../types';
+import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState } from '../types';
 
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -81,6 +81,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   goals: Goal[];
   courses: Course[];
   resources: CourseResource[];
+  calendarSync: GoogleCalendarSyncState | null;
 }> {
   try {
     const userDoc = await getDoc(doc(db, 'users', userId));
@@ -111,10 +112,19 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     const resources: CourseResource[] = [];
     resourcesSnapshot.forEach((d) => resources.push(d.data() as CourseResource));
 
-    return { profile, tasks, schedule, goals, courses, resources };
+    // Fetch Google Calendar integration state
+    let calendarSync: GoogleCalendarSyncState | null = null;
+    try {
+      const syncDoc = await getDoc(doc(db, 'users', userId, 'integrations', 'googleCalendar'));
+      if (syncDoc.exists()) calendarSync = syncDoc.data() as GoogleCalendarSyncState;
+    } catch (err) {
+      console.warn('Failed to read Google Calendar sync state:', err);
+    }
+
+    return { profile, tasks, schedule, goals, courses, resources, calendarSync };
   } catch (err) {
     console.warn('Error fetching Firestore data:', err);
-    return { profile: null, tasks: [], schedule: [], goals: [], courses: [], resources: [] };
+    return { profile: null, tasks: [], schedule: [], goals: [], courses: [], resources: [], calendarSync: null };
   }
 }
 
@@ -167,6 +177,20 @@ export async function syncResourcesToFirestore(userId: string, resources: Course
     await batch.commit();
   } catch (err) {
     console.warn('Failed to sync course resources to Firestore:', err);
+  }
+}
+
+export async function syncGoogleCalendarStateToFirestore(
+  userId: string,
+  state: GoogleCalendarSyncState,
+) {
+  try {
+    await setDoc(doc(db, 'users', userId, 'integrations', 'googleCalendar'), {
+      ...state,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to sync Google Calendar state to Firestore:', err);
   }
 }
 

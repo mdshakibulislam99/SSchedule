@@ -116,7 +116,7 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full">
           {filteredCourses.map((course) => {
             const progress = computeCourseProgress(course, tasks, resources);
 
@@ -124,44 +124,59 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
               <div
                 key={course.id}
                 onClick={() => onOpenCourse(course.id)}
-                className="group relative p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer flex flex-col justify-between"
+                className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80 shadow-xs hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer"
               >
-                {/* Top Section */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 transition-transform group-hover:scale-105"
-                      style={{ backgroundColor: `${course.color}15` }}
-                    >
-                      {course.coverEmoji || '📘'}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="text-[11px] font-extrabold uppercase tracking-wide font-mono"
-                          style={{ color: course.color }}
-                        >
-                          {course.code}
-                        </span>
-                        {course.term && (
-                          <>
-                            <span className="text-slate-300 dark:text-slate-700 text-xs">·</span>
-                            <span className="text-xs text-slate-400 truncate">{course.term}</span>
-                          </>
-                        )}
-                      </div>
-                      <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors mt-0.5">
-                        {course.name}
-                      </h2>
+                <div className="flex items-center gap-3 p-3.5 pr-3">
+                  {/* Course emoji tile */}
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0 transition-transform group-hover:scale-105"
+                    style={{ backgroundColor: `${course.color}15` }}
+                  >
+                    {course.coverEmoji || '📘'}
+                  </div>
+
+                  {/* Identity */}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                      {course.name}
+                    </h2>
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                      <span
+                        className="font-extrabold uppercase tracking-wide font-mono shrink-0"
+                        style={{ color: course.color }}
+                      >
+                        {course.code}
+                      </span>
+                      {course.term && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-700">·</span>
+                          <span className="truncate">{course.term}</span>
+                        </>
+                      )}
                       {course.professor && (
-                        <p className="text-xs text-slate-400 truncate mt-0.5">
-                          {course.professor}
-                        </p>
+                        <>
+                          <span className="text-slate-300 dark:text-slate-700">·</span>
+                          <span className="truncate">{course.professor}</span>
+                        </>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0 -mr-1">
+                  {/* Progress summary */}
+                  <div
+                    className="flex flex-col items-end shrink-0"
+                    title={`${progress.tasksCompleted} of ${progress.tasksTotal} tasks done`}
+                  >
+                    <span className="text-sm font-extrabold font-mono tabular-nums" style={{ color: course.color }}>
+                      {progress.percent}%
+                    </span>
+                    <span className="text-[10px] text-slate-400 tabular-nums whitespace-nowrap">
+                      {progress.tasksCompleted}/{progress.tasksTotal} tasks
+                    </span>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-0.5 shrink-0">
                     {onDeleteCourse && (
                       <button
                         type="button"
@@ -170,7 +185,7 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
                           setCourseToDelete(course);
                           setDeleteAssociatedData(true);
                         }}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
                         title="Delete course"
                         aria-label={`Delete course ${course.name}`}
                       >
@@ -181,25 +196,12 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Bottom Section: Clean progress */}
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80">
-                  <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
-                    <span className="font-medium">
-                      {progress.tasksCompleted} of {progress.tasksTotal} tasks done
-                    </span>
-                    <span className="font-bold font-mono text-slate-700 dark:text-slate-300">
-                      {progress.percent}%
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${progress.percent}%`,
-                        backgroundColor: course.color,
-                      }}
-                    />
-                  </div>
+                {/* Slim progress accent along the bottom edge */}
+                <div className="h-1 w-full bg-slate-100 dark:bg-slate-800">
+                  <div
+                    className="h-full transition-all duration-300"
+                    style={{ width: `${progress.percent}%`, backgroundColor: course.color }}
+                  />
                 </div>
               </div>
             );

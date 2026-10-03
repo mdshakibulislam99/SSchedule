@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Menu,
   Bell,
   Play,
   ArrowRight,
@@ -27,7 +26,6 @@ interface HomeScreenProps {
   onOpenTasks: (courseCode?: string) => void;
   onOpenCalendar: () => void;
   onOpenNotifications: () => void;
-  onOpenSideMenu: () => void;
   onOpenCourse: (courseCode: string) => void;
   onUpdateEnergy: (level: 1 | 2 | 3 | 4 | 5) => void;
   onSelectTask: (task: Task) => void;
@@ -46,7 +44,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenTasks,
   onOpenCalendar,
   onOpenNotifications,
-  onOpenSideMenu,
   onOpenCourse,
   onUpdateEnergy,
   onSelectTask,
@@ -121,14 +118,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 1. CLEAN, MINIMAL HEADER */}
       <header className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onOpenSideMenu}
-            className="p-2 -ml-2 text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            aria-label="Open menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-
           <div>
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="font-medium">{formattedToday}</span>
