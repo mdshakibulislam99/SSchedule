@@ -58,8 +58,24 @@ export type CourseResourceType = 'pdf' | 'docx' | 'text' | 'link' | 'slide' | 'v
 export interface CourseResourceReading {
   percent: number;      // 0 - 100 overall scroll progress
   lastPosition: number; // 0 - 100 relative scroll position to resume from
+  lastPage?: number;
   lastReadAt?: string;  // ISO timestamp of the last reading session
   completed: boolean;
+}
+
+export type ResourceAnnotationKind = 'ink' | 'highlight' | 'text';
+
+export interface ResourceAnnotation {
+  id: string;
+  resourceId: string;
+  pageNumber: number;
+  kind: ResourceAnnotationKind;
+  points?: { x: number; y: number }[];
+  text?: string;
+  color: string;
+  width: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CourseResource {

@@ -65,6 +65,7 @@ import {
   Course,
   CourseResource,
   CourseResourceReading,
+  ResourceAnnotation,
   CourseQuiz,
   CourseFlashcard,
 } from './types';
@@ -92,6 +93,7 @@ export default function App() {
   const [user, setUser] = useState<UserProfile>(() => StudyStorage.getUser());
   const [courses, setCourses] = useState<Course[]>(() => StudyStorage.getCourses());
   const [resources, setResources] = useState<CourseResource[]>(() => StudyStorage.getResources());
+  const [annotations, setAnnotations] = useState<ResourceAnnotation[]>(() => StudyStorage.getAnnotations());
   const [quizzes, setQuizzes] = useState<CourseQuiz[]>(() => StudyStorage.getQuizzes());
   const [flashcards, setFlashcards] = useState<CourseFlashcard[]>(() => StudyStorage.getFlashcards());
   const [tasks, setTasks] = useState<Task[]>(() => StudyStorage.getTasks());
@@ -281,6 +283,10 @@ export default function App() {
   useEffect(() => {
     StudyStorage.saveResources(resources);
   }, [resources]);
+
+  useEffect(() => {
+    StudyStorage.saveAnnotations(annotations);
+  }, [annotations]);
 
   useEffect(() => {
     StudyStorage.saveQuizzes(quizzes);
@@ -510,6 +516,17 @@ export default function App() {
     setResources((prev) =>
       prev.map((r) => (r.id === resourceId ? { ...r, reading: { ...r.reading, ...patch } } : r))
     );
+  };
+
+  const handleSaveAnnotation = (annotation: ResourceAnnotation) => {
+    setAnnotations((prev) => {
+      const exists = prev.some((item) => item.id === annotation.id);
+      return exists ? prev.map((item) => (item.id === annotation.id ? annotation : item)) : [...prev, annotation];
+    });
+  };
+
+  const handleDeleteAnnotation = (annotationId: string) => {
+    setAnnotations((prev) => prev.filter((annotation) => annotation.id !== annotationId));
   };
 
   const handleSaveQuiz = (quiz: CourseQuiz) => {
@@ -851,6 +868,9 @@ export default function App() {
             config={aiConfig}
             onBack={() => setActiveSubScreen('course')}
             onUpdateReading={handleUpdateReading}
+            annotations={annotations.filter((annotation) => annotation.resourceId === resource.id)}
+            onSaveAnnotation={handleSaveAnnotation}
+            onDeleteAnnotation={handleDeleteAnnotation}
               aiConfigured={isAIProviderConfigured(aiConfig)}
               onAISetupRequired={() => setIsAISetupPromptOpen(true)}
           />

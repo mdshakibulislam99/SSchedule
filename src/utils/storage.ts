@@ -15,6 +15,7 @@ import {
   CourseResource,
   CourseQuiz,
   CourseFlashcard,
+  ResourceAnnotation,
 } from '../types';
 import { getLocalDateKey } from './dates';
 
@@ -38,6 +39,7 @@ const STORAGE_KEYS = {
   RESOURCES: 'studyai_course_resources',
   QUIZZES: 'studyai_course_quizzes',
   FLASHCARDS: 'studyai_course_flashcards',
+  ANNOTATIONS: 'studyai_resource_annotations',
 };
 
 export const INITIAL_USER: UserProfile = {
@@ -927,6 +929,22 @@ export const StudyStorage = {
   },
   saveNotes(notes: StudyNote[]) {
     localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(notes));
+  },
+
+  getAnnotations(): ResourceAnnotation[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.ANNOTATIONS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveAnnotations(annotations: ResourceAnnotation[]) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ANNOTATIONS, JSON.stringify(annotations));
+    } catch {
+      console.warn('StudyStorage: annotations not persisted (storage quota).');
+    }
   },
 
   getMetrics(): ProgressMetrics {
