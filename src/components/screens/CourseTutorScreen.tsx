@@ -34,6 +34,8 @@ interface CourseTutorScreenProps {
   config: AIProviderConfig;
   initialPrompt?: string;
   initialQuizResourceId?: string;
+  initialCardsResourceId?: string;
+  initialTab?: TutorTab;
   onBack: () => void;
   onSaveQuiz: (quiz: CourseQuiz) => void;
   onSaveFlashcards: (cards: CourseFlashcard[]) => void;
@@ -52,6 +54,8 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   config,
   initialPrompt,
   initialQuizResourceId,
+  initialCardsResourceId,
+  initialTab,
   onBack,
   onSaveQuiz,
   onSaveFlashcards,
@@ -64,7 +68,7 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const progress = useMemo(() => computeCourseProgress(course, tasks, resources), [course, tasks, resources]);
   const courseTasks = useMemo(() => getCourseTasks(course, tasks), [course, tasks]);
 
-  const [tab, setTab] = useState<TutorTab>(initialQuizResourceId ? 'quiz' : 'learn');
+  const [tab, setTab] = useState<TutorTab>(initialTab || (initialQuizResourceId ? 'quiz' : 'learn'));
 
   // Learn tab
   const [learningPath, setLearningPath] = useState<{ steps: string[]; reason: string } | null>(null);
@@ -93,7 +97,7 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const [quizDone, setQuizDone] = useState(false);
 
   // Cards tab
-  const [cardsResourceId, setCardsResourceId] = useState(courseResources[0]?.id || '');
+  const [cardsResourceId, setCardsResourceId] = useState(initialCardsResourceId || initialQuizResourceId || courseResources[0]?.id || '');
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -137,13 +141,25 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
     setChatInput('');
     setChatLoading(true);
 
+    const preIndexedMaterialKnowledge = courseResources
+      .map((r) => {
+        if (r.aiContext?.denseContext) {
+          return `[RESOURCE "${r.title}"]: Summary: ${r.aiContext.summary}\nKey Concepts: ${r.aiContext.keyConcepts.join(', ')}\nPre-indexed Knowledge Digest:\n${r.aiContext.denseContext}`;
+        }
+        return `[RESOURCE "${r.title}"]: ${(r.content || '').slice(0, 500)}`;
+      })
+      .join('\n\n');
+
     const systemInstruction = `You are StudyAI, a focused tutor for the course "${course.name}" (${course.code}).
 Course objectives: ${course.objectives.join('; ') || 'n/a'}.
 Modules: ${course.modules.map((m) => `${m.title}${m.completed ? ' (done)' : ''}`).join('; ') || 'n/a'}.
-Available resources: ${courseResources.map((r) => r.title).join('; ') || 'none'}.
 Open tasks: ${courseTasks.filter((t) => !t.completed).map((t) => t.title).join('; ') || 'none'}.
 Student progress: ${progress.percent}%.
-Answer with accurate, course-specific help. Keep replies clear and concise.`;
+
+Pre-Indexed Course Materials & Core Knowledge:
+${preIndexedMaterialKnowledge || 'No materials uploaded yet.'}
+
+Answer with accurate, course-specific help directly drawing from the above course materials and knowledge digests. Keep replies clear and concise.`;
 
     try {
       const provider = AIOrchestrator.getProvider(config, 'routine');

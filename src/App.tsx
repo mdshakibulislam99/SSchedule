@@ -116,6 +116,8 @@ export default function App() {
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [courseTutorPrefill, setCourseTutorPrefill] = useState<string | undefined>();
   const [courseTutorQuizResourceId, setCourseTutorQuizResourceId] = useState<string | undefined>();
+  const [courseTutorCardsResourceId, setCourseTutorCardsResourceId] = useState<string | undefined>();
+  const [courseTutorTab, setCourseTutorTab] = useState<'learn' | 'tutor' | 'quiz' | 'cards' | undefined>();
   const [selectedFileForChat, setSelectedFileForChat] = useState<StudyFile | null>(null);
 
   // Modals state
@@ -410,9 +412,12 @@ export default function App() {
     setCurrentTab(tab);
   };
 
+  const [courseWorkspaceInitialTab, setCourseWorkspaceInitialTab] = useState<'overview' | 'tasks' | 'resources' | 'ai' | 'progress'>('overview');
+
   // Open a course workspace by id (used by the Courses list + Home course cards).
-  const openCourseById = (courseId: string) => {
+  const openCourseById = (courseId: string, initialTab?: 'overview' | 'tasks' | 'resources' | 'ai' | 'progress') => {
     setSelectedCourseId(courseId);
+    setCourseWorkspaceInitialTab(initialTab || 'overview');
     setActiveSubScreen('course');
   };
 
@@ -485,16 +490,49 @@ export default function App() {
       tags: data.tags || [],
       createdAt: new Date().toISOString(),
       reading: { percent: 0, lastPosition: 0, completed: false },
+      aiContext: {
+        status: 'analyzing',
+        summary: 'AI is analyzing and indexing document context…',
+        keyConcepts: [],
+        denseContext: '',
+      },
     };
     setResources((prev) => [newRes, ...prev]);
     setCourses((prev) =>
       prev.map((c) => (c.id === courseId ? { ...c, resourceIds: [...c.resourceIds, newRes.id] } : c))
     );
     playChime('success');
+
+    // Auto-send to AI for deep background analysis and permanent context caching
+    AIOrchestrator.analyzeAndIndexMaterial(
+      {
+        title: newRes.title,
+        type: newRes.type,
+        content: newRes.content,
+        courseCode: newRes.courseCode,
+      },
+      aiConfig
+    )
+      .then((aiCtx) => {
+        setResources((prev) =>
+          prev.map((r) =>
+            r.id === newRes.id
+              ? {
+                  ...r,
+                  aiContext: aiCtx,
+                  tags: Array.from(new Set([...r.tags, ...aiCtx.keyConcepts.slice(0, 3)])),
+                }
+              : r
+          )
+        );
+      })
+      .catch((err) => {
+        console.warn('Auto AI indexing failed for resource:', err);
+      });
   };
 
   /** Shared by the Files screen and the course workspace so uploads land in one place. */
-  const handleUploadFile = (newF: Partial<StudyFile>) => {
+  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string }) => {
     const f: StudyFile = {
       id: `file-${Date.now()}`,
       name: newF.name || 'Document.pdf',
@@ -507,9 +545,130 @@ export default function App() {
       courseCode: newF.courseCode,
       dataUrl: newF.dataUrl,
       fileStorageKey: newF.fileStorageKey,
+      aiContext: {
+        status: 'analyzing',
+        summary: 'AI is analyzing and indexing document context…',
+        keyConcepts: [],
+        denseContext: '',
+      },
     };
     setFiles((prev) => [f, ...prev]);
     playChime('success');
+
+    // Auto-send to AI for deep background analysis and permanent context caching
+    AIOrchestrator.analyzeAndIndexMaterial(
+      {
+        title: f.name,
+        type: f.type,
+        content: newF.extractedContent || f.summary,
+        courseCode: f.courseCode,
+      },
+      aiConfig
+    )
+      .then((aiCtx) => {
+        setFiles((prev) =>
+          prev.map((item) =>
+            item.id === f.id
+              ? {
+                  ...item,
+                  summary: aiCtx.summary,
+                  keyTopics: aiCtx.keyConcepts,
+                  aiContext: aiCtx,
+                }
+              : item
+          )
+        );
+      })
+      .catch((err) => {
+        console.warn('Auto AI indexing failed for file:', err);
+      });
+  };
+
+  const handleReindexFile = (fileId: string) => {
+    const target = files.find((f) => f.id === fileId);
+    if (!target) return;
+
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.id === fileId
+          ? {
+              ...f,
+              aiContext: {
+                status: 'analyzing',
+                summary: 'AI is re-indexing file context…',
+                keyConcepts: [],
+                denseContext: '',
+              },
+            }
+          : f
+      )
+    );
+
+    AIOrchestrator.analyzeAndIndexMaterial(
+      {
+        title: target.name,
+        type: target.type,
+        content: target.summary,
+        courseCode: target.courseCode,
+      },
+      aiConfig
+    )
+      .then((aiCtx) => {
+        setFiles((prev) =>
+          prev.map((item) =>
+            item.id === fileId
+              ? {
+                  ...item,
+                  summary: aiCtx.summary,
+                  keyTopics: aiCtx.keyConcepts,
+                  aiContext: aiCtx,
+                }
+              : item
+          )
+        );
+      })
+      .catch((err) => {
+        console.warn('File re-indexing failed:', err);
+      });
+  };
+
+  const handleReindexResource = (resourceId: string) => {
+    const target = resources.find((r) => r.id === resourceId);
+    if (!target) return;
+
+    setResources((prev) =>
+      prev.map((r) =>
+        r.id === resourceId
+          ? {
+              ...r,
+              aiContext: {
+                status: 'analyzing',
+                summary: 'AI is re-indexing document context…',
+                keyConcepts: [],
+                denseContext: '',
+              },
+            }
+          : r
+      )
+    );
+
+    AIOrchestrator.analyzeAndIndexMaterial(
+      {
+        title: target.title,
+        type: target.type,
+        content: target.content,
+        courseCode: target.courseCode,
+      },
+      aiConfig
+    )
+      .then((aiCtx) => {
+        setResources((prev) =>
+          prev.map((r) => (r.id === resourceId ? { ...r, aiContext: aiCtx } : r))
+        );
+      })
+      .catch((err) => {
+        console.warn('Re-indexing failed:', err);
+      });
   };
 
   const handleUpdateReading = (resourceId: string, patch: Partial<CourseResourceReading>) => {
@@ -815,6 +974,10 @@ export default function App() {
           schedule={schedule}
           resources={selectedCourseResources}
           progress={courseProgress}
+          config={aiConfig}
+          aiConfigured={isAIProviderConfigured(aiConfig)}
+          onAISetupRequired={() => setIsAISetupPromptOpen(true)}
+          initialTab={courseWorkspaceInitialTab}
           onBack={() => {
             setActiveSubScreen(null);
             setSelectedResourceId(null);
@@ -838,10 +1001,13 @@ export default function App() {
             setSelectedResourceId(resource.id);
             setActiveSubScreen('resource_reader');
           }}
-          onOpenTutor={() => {
+          onReindexResource={handleReindexResource}
+          onOpenTutor={(opts) => {
             requireAIProvider(() => {
-              setCourseTutorPrefill(undefined);
-              setCourseTutorQuizResourceId(undefined);
+              setCourseTutorPrefill(opts?.prompt);
+              setCourseTutorQuizResourceId(opts?.resourceId);
+              setCourseTutorCardsResourceId(opts?.resourceId);
+              setCourseTutorTab(opts?.tab);
               setActiveSubScreen('course_tutor');
             });
           }}
@@ -889,6 +1055,8 @@ export default function App() {
           config={aiConfig}
           initialPrompt={courseTutorPrefill}
           initialQuizResourceId={courseTutorQuizResourceId}
+          initialCardsResourceId={courseTutorCardsResourceId}
+          initialTab={courseTutorTab}
           onBack={() => setActiveSubScreen('course')}
           onSaveQuiz={handleSaveQuiz}
           onSaveFlashcards={handleSaveFlashcards}
@@ -1073,6 +1241,8 @@ export default function App() {
               showToast(`Extracted and created ${newTs.length} tasks from ${f.name}!`);
             }
           }}
+          onReindexFile={handleReindexFile}
+          onAddTask={(taskData) => handleCreateTask(taskData, false)}
         />
       );
     }
@@ -1223,6 +1393,19 @@ export default function App() {
           <AIChatScreen
             contextTask={selectedTask}
             contextFile={selectedFileForChat}
+            courses={courses}
+            resources={resources}
+            files={files}
+            onNavigateToCourse={(courseId, initialTab) => {
+              setSelectedCourseId(courseId);
+              if (initialTab === 'quiz' || initialTab === 'cards' || initialTab === 'tutor' || initialTab === 'learn') {
+                setCourseTutorTab(initialTab);
+                setActiveSubScreen('course_tutor');
+              } else {
+                setActiveSubScreen('course');
+              }
+              setCurrentTab('courses');
+            }}
             onClearContext={() => {
               setSelectedTask(null);
               setSelectedFileForChat(null);

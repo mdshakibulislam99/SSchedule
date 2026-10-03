@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight } from 'lucide-react';
-import { CourseResource, StudyFile, StudyNote } from '../../types';
+import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw } from 'lucide-react';
+import { CourseResource, StudyFile, StudyNote, Task } from '../../types';
 import { FileViewer } from '../course/FileViewer';
 import { saveFileBlob } from '../../utils/fileStorage';
+import { extractTextFromFile } from '../../utils/fileExtractor';
 
 function createViewerResource(file: StudyFile): CourseResource {
   const lower = file.name.toLowerCase();
@@ -49,10 +50,12 @@ function createViewerResource(file: StudyFile): CourseResource {
 interface FilesScreenProps {
   files: StudyFile[];
   notes: StudyNote[];
-  onUploadFile: (file: Partial<StudyFile>) => void;
+  onUploadFile: (file: Partial<StudyFile> & { extractedContent?: string }) => void;
   onAddNote: (title: string, content: string) => void;
   onAskAIAboutFile: (file: StudyFile) => void;
   onCreateTasksFromFile: (file: StudyFile) => void;
+  onReindexFile?: (fileId: string) => void;
+  onAddTask?: (taskData: Partial<Task>) => void;
 }
 
 export const FilesScreen: React.FC<FilesScreenProps> = ({
@@ -62,11 +65,13 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
   onAddNote,
   onAskAIAboutFile,
   onCreateTasksFromFile,
+  onReindexFile,
+  onAddTask,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'notes'>('files');
   const [selectedFile, setSelectedFile] = useState<StudyFile | null>(null);
   const [readerFile, setReaderFile] = useState<StudyFile | null>(null);
-  const [fileTab, setFileTab] = useState<'file' | 'summary'>('file');
+  const [fileTab, setFileTab] = useState<'file' | 'summary' | 'aiContext'>('file');
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
@@ -98,14 +103,18 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       fileStorageKey = undefined;
     }
 
+    // Extract text content automatically so AI gets rich material context
+    const extractedContent = await extractTextFromFile(uploaded, uploaded.name);
+
     onUploadFile({
       name: uploaded.name,
       size: `${(uploaded.size / (1024 * 1024)).toFixed(1)} MB`,
       type,
       fileStorageKey,
+      extractedContent,
     });
-    setUploadNotice(`${uploaded.name} added`);
-    window.setTimeout(() => setUploadNotice(null), 3500);
+    setUploadNotice(`${uploaded.name} added · AI Auto-Indexing in background…`);
+    window.setTimeout(() => setUploadNotice(null), 4000);
     e.target.value = '';
   };
 
@@ -210,8 +219,22 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
                       <FileText className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                        {file.name}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                          {file.name}
+                        </span>
+                        {file.aiContext?.status === 'ready' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60 shrink-0">
+                            <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                            AI Ready
+                          </span>
+                        )}
+                        {file.aiContext?.status === 'analyzing' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 shrink-0 animate-pulse">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin text-indigo-600" />
+                            Indexing…
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         {file.size} · Uploaded {file.uploadedAt}
@@ -295,6 +318,14 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               >
                 Summary
               </button>
+              <button
+                type="button"
+                onClick={() => setFileTab('aiContext')}
+                className={`flex-1 rounded-xl py-2.5 transition-colors flex items-center justify-center gap-1.5 ${fileTab === 'aiContext' ? 'bg-white text-emerald-600 shadow-sm dark:bg-slate-800 dark:text-emerald-400' : 'text-slate-500'}`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                <span>AI Context</span>
+              </button>
             </div>
 
             {fileTab === 'file' && (
@@ -312,6 +343,149 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
             {fileTab === 'summary' && (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
                 {selectedFile.summary || 'No summary is available for this file.'}
+              </div>
+            )}
+
+            {fileTab === 'aiContext' && (
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {/* Status banner */}
+                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                        {selectedFile.aiContext?.status === 'ready'
+                          ? 'Auto-Indexed & Persisted'
+                          : selectedFile.aiContext?.status === 'analyzing'
+                            ? 'Indexing Material Context…'
+                            : 'Context Ready'}
+                      </p>
+                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400">
+                        Cached permanently for instant future AI learning
+                      </p>
+                    </div>
+                  </div>
+                  {onReindexFile && (
+                    <button
+                      type="button"
+                      onClick={() => onReindexFile(selectedFile.id)}
+                      className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 text-[11px] font-bold border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0"
+                      title="Re-run Gemini AI analysis on this file"
+                    >
+                      <RotateCw className="w-3 h-3 text-indigo-600" />
+                      <span>Re-index</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Summary */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 space-y-1.5">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Executive Summary</h4>
+                  <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
+                    {selectedFile.aiContext?.summary || selectedFile.summary || 'Document indexed for study.'}
+                  </p>
+                </div>
+
+                {/* Key Concepts */}
+                {selectedFile.aiContext?.keyConcepts && selectedFile.aiContext.keyConcepts.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Key Concepts</h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedFile.aiContext.keyConcepts.map((concept, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-xs font-semibold border border-indigo-100 dark:border-indigo-900/60"
+                        >
+                          {concept}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Dense Knowledge Digest */}
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                      Pre-Indexed Study Digest
+                    </h4>
+                    <span className="text-[10px] font-bold text-slate-400">Zero re-parsing needed</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-line font-mono text-[11px] bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                    {selectedFile.aiContext?.denseContext || 'Knowledge digest prepared for AI learning sessions.'}
+                  </p>
+                </div>
+
+                {/* Comprehension Questions */}
+                {selectedFile.aiContext?.studyQuestions && selectedFile.aiContext.studyQuestions.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-violet-50/50 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-900/50 space-y-2">
+                    <h4 className="text-xs font-bold text-violet-950 dark:text-violet-200 flex items-center gap-1.5">
+                      <HelpCircle className="w-3.5 h-3.5 text-violet-600" />
+                      Pre-Generated Study Questions
+                    </h4>
+                    <div className="space-y-1.5">
+                      {selectedFile.aiContext.studyQuestions.map((q, i) => (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            setSelectedFile(null);
+                            onAskAIAboutFile(selectedFile);
+                          }}
+                          className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-violet-100/80 dark:border-violet-800/40 text-xs text-slate-700 dark:text-slate-200 hover:border-violet-400 cursor-pointer flex items-center justify-between gap-2 group transition-all"
+                        >
+                          <span className="italic">"{q}"</span>
+                          <span className="text-[10px] font-bold text-indigo-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            Ask AI →
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Suggested Tasks */}
+                {selectedFile.aiContext?.suggestedTasks && selectedFile.aiContext.suggestedTasks.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50 space-y-2">
+                    <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                      <ListChecks className="w-3.5 h-3.5 text-amber-600" />
+                      Extracted Action Items
+                    </h4>
+                    <div className="space-y-1.5">
+                      {selectedFile.aiContext.suggestedTasks.map((t, i) => (
+                        <div
+                          key={i}
+                          className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-100/80 dark:border-amber-800/40 text-xs flex items-center justify-between gap-2"
+                        >
+                          <div>
+                            <p className="font-semibold text-slate-800 dark:text-slate-200">{t.title}</p>
+                            <span className="text-[10px] text-slate-400 capitalize">{t.priority} priority · {t.estimatedMinutes}m</span>
+                          </div>
+                          {onAddTask && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onAddTask({
+                                  title: t.title,
+                                  priority: t.priority,
+                                  estimatedMinutes: t.estimatedMinutes,
+                                  courseCode: selectedFile.courseCode || 'Study',
+                                });
+                                setUploadNotice(`Added task: ${t.title}`);
+                                window.setTimeout(() => setUploadNotice(null), 3500);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-500 shrink-0"
+                            >
+                              + Add Task
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

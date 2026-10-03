@@ -78,6 +78,20 @@ export interface ResourceAnnotation {
   updatedAt: string;
 }
 
+export interface ResourceAIContext {
+  status: 'pending' | 'analyzing' | 'ready' | 'error';
+  analyzedAt?: string;
+  summary: string;
+  keyConcepts: string[];
+  denseContext: string; // Pre-indexed structured knowledge digest
+  studyQuestions?: string[];
+  suggestedTasks?: Array<{
+    title: string;
+    priority: 'high' | 'medium' | 'low';
+    estimatedMinutes: number;
+  }>;
+}
+
 export interface CourseResource {
   id: string;
   courseId: string;
@@ -103,6 +117,7 @@ export interface CourseResource {
   tags: string[];
   createdAt: string;
   reading: CourseResourceReading;
+  aiContext?: ResourceAIContext;
 }
 
 export interface CourseProgress {
@@ -245,6 +260,7 @@ export interface StudyFile {
   dataUrl?: string;
   /** IndexedDB key for larger files that cannot fit in localStorage. */
   fileStorageKey?: string;
+  aiContext?: ResourceAIContext;
 }
 
 export interface StudyNote {

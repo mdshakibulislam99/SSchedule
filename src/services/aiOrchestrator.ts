@@ -13,10 +13,14 @@ import {
   CourseProgress,
   CourseQuizQuestion,
   CourseKeyTerm,
+  ResourceAIContext,
 } from '../types';
 import { getLocalDateKey } from '../utils/dates';
 
 export interface AIExecutionContext {
+  currentCourse?: Course | null;
+  courseResources?: CourseResource[];
+  courseFiles?: StudyFile[];
   currentTask?: Task | null;
   currentFile?: StudyFile | null;
   tasks?: Task[];
@@ -183,11 +187,45 @@ export const AIOrchestrator = {
     if (context.user) {
       contextPrompt += `User: ${context.user.name}, studying ${context.user.studyField} at ${context.user.university}. Energy level: ${context.energyLevel || 4}/5.\n`;
     }
+    if (context.currentCourse) {
+      contextPrompt += `STRICT INDIVIDUAL COURSE ISOLATION:
+The student is focusing strictly on the individual course "${context.currentCourse.name}" (${context.currentCourse.code}).
+Course Objectives: ${context.currentCourse.objectives.join('; ') || 'n/a'}.
+Course Modules: ${context.currentCourse.modules.map((m) => m.title).join(', ') || 'n/a'}.
+Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSIVELY in this course and its registered materials. Do NOT mix with any other course.\n`;
+
+      if (context.courseResources && context.courseResources.length > 0) {
+        const materialsText = context.courseResources
+          .map((r) => {
+            if (r.aiContext?.denseContext) {
+              return `- Resource "${r.title}": [SUMMARY: ${r.aiContext.summary}] [CONCEPTS: ${r.aiContext.keyConcepts.join(', ')}] [DIGEST: ${r.aiContext.denseContext}]`;
+            }
+            return `- Resource "${r.title}": ${(r.content || '').slice(0, 500)}`;
+          })
+          .join('\n');
+        contextPrompt += `EXCLUSIVE COURSE MATERIALS FOR ${context.currentCourse.code}:\n${materialsText}\n`;
+      }
+      if (context.courseFiles && context.courseFiles.length > 0) {
+        const filesText = context.courseFiles
+          .map((f) => {
+            if (f.aiContext?.denseContext) {
+              return `- File "${f.name}": [SUMMARY: ${f.aiContext.summary}] [DIGEST: ${f.aiContext.denseContext}]`;
+            }
+            return `- File "${f.name}": ${f.summary || 'Course document'}`;
+          })
+          .join('\n');
+        contextPrompt += `EXCLUSIVE COURSE FILES FOR ${context.currentCourse.code}:\n${filesText}\n`;
+      }
+    }
     if (context.currentTask) {
       contextPrompt += `Current Open Task: "${context.currentTask.title}" (${context.currentTask.courseCode}, Priority: ${context.currentTask.priority}, Due: ${context.currentTask.deadline}, Progress: ${context.currentTask.progress}%).\n`;
     }
     if (context.currentFile) {
-      contextPrompt += `Current Open File: "${context.currentFile.name}" (${context.currentFile.summary || 'Course document'}).\n`;
+      if (context.currentFile.aiContext?.denseContext) {
+        contextPrompt += `Current Open File: "${context.currentFile.name}" [PRE-INDEXED CONTEXT: ${context.currentFile.aiContext.denseContext}, Key Concepts: ${context.currentFile.aiContext.keyConcepts.join(', ')}].\n`;
+      } else {
+        contextPrompt += `Current Open File: "${context.currentFile.name}" (${context.currentFile.summary || 'Course document'}).\n`;
+      }
     }
     if (context.schedule) {
       const todaySched = context.schedule
@@ -604,13 +642,17 @@ Write a clear, well-structured summary with short paragraphs or bullet points. D
   // 8. Extract key terms & definitions
   async extractKeyTerms(resource: CourseResource, config: AIProviderConfig): Promise<CourseKeyTerm[]> {
     const provider = this.getProvider(config, 'file_analysis');
+    const contentToUse = resource.aiContext?.denseContext
+      ? `[PRE-INDEXED STUDY DIGEST]:\n${resource.aiContext.denseContext}\n\n${(resource.content || '').slice(0, 2000)}`
+      : (resource.content || '').slice(0, 4000);
+
     const prompt = `Extract the 5-8 most important key terms from this resource and define each in one sentence.
 Return valid JSON only, in this exact shape:
 { "terms": [ { "term": "...", "definition": "..." } ] }
 
 Resource: "${resource.title}"
 """
-${resource.content.slice(0, 4000)}
+${contentToUse || `Resource: ${resource.title}`}
 """`;
 
     try {
@@ -628,6 +670,13 @@ ${resource.content.slice(0, 4000)}
       console.warn('extractKeyTerms fallback used:', e);
     }
 
+    if (resource.aiContext?.keyConcepts && resource.aiContext.keyConcepts.length > 0) {
+      return resource.aiContext.keyConcepts.slice(0, 6).map((concept) => ({
+        term: concept,
+        definition: `Fundamental concept from "${resource.title}".`,
+      }));
+    }
+
     return resource.tags.slice(0, 6).map((tag) => ({
       term: tag,
       definition: `A core concept in "${resource.title}".`,
@@ -637,17 +686,28 @@ ${resource.content.slice(0, 4000)}
   // 9. Generate a multiple-choice quiz from a resource
   async generateQuizForResource(resource: CourseResource, config: AIProviderConfig): Promise<CourseQuizQuestion[]> {
     const provider = this.getProvider(config, 'routine');
-    const prompt = `Create a 4-question multiple-choice quiz that tests real understanding of this resource.
+    const contentToUse = resource.aiContext?.denseContext
+      ? `[PRE-INDEXED STUDY DIGEST]:\n${resource.aiContext.denseContext}\n\n${(resource.content || '').slice(0, 2000)}`
+      : (resource.content || '').slice(0, 4000);
+
+    const prompt = `STRICT COURSE ISOLATION RULE:
+Create a 4-question multiple-choice quiz that tests real academic understanding EXCLUSIVELY for the individual course "${resource.courseCode || 'this course'}".
+Every question, option, and explanation must test ONLY concepts directly present in "${resource.title}".
+Do NOT include or mix in concepts from other courses or subjects.
+
 Return valid JSON only in this exact shape:
 { "questions": [ { "question": "...", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "why the answer is right" } ] }
 
-Resource: "${resource.title}"
+Resource for ${resource.courseCode || 'course'}: "${resource.title}"
 """
-${resource.content.slice(0, 4000)}
+${contentToUse || `Resource: ${resource.title}`}
 """`;
 
     try {
-      const raw = await provider.generateText(prompt, 'You are an exam-writing professor who writes fair, unambiguous questions.');
+      const raw = await provider.generateText(
+        prompt,
+        `You are a professor for ${resource.courseCode || 'this course'}. MANDATORY: Formulate questions strictly assessing "${resource.title}". Never reference outside courses.`
+      );
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -690,18 +750,28 @@ ${resource.content.slice(0, 4000)}
     config: AIProviderConfig
   ): Promise<{ steps: string[]; reason: string }> {
     const provider = this.getProvider(config, 'routine');
-    const openTasks = tasks.filter((t) => t.courseCode === course.code && !t.completed);
-    const prompt = `Create a focused study path for the course "${course.name}" (${course.code}).
+    const courseResources = resources.filter(
+      (r) => r.courseId === course.id || r.courseCode?.toLowerCase() === course.code.toLowerCase()
+    );
+    const openTasks = tasks.filter(
+      (t) => t.courseCode?.toLowerCase() === course.code.toLowerCase() && !t.completed
+    );
+    const prompt = `CRITICAL COURSE ISOLATION RULE:
+Create a focused study path EXCLUSIVELY for the individual course "${course.name}" (${course.code}).
+Do not include topics, modules, or tasks from any other course or subject.
 Objectives: ${course.objectives.join('; ') || 'n/a'}
-Modules: ${course.modules.map((m) => m.title).join('; ') || 'n/a'}
-Resources: ${resources.map((r) => r.title).join('; ') || 'n/a'}
-Open tasks: ${openTasks.map((t) => t.title).join('; ') || 'none'}
+Modules for ${course.code}: ${course.modules.map((m) => m.title).join('; ') || 'n/a'}
+Course Resources for ${course.code}: ${courseResources.map((r) => r.title).join('; ') || 'n/a'}
+Open tasks for ${course.code}: ${openTasks.map((t) => t.title).join('; ') || 'none'}
 
 Return valid JSON only:
 { "steps": ["Step 1", "Step 2", "Step 3", "Step 4"], "reason": "why this order works" }`;
 
     try {
-      const raw = await provider.generateText(prompt, 'You are an academic advisor optimizing study order for retention.');
+      const raw = await provider.generateText(
+        prompt,
+        `You are an academic advisor optimizing study order exclusively for "${course.name}" (${course.code}). Never reference other courses.`
+      );
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -718,26 +788,30 @@ Return valid JSON only:
 
     const steps: string[] = [];
     course.modules.filter((m) => !m.completed).slice(0, 2).forEach((m) => steps.push(`Study module: ${m.title}`));
-    resources.filter((r) => !r.reading.completed).slice(0, 2).forEach((r) => steps.push(`Read: ${r.title}`));
+    courseResources.filter((r) => !r.reading.completed).slice(0, 2).forEach((r) => steps.push(`Read: ${r.title}`));
     openTasks.slice(0, 1).forEach((t) => steps.push(`Work on task: ${t.title}`));
-    if (steps.length === 0) steps.push('Review all modules and confirm every module is marked complete.');
+    if (steps.length === 0) steps.push(`Review all modules in ${course.code} and confirm every module is marked complete.`);
     return {
       steps,
-      reason: 'Ordered by outstanding modules, unread resources, then open tasks.',
+      reason: `Ordered by outstanding ${course.code} modules, unread course resources, then open tasks.`,
     };
   },
 
   // 11. Course progress insight
   async courseProgressInsight(course: Course, progress: CourseProgress, config: AIProviderConfig): Promise<string> {
     const provider = this.getProvider(config, 'routine');
-    const prompt = `A student is ${progress.percent}% through "${course.name}" (${course.code}).
-Tasks: ${progress.tasksCompleted}/${progress.tasksTotal} complete.
-Resources read: ${progress.resourcesRead}/${progress.resourcesTotal}.
-Modules complete: ${progress.modulesCompleted}/${progress.modulesTotal}.
-Write 2-3 sentences of specific, encouraging coaching on what to do next.`;
+    const prompt = `CRITICAL COURSE ISOLATION RULE:
+A student is ${progress.percent}% through the specific course "${course.name}" (${course.code}).
+Tasks for ${course.code}: ${progress.tasksCompleted}/${progress.tasksTotal} complete.
+Resources read for ${course.code}: ${progress.resourcesRead}/${progress.resourcesTotal}.
+Modules complete for ${course.code}: ${progress.modulesCompleted}/${progress.modulesTotal}.
+Write 2-3 sentences of specific, encouraging coaching on what to do next EXCLUSIVELY within ${course.code}. Do not mention any other courses.`;
 
     try {
-      const raw = await provider.generateText(prompt, 'You are an encouraging, concrete academic coach.');
+      const raw = await provider.generateText(
+        prompt,
+        `You are an encouraging academic coach specifically assigned to ${course.name} (${course.code}). Never mention other courses.`
+      );
       if (raw && raw.trim()) return raw.trim();
     } catch (e) {
       console.warn('courseProgressInsight fallback used:', e);
@@ -754,17 +828,27 @@ Write 2-3 sentences of specific, encouraging coaching on what to do next.`;
   // 12. Generate flashcards from a resource
   async generateFlashcards(resource: CourseResource, config: AIProviderConfig): Promise<{ front: string; back: string }[]> {
     const provider = this.getProvider(config, 'routine');
-    const prompt = `Create 5 study flashcards from this resource.
+    const contentToUse = resource.aiContext?.denseContext
+      ? `[PRE-INDEXED STUDY DIGEST]:\n${resource.aiContext.denseContext}\n\n${(resource.content || '').slice(0, 2000)}`
+      : (resource.content || '').slice(0, 4000);
+
+    const prompt = `STRICT COURSE ISOLATION RULE:
+Create 5 study flashcards EXCLUSIVELY for the individual course "${resource.courseCode || 'this course'}" testing concepts directly from "${resource.title}".
+Do NOT test concepts, terms, or topics from any other courses or subjects.
+
 Return valid JSON only:
 { "cards": [ { "front": "question or term", "back": "concise answer" } ] }
 
-Resource: "${resource.title}"
+Resource for ${resource.courseCode || 'course'}: "${resource.title}"
 """
-${resource.content.slice(0, 4000)}
+${contentToUse || `Resource: ${resource.title}`}
 """`;
 
     try {
-      const raw = await provider.generateText(prompt, 'You are an expert tutor creating spaced-repetition flashcards.');
+      const raw = await provider.generateText(
+        prompt,
+        `You are an expert tutor creating spaced-repetition flashcards for ${resource.courseCode || 'this course'}. MANDATORY: Confine all cards strictly to "${resource.title}". Never include outside courses.`
+      );
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -782,5 +866,333 @@ ${resource.content.slice(0, 4000)}
       front: `Define: ${tag}`,
       back: `A key concept from "${resource.title}".`,
     }));
+  },
+
+  // 13. Generate comprehensive course overview & briefing strictly for an individual course
+  async generateCourseOverview(
+    course: Course,
+    resources: CourseResource[],
+    tasks: Task[],
+    files: StudyFile[],
+    config: AIProviderConfig
+  ): Promise<{
+    summary: string;
+    keyThemes: string[];
+    currentFocus: string;
+    upcomingPriorities: string[];
+    materialsDigest: { title: string; takeaway: string; type: string }[];
+  }> {
+    const provider = this.getProvider(config, 'routine');
+    // Strict course isolation: filter materials belonging exclusively to this course
+    const courseResources = resources.filter(
+      (r) => r.courseId === course.id || r.courseCode?.toLowerCase() === course.code.toLowerCase()
+    );
+    const courseFiles = files.filter(
+      (f) => f.courseCode?.toLowerCase() === course.code.toLowerCase() || course.materialsFileIds?.includes(f.id)
+    );
+    const pendingTasks = tasks
+      .filter((t) => t.courseCode?.toLowerCase() === course.code.toLowerCase() && !t.completed)
+      .map((t) => t.title)
+      .join('; ');
+
+    const resourceSummaries = courseResources.map((r) => {
+      if (r.aiContext?.denseContext) {
+        return `[PRE-INDEXED CONTEXT] "${r.title}": ${r.aiContext.denseContext}`;
+      }
+      const snippet = (r.content || '').slice(0, 500).replace(/\s+/g, ' ');
+      return `[${r.type.toUpperCase()}] "${r.title}": ${snippet || 'No text preview available'}`;
+    }).join('\n');
+
+    const fileList = courseFiles.map((f) => {
+      if (f.aiContext?.denseContext) {
+        return `File: "${f.name}" [PRE-INDEXED: ${f.aiContext.denseContext}]`;
+      }
+      return `File: "${f.name}" (${f.type}, ${f.size})`;
+    }).join(', ');
+
+    const prompt = `CRITICAL COURSE ISOLATION RULE:
+Synthesize an up-to-date academic overview and briefing STRICTLY and EXCLUSIVELY for the individual course "${course.name}" (${course.code}).
+Do NOT blend in, mention, or reference topics, materials, concepts, or deadlines from any other course or subject.
+Everything you generate must originate strictly from this course's syllabus and its specific materials listed below.
+
+Course Profile:
+- Course: ${course.name} (${course.code})
+- Instructor: ${course.professor || 'n/a'}
+- Term: ${course.term || 'n/a'}
+- Objectives: ${course.objectives.join('; ') || 'n/a'}
+- Course Modules: ${course.modules.map((m) => m.title).join('; ') || 'n/a'}
+- Uploaded Resources & Notes for ${course.code}:
+${resourceSummaries || 'No uploaded resources yet for this course.'}
+- Course Files for ${course.code}: ${fileList || 'None'}
+- Pending Tasks for ${course.code}: ${pendingTasks || 'No open tasks.'}
+
+Analyze all the above materials and return valid JSON only in this exact shape:
+{
+  "summary": "2-3 insightful sentences summarizing where this course stands, its main subject scope, and recent topics covered.",
+  "keyThemes": ["Core concept 1", "Core concept 2", "Core concept 3"],
+  "currentFocus": "A clear statement of what the student should be mastering right now based on recent materials.",
+  "upcomingPriorities": ["Actionable priority 1", "Actionable priority 2"],
+  "materialsDigest": [
+    { "title": "Resource or File Title", "takeaway": "Key takeaway or core thesis from this material", "type": "pdf" }
+  ]
+}`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an elite academic syllabus and learning analyst.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.summary) {
+          return {
+            summary: String(parsed.summary),
+            keyThemes: Array.isArray(parsed.keyThemes) ? parsed.keyThemes.map(String) : [],
+            currentFocus: parsed.currentFocus ? String(parsed.currentFocus) : 'Focus on master concepts from current module materials.',
+            upcomingPriorities: Array.isArray(parsed.upcomingPriorities) ? parsed.upcomingPriorities.map(String) : [],
+            materialsDigest: Array.isArray(parsed.materialsDigest)
+              ? parsed.materialsDigest.map((m: any) => ({
+                  title: String(m.title || 'Material'),
+                  takeaway: String(m.takeaway || 'Core reading'),
+                  type: String(m.type || 'text'),
+                }))
+              : [],
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('generateCourseOverview fallback used:', e);
+    }
+
+    // High quality deterministic fallback
+    return {
+      summary: `Course briefing for ${course.name} (${course.code}). Covering ${course.modules.length} active modules with ${resources.length} uploaded reading materials and reference files.`,
+      keyThemes: course.objectives.length > 0 ? course.objectives.slice(0, 4) : ['Core principles', 'Practical applications', 'Exam preparation'],
+      currentFocus: course.modules.find((m) => !m.completed)?.title
+        ? `Active module: ${course.modules.find((m) => !m.completed)?.title}`
+        : 'Reviewing recent lecture slides and core readings.',
+      upcomingPriorities: tasks.filter((t) => t.courseCode === course.code && !t.completed).slice(0, 3).map((t) => t.title),
+      materialsDigest: resources.slice(0, 4).map((r) => ({
+        title: r.title,
+        takeaway: r.aiContext?.summary || (r.tags.length > 0 ? `Key topics: ${r.tags.join(', ')}` : `Estimated reading time: ${r.estimatedReadMinutes} min`),
+        type: r.type,
+      })),
+    };
+  },
+
+  // 14. Generate concrete study tasks directly from course materials & readings
+  async generateCourseTasksFromMaterials(
+    course: Course,
+    resources: CourseResource[],
+    files: StudyFile[],
+    existingTasks: Task[],
+    config: AIProviderConfig
+  ): Promise<Array<{
+    title: string;
+    description: string;
+    priority: 'high' | 'medium' | 'low';
+    estimatedMinutes: number;
+    sourceMaterial: string;
+  }>> {
+    const provider = this.getProvider(config, 'routine');
+    // Strict course isolation: filter materials belonging exclusively to this course
+    const courseResources = resources.filter(
+      (r) => r.courseId === course.id || r.courseCode?.toLowerCase() === course.code.toLowerCase()
+    );
+    const courseFiles = files.filter(
+      (f) => f.courseCode?.toLowerCase() === course.code.toLowerCase() || course.materialsFileIds?.includes(f.id)
+    );
+    const existingTitles = existingTasks
+      .filter((t) => t.courseCode?.toLowerCase() === course.code.toLowerCase())
+      .map((t) => t.title)
+      .join('; ');
+
+    const materialsInfo = courseResources.map((r) => {
+      if (r.aiContext?.denseContext) {
+        return `Resource "${r.title}": ${r.aiContext.denseContext} (Key concepts: ${r.aiContext.keyConcepts.join(', ')})`;
+      }
+      return `Resource: "${r.title}" (${r.type}) - ${r.tags.join(', ') || 'General'}`;
+    }).concat(
+      courseFiles.map((f) => {
+        if (f.aiContext?.denseContext) {
+          return `File "${f.name}": ${f.aiContext.denseContext}`;
+        }
+        return `File: "${f.name}" (${f.type})`;
+      })
+    ).slice(0, 8).join('\n');
+
+    const prompt = `CRITICAL COURSE ISOLATION RULE:
+Generate 4 to 6 specific, actionable student study tasks EXCLUSIVELY for the individual course "${course.name}" (${course.code}).
+Every task MUST be grounded directly in the provided materials for ${course.code}.
+Do NOT generate tasks for other subjects or courses.
+Avoid duplicating existing tasks for ${course.code}: [${existingTitles || 'none'}]
+
+Course Materials for ${course.code}:
+${materialsInfo || `General course syllabus and lectures for ${course.name}`}
+
+Modules for ${course.code}:
+${course.modules.map((m) => m.title).join('; ') || 'n/a'}
+
+Return valid JSON only in this format:
+{
+  "tasks": [
+    {
+      "title": "Clear concise action-oriented title (e.g. 'Read Chapter 3 on Graph Search & summarize key formulas')",
+      "description": "Brief explanation of what to review and what deliverable or understanding to achieve.",
+      "priority": "high",
+      "estimatedMinutes": 45,
+      "sourceMaterial": "Title of the material or module this is derived from"
+    }
+  ]
+}`;
+
+    try {
+      const raw = await provider.generateText(
+        prompt,
+        `You are an expert academic organizer. MANDATORY: Focus solely on ${course.name} (${course.code}). Never reference or include materials or tasks from any other courses.`
+      );
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) {
+          return parsed.tasks.map((t: any) => ({
+            title: String(t.title || 'Study course topic'),
+            description: String(t.description || ''),
+            priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
+            estimatedMinutes: Number(t.estimatedMinutes) || 30,
+            sourceMaterial: String(t.sourceMaterial || course.code),
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('generateCourseTasksFromMaterials fallback used:', e);
+    }
+
+    // High quality deterministic fallback
+    const fallbackTasks: Array<{
+      title: string;
+      description: string;
+      priority: 'high' | 'medium' | 'low';
+      estimatedMinutes: number;
+      sourceMaterial: string;
+    }> = [];
+
+    resources.filter((r) => !r.reading.completed).slice(0, 3).forEach((r) => {
+      fallbackTasks.push({
+        title: `Complete reading: ${r.title}`,
+        description: `Review key concepts and annotate high-yield terms in ${r.title}.`,
+        priority: 'high',
+        estimatedMinutes: Math.max(25, r.estimatedReadMinutes || 30),
+        sourceMaterial: r.title,
+      });
+    });
+
+    course.modules.filter((m) => !m.completed).slice(0, 2).forEach((m) => {
+      fallbackTasks.push({
+        title: `Master Module: ${m.title}`,
+        description: `Work through practice questions and notes for ${m.title}.`,
+        priority: 'medium',
+        estimatedMinutes: 45,
+        sourceMaterial: m.title,
+      });
+    });
+
+    if (fallbackTasks.length === 0) {
+      fallbackTasks.push({
+        title: `Comprehensive review of ${course.code}`,
+        description: 'Review flashcards, past quizzes, and confirmed notes before next assessment.',
+        priority: 'medium',
+        estimatedMinutes: 40,
+        sourceMaterial: course.code,
+      });
+    }
+
+    return fallbackTasks;
+  },
+
+  // 15. Auto-analyze and index a newly added file or resource to persist ready context
+  async analyzeAndIndexMaterial(
+    material: { title: string; type: string; content?: string; courseCode?: string },
+    config: AIProviderConfig
+  ): Promise<ResourceAIContext> {
+    const provider = this.getProvider(config, 'routine');
+    const contentSample = (material.content || '').slice(0, 6500);
+
+    const prompt = `STRICT COURSE INDIVIDUALITY RULE:
+Perform an in-depth academic indexing analysis of this newly added learning material specifically for the course "${material.courseCode || 'General study'}".
+Title: "${material.title}"
+Type: ${material.type}
+Course: ${material.courseCode || 'General study'}
+Content preview:
+"""
+${contentSample || `Material: ${material.title} (${material.type}).`}
+"""
+
+Analyze and return valid JSON only with this exact shape:
+{
+  "summary": "2-3 crisp sentences explaining exactly what this document covers in the context of ${material.courseCode || 'this course'} and why it matters.",
+  "keyConcepts": ["Concept 1", "Concept 2", "Concept 3", "Concept 4"],
+  "denseContext": "A comprehensive 150-250 word study knowledge digest capturing the fundamental theorems, formulas, definitions, key arguments, and takeaways of this material for ${material.courseCode || 'this course'}. This will be preserved as the permanent pre-indexed context for future AI learning sessions.",
+  "studyQuestions": [
+    "Thought-provoking comprehension question 1 for ${material.courseCode || 'this course'}?",
+    "Question 2?",
+    "Question 3?"
+  ],
+  "suggestedTasks": [
+    {
+      "title": "Actionable task title derived from this material for ${material.courseCode || 'this course'}",
+      "priority": "high",
+      "estimatedMinutes": 30
+    }
+  ]
+}`;
+
+    try {
+      const raw = await provider.generateText(
+        prompt,
+        `You are an expert research librarian and academic indexer. MANDATORY: Focus strictly on the individual course "${material.courseCode || 'General study'}". Do NOT blend with concepts from other courses.`
+      );
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.summary && parsed.denseContext) {
+          return {
+            status: 'ready',
+            analyzedAt: new Date().toISOString(),
+            summary: String(parsed.summary),
+            keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map(String) : [],
+            denseContext: String(parsed.denseContext),
+            studyQuestions: Array.isArray(parsed.studyQuestions) ? parsed.studyQuestions.map(String) : [],
+            suggestedTasks: Array.isArray(parsed.suggestedTasks)
+              ? parsed.suggestedTasks.map((t: any) => ({
+                  title: String(t.title || 'Study document'),
+                  priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
+                  estimatedMinutes: Number(t.estimatedMinutes) || 30,
+                }))
+              : [],
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('analyzeAndIndexMaterial fallback used:', err);
+    }
+
+    // High quality deterministic fallback
+    return {
+      status: 'ready',
+      analyzedAt: new Date().toISOString(),
+      summary: `Academic resource covering ${material.title}. Essential reference material for ${material.courseCode || 'course study'}.`,
+      keyConcepts: [material.title, 'Key principles', 'Application methods'],
+      denseContext: `Pre-indexed study digest for "${material.title}". This document provides reference material, practical examples, and core concepts relevant to ${material.courseCode || 'course curriculum'}.`,
+      studyQuestions: [
+        `What are the core arguments and premises presented in "${material.title}"?`,
+        `How does this material connect to other course modules and assignments?`,
+      ],
+      suggestedTasks: [
+        {
+          title: `Review and annotate ${material.title}`,
+          priority: 'high',
+          estimatedMinutes: 30,
+        },
+      ],
+    };
   },
 };

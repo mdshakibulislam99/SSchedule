@@ -73,7 +73,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col space-y-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-5xl mx-auto flex flex-col space-y-4 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Bar Navigation */}
       <div className="flex items-center justify-between min-h-[44px]">
         <button
@@ -100,18 +100,18 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
         </button>
       </div>
 
-      {/* Task Header Information */}
-      <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+      {/* Task Header Information - Full width & compact height */}
+      <div className="w-full p-4 sm:py-3.5 sm:px-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2.5">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <div
-              className="px-2.5 py-1 rounded-lg text-white text-xs font-bold shadow-sm"
+              className="px-2 py-0.5 rounded-md text-white text-[11px] font-extrabold shadow-2xs uppercase"
               style={{ backgroundColor: task.courseColor }}
             >
               {task.courseCode || 'Personal'}
             </div>
-            <span className="text-xs font-bold uppercase text-rose-500">{task.priority} Priority</span>
-            <span className="text-slate-400">·</span>
+            <span className="text-[11px] font-bold uppercase text-rose-500">{task.priority} Priority</span>
+            <span className="text-slate-300 dark:text-slate-700">·</span>
             <span className="text-xs text-slate-500 dark:text-slate-400">
               Due {new Date(task.deadline).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
@@ -119,7 +119,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
 
           <button
             onClick={() => onToggleTask(task.id)}
-            className={`shrink-0 p-2 rounded-xl border transition-colors ${
+            className={`shrink-0 p-1.5 rounded-xl border transition-colors cursor-pointer ${
               task.completed
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-300'
                 : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-emerald-600 hover:border-emerald-300'
@@ -127,11 +127,11 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
             aria-label={task.completed ? 'Mark as active' : 'Mark complete'}
             title={task.completed ? 'Mark as active' : 'Mark complete'}
           >
-            <CheckCircle2 className="w-5 h-5" />
+            <CheckCircle2 className="w-4 h-4" />
           </button>
         </div>
 
-        <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+        <h1 className="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 dark:text-white">
           {task.title}
         </h1>
 
@@ -141,7 +141,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400 pt-0.5">
           <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 capitalize">{taskArea}</span>
           <span>{task.type}</span>
           <span>·</span>

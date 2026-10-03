@@ -71,15 +71,15 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   });
 
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col space-y-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-5xl mx-auto flex flex-col space-y-4 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Task workspace header */}
-      <div className="flex items-start justify-between gap-4 pt-2">
+      <div className="flex items-start justify-between gap-4 pt-1">
         <div>
-          <p className="text-mobile-micro uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Tasks</p>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+          <p className="text-[10px] uppercase tracking-[0.16em] font-extrabold text-slate-400 dark:text-slate-500">Tasks</p>
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
             {courseCodeFilter ? `${courseCodeFilter} tasks` : 'My tasks'}
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Academic, personal, and recurring work in one place.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Academic, personal, and recurring work in one place.</p>
         </div>
 
         {courseCodeFilter && (

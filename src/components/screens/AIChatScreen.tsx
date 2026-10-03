@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Send,
   Mic,
@@ -12,15 +12,21 @@ import {
   ArrowRight,
   BookOpen,
   Globe,
+  Layers,
+  GraduationCap,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
-import { AIMessage, AIActionProposal, Task, StudyFile, AIProviderConfig, ScheduleEvent, UserProfile } from '../../types';
+import { AIMessage, AIActionProposal, Task, StudyFile, AIProviderConfig, ScheduleEvent, UserProfile, Course, CourseResource } from '../../types';
 import { AIOrchestrator, AIExecutionContext } from '../../services/aiOrchestrator';
 import { getLocalDateKey } from '../../utils/dates';
 
 interface AIChatScreenProps {
   contextTask?: Task | null;
   contextFile?: StudyFile | null;
+  courses?: Course[];
+  resources?: CourseResource[];
+  files?: StudyFile[];
+  onNavigateToCourse?: (courseId: string, initialTab?: 'overview' | 'tasks' | 'resources' | 'ai' | 'quiz' | 'cards' | 'tutor' | 'learn') => void;
   onClearContext?: () => void;
   onOpenVoiceModal: () => void;
   onExecuteAction: (action: AIActionProposal) => void;
@@ -35,6 +41,10 @@ interface AIChatScreenProps {
 export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   contextTask,
   contextFile,
+  courses = [],
+  resources = [],
+  files = [],
+  onNavigateToCourse,
   onClearContext,
   onOpenVoiceModal,
   onExecuteAction,
@@ -45,6 +55,44 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   aiConfigured,
   onAISetupRequired,
 }) => {
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('all');
+
+  // Auto-detect course from contextTask or contextFile
+  useEffect(() => {
+    if (contextTask && contextTask.courseCode && courses.length > 0) {
+      const taskCode = contextTask.courseCode;
+      const match = courses.find((c) => c.code.toLowerCase() === taskCode.toLowerCase());
+      if (match) setSelectedCourseId(match.id);
+    } else if (contextFile && contextFile.courseCode && courses.length > 0) {
+      const fileCode = contextFile.courseCode;
+      const match = courses.find((c) => c.code.toLowerCase() === fileCode.toLowerCase());
+      if (match) setSelectedCourseId(match.id);
+    }
+  }, [contextTask, contextFile, courses]);
+
+  const focusedCourse = useMemo(() => {
+    if (selectedCourseId === 'all') return null;
+    return courses.find((c) => c.id === selectedCourseId) || null;
+  }, [selectedCourseId, courses]);
+
+  const focusedCourseResources = useMemo(() => {
+    if (!focusedCourse) return [];
+    return resources.filter(
+      (r) => r.courseId === focusedCourse.id || r.courseCode?.toLowerCase() === focusedCourse.code.toLowerCase()
+    );
+  }, [focusedCourse, resources]);
+
+  const focusedCourseFiles = useMemo(() => {
+    if (!focusedCourse) return [];
+    return files.filter(
+      (f) => f.courseCode?.toLowerCase() === focusedCourse.code.toLowerCase()
+    );
+  }, [focusedCourse, files]);
+
+  const readyMaterialsCount = useMemo(() => {
+    return focusedCourseResources.filter((r) => r.aiContext?.status === 'ready').length;
+  }, [focusedCourseResources]);
+
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       id: 'msg-1',
@@ -118,9 +166,14 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
 
     try {
       const context: AIExecutionContext = {
+        currentCourse: focusedCourse,
+        courseResources: focusedCourseResources,
+        courseFiles: focusedCourseFiles,
         currentTask: contextTask || null,
         currentFile: contextFile || null,
-        tasks: allTasks,
+        tasks: focusedCourse
+          ? allTasks.filter((t) => t.courseCode?.toLowerCase() === focusedCourse.code.toLowerCase())
+          : allTasks,
         schedule,
         user,
         energyLevel: user?.energyLevel,
@@ -202,6 +255,99 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Course Focus Bar */}
+      {courses.length > 0 && (
+        <div className="pt-2 pb-1 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0">Focus:</span>
+          <button
+            type="button"
+            onClick={() => setSelectedCourseId('all')}
+            className={`shrink-0 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+              selectedCourseId === 'all'
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            All Courses
+          </button>
+          {courses.map((c) => {
+            const isSelected = selectedCourseId === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setSelectedCourseId(c.id)}
+                className={`shrink-0 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: c.color || '#6366F1' }}
+                />
+                <span>{c.code}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Course Grounding Banner */}
+      {focusedCourse && (
+        <div className="mt-2 p-2.5 px-3 rounded-2xl bg-gradient-to-r from-indigo-50/90 to-violet-50/70 dark:from-indigo-950/40 dark:to-violet-950/30 border border-indigo-200/80 dark:border-indigo-900/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0">
+              <GraduationCap className="w-3.5 h-3.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-extrabold text-indigo-950 dark:text-white truncate">
+                  {focusedCourse.name} ({focusedCourse.code})
+                </span>
+                <span className="px-1.5 py-0.2 rounded-md bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                  {readyMaterialsCount} indexed
+                </span>
+              </div>
+              <p className="text-[10px] text-indigo-700 dark:text-indigo-300 truncate">
+                AI analysis strictly isolated to this course's syllabus & materials
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onNavigateToCourse && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onNavigateToCourse(focusedCourse.id, 'quiz')}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <Sparkles className="w-2.5 h-2.5" />
+                  <span>Quiz</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigateToCourse(focusedCourse.id, 'cards')}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <Layers className="w-2.5 h-2.5" />
+                  <span>Cards</span>
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setSelectedCourseId('all')}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+              title="Clear course focus"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Context Banner if opened from task or file */}
       {(contextTask || contextFile) && (
@@ -313,6 +459,29 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Course Quick Prompt Suggestions Bar */}
+      {focusedCourse && (
+        <div className="pt-2 pb-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0">Try:</span>
+          {[
+            `🧠 Quiz me on ${focusedCourse.code} materials`,
+            `🃏 Generate ${focusedCourse.code} flashcards`,
+            `📋 Extract study tasks from ${focusedCourse.code}`,
+            `📖 Summarize all ${focusedCourse.code} readings`,
+            `💡 Explain hardest ${focusedCourse.code} concept`,
+          ].map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => handleSend(prompt)}
+              className="shrink-0 px-2.5 py-1 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/60 border border-indigo-200/60 dark:border-indigo-800 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition-colors shadow-2xs active:scale-95 cursor-pointer"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input Bar (Matching Screen 11) */}
       <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">

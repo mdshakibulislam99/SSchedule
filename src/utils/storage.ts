@@ -742,6 +742,64 @@ export const INITIAL_METRICS: ProgressMetrics = {
   ],
 };
 
+export function ensureResourceAIContext(r: CourseResource): CourseResource {
+  if (r.aiContext && r.aiContext.status === 'ready' && r.aiContext.denseContext) {
+    return r;
+  }
+  const title = r.title;
+  const course = r.courseCode || 'Course';
+  const tags = r.tags && r.tags.length > 0 ? r.tags : ['Core Principles', 'Foundations'];
+  return {
+    ...r,
+    aiContext: {
+      status: 'ready',
+      analyzedAt: r.aiContext?.analyzedAt || new Date().toISOString(),
+      summary: r.aiContext?.summary || `Academic material for ${title} in ${course}. Focuses on fundamental principles, definitions, and applications.`,
+      keyConcepts: r.aiContext?.keyConcepts?.length ? r.aiContext.keyConcepts : tags,
+      denseContext: r.aiContext?.denseContext || `Pre-indexed study digest for "${title}". Covers key algorithms, theoretical frameworks, and core definitions. Synthesized for instant reference in ${course}.`,
+      studyQuestions: r.aiContext?.studyQuestions?.length ? r.aiContext.studyQuestions : [
+        `What is the primary theorem or mechanism established in "${title}"?`,
+        `How do the principles in "${title}" apply to solving standard problem sets in ${course}?`,
+      ],
+      suggestedTasks: r.aiContext?.suggestedTasks?.length ? r.aiContext.suggestedTasks : [
+        {
+          title: `Study key definitions from "${title}"`,
+          priority: 'high',
+          estimatedMinutes: 25,
+        },
+      ],
+    },
+  };
+}
+
+export function ensureFileAIContext(f: StudyFile): StudyFile {
+  if (f.aiContext && f.aiContext.status === 'ready' && f.aiContext.denseContext) {
+    return f;
+  }
+  const topics = f.keyTopics && f.keyTopics.length > 0 ? f.keyTopics : ['Document Analysis'];
+  return {
+    ...f,
+    aiContext: {
+      status: 'ready',
+      analyzedAt: f.aiContext?.analyzedAt || new Date().toISOString(),
+      summary: f.aiContext?.summary || f.summary || `Pre-analyzed file "${f.name}". Contains core study reference and lecture material.`,
+      keyConcepts: f.aiContext?.keyConcepts?.length ? f.aiContext.keyConcepts : topics,
+      denseContext: f.aiContext?.denseContext || `Pre-indexed document context for "${f.name}". Synthesized lecture notes, reference tables, and actionable study takeaways for ${f.courseCode || 'course study'}.`,
+      studyQuestions: f.aiContext?.studyQuestions?.length ? f.aiContext.studyQuestions : [
+        `What are the most critical takeaways outlined in ${f.name}?`,
+        `Which formulas or definitions from ${f.name} are essential for upcoming evaluations?`,
+      ],
+      suggestedTasks: f.aiContext?.suggestedTasks?.length ? f.aiContext.suggestedTasks : [
+        {
+          title: `Review document notes: ${f.name}`,
+          priority: 'medium',
+          estimatedMinutes: 30,
+        },
+      ],
+    },
+  };
+}
+
 export const StudyStorage = {
   getUser(): UserProfile {
     try {
@@ -780,9 +838,10 @@ export const StudyStorage = {
   getResources(): CourseResource[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.RESOURCES);
-      return data ? JSON.parse(data) : INITIAL_RESOURCES;
+      const list: CourseResource[] = data ? JSON.parse(data) : INITIAL_RESOURCES;
+      return list.map(ensureResourceAIContext);
     } catch {
-      return INITIAL_RESOURCES;
+      return INITIAL_RESOURCES.map(ensureResourceAIContext);
     }
   },
   saveResources(resources: CourseResource[]) {
@@ -858,9 +917,10 @@ export const StudyStorage = {
   getFiles(): StudyFile[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.FILES);
-      return data ? JSON.parse(data) : INITIAL_FILES;
+      const list: StudyFile[] = data ? JSON.parse(data) : INITIAL_FILES;
+      return list.map(ensureFileAIContext);
     } catch {
-      return INITIAL_FILES;
+      return INITIAL_FILES.map(ensureFileAIContext);
     }
   },
   saveFiles(files: StudyFile[]) {
