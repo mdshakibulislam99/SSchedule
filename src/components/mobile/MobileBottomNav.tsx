@@ -1,7 +1,7 @@
 import React from 'react';
-import { Home, CheckSquare, Sparkles, Calendar, MoreHorizontal } from 'lucide-react';
+import { Home, CheckSquare, Sparkles, Calendar, MoreHorizontal, GraduationCap } from 'lucide-react';
 
-export type NavTab = 'home' | 'tasks' | 'ai' | 'calendar' | 'more';
+export type NavTab = 'home' | 'tasks' | 'courses' | 'ai' | 'calendar' | 'more';
 
 interface MobileBottomNavProps {
   currentTab: NavTab;
@@ -17,6 +17,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   const tabs = [
     { id: 'home' as NavTab, label: 'Home', icon: Home },
     { id: 'tasks' as NavTab, label: 'Tasks', icon: CheckSquare },
+    { id: 'courses' as NavTab, label: 'Courses', icon: GraduationCap },
     { id: 'ai' as NavTab, label: 'AI Chat', icon: Sparkles, isAI: true },
     { id: 'calendar' as NavTab, label: 'Calendar', icon: Calendar },
     { id: 'more' as NavTab, label: 'More', icon: MoreHorizontal },

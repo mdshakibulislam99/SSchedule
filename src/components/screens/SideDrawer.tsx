@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Home, CheckSquare, Sparkles, Calendar, FileText, BarChart2, Settings, Target, LogOut } from 'lucide-react';
+import { X, Home, CheckSquare, Sparkles, Calendar, FileText, BarChart2, Settings, Target, LogOut, GraduationCap } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
 import { UserProfile } from '../../types';
 
@@ -25,6 +25,7 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
   const links = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+    { id: 'courses', label: 'Courses', icon: GraduationCap },
     { id: 'ai', label: 'AI Chat', icon: Sparkles },
     { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'files', label: 'Files & Notes', icon: FileText },
@@ -34,7 +35,7 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex animate-fade-in bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex animate-fade-in bg-black/60 backdrop-blur-sm">
       <div
         className="w-80 max-w-[86vw] h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between shadow-2xl animate-slide-right"
         onClick={(e) => e.stopPropagation()}

@@ -40,6 +40,46 @@
       },
       "required": ["id", "userId", "title", "course", "deadline", "priority", "estimatedMinutes", "completed"]
     },
+    "Course": {
+      "title": "Course",
+      "description": "A course workspace with modules, objectives, and linked resources",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "professor": { "type": "string" },
+        "term": { "type": "string" },
+        "credits": { "type": "number" },
+        "description": { "type": "string" },
+        "objectives": { "type": "array" },
+        "modules": { "type": "array" },
+        "resourceIds": { "type": "array" },
+        "studyPlan": { "type": "array" }
+      },
+      "required": ["id", "userId", "code", "name", "color"]
+    },
+    "CourseResource": {
+      "title": "CourseResource",
+      "description": "Readable course material with reading progress",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseCode": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "content": { "type": "string" },
+        "estimatedReadMinutes": { "type": "number" },
+        "tags": { "type": "array" },
+        "reading": { "type": "object" }
+      },
+      "required": ["id", "userId", "courseId", "title"]
+    },
     "ScheduleEvent": {
       "title": "ScheduleEvent",
       "description": "Calendar event, class, or study block",
@@ -67,6 +107,14 @@
     "/users/{userId}/tasks/{taskId}": {
       "schema": "Task",
       "description": "Student tasks scoped to the user"
+    },
+    "/users/{userId}/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Course workspaces owned by the student"
+    },
+    "/users/{userId}/resources/{resourceId}": {
+      "schema": "CourseResource",
+      "description": "Course resources with reading progress"
     },
     "/users/{userId}/schedule/{eventId}": {
       "schema": "ScheduleEvent",

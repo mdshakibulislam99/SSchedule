@@ -44,7 +44,7 @@ export const VoiceAIModal: React.FC<VoiceAIModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-between bg-white dark:bg-slate-950 p-6 animate-fade-in">
+    <div className="fixed inset-0 z-[60] flex flex-col justify-between bg-white dark:bg-slate-950 p-6 pb-24 sm:pb-6 animate-fade-in">
       {/* Top Bar */}
       <div className="flex items-center justify-between pt-2">
         <button

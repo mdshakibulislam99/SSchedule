@@ -18,7 +18,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { UserProfile, Task, ScheduleEvent, Goal } from '../types';
+import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource } from '../types';
 
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -78,6 +78,8 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   tasks: Task[];
   schedule: ScheduleEvent[];
   goals: Goal[];
+  courses: Course[];
+  resources: CourseResource[];
 }> {
   try {
     const userDoc = await getDoc(doc(db, 'users', userId));
@@ -98,10 +100,20 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     const goals: Goal[] = [];
     goalsSnapshot.forEach((d) => goals.push(d.data() as Goal));
 
-    return { profile, tasks, schedule, goals };
+    // Fetch course workspaces
+    const coursesSnapshot = await getDocs(collection(db, 'users', userId, 'courses'));
+    const courses: Course[] = [];
+    coursesSnapshot.forEach((d) => courses.push(d.data() as Course));
+
+    // Fetch course resources
+    const resourcesSnapshot = await getDocs(collection(db, 'users', userId, 'resources'));
+    const resources: CourseResource[] = [];
+    resourcesSnapshot.forEach((d) => resources.push(d.data() as CourseResource));
+
+    return { profile, tasks, schedule, goals, courses, resources };
   } catch (err) {
     console.warn('Error fetching Firestore data:', err);
-    return { profile: null, tasks: [], schedule: [], goals: [] };
+    return { profile: null, tasks: [], schedule: [], goals: [], courses: [], resources: [] };
   }
 }
 
@@ -128,5 +140,31 @@ export async function syncScheduleToFirestore(userId: string, schedule: Schedule
     await batch.commit();
   } catch (err) {
     console.warn('Failed to sync schedule to Firestore:', err);
+  }
+}
+
+export async function syncCoursesToFirestore(userId: string, courses: Course[]) {
+  try {
+    const batch = writeBatch(db);
+    courses.forEach((c) => {
+      const cRef = doc(db, 'users', userId, 'courses', c.id);
+      batch.set(cRef, { ...c, userId }, { merge: true });
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed to sync courses to Firestore:', err);
+  }
+}
+
+export async function syncResourcesToFirestore(userId: string, resources: CourseResource[]) {
+  try {
+    const batch = writeBatch(db);
+    resources.forEach((r) => {
+      const rRef = doc(db, 'users', userId, 'resources', r.id);
+      batch.set(rRef, { ...r, userId }, { merge: true });
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Failed to sync course resources to Firestore:', err);
   }
 }

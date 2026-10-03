@@ -46,7 +46,7 @@ export const QuickActionsSheet: React.FC<QuickActionsSheetProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-24 sm:pb-6">
       <div
         className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[2rem] border-t border-slate-200 dark:border-slate-800 p-6 shadow-2xl animate-slide-up"
         onClick={(e) => e.stopPropagation()}

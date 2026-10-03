@@ -16,7 +16,7 @@ export const LockscreenNotificationModal: React.FC<LockscreenNotificationModalPr
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-between p-6 bg-gradient-to-b from-blue-400 via-indigo-400 to-purple-600 text-white animate-fade-in select-none">
+    <div className="fixed inset-0 z-[60] flex flex-col justify-between p-6 pb-24 sm:pb-6 bg-gradient-to-b from-blue-400 via-indigo-400 to-purple-600 text-white animate-fade-in select-none">
       {/* Dismiss button */}
       <div className="flex justify-end">
         <button

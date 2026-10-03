@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Search, ChevronRight, CheckCircle2, Circle, Clock, Sparkles, Filter, X } from 'lucide-react';
-import { Task, PriorityLevel, TaskType, TaskCategory, TaskRecurrence, ScheduleEvent } from '../../types';
+import React, { useState } from 'react';
+import { Plus, Search, ChevronRight, CheckCircle2, Circle } from 'lucide-react';
+import { Task, TaskCategory, ScheduleEvent } from '../../types';
 import { getLocalDateKey } from '../../utils/dates';
+import { TaskComposer } from '../tasks/TaskComposer';
 
 interface TasksScreenProps {
   tasks: Task[];
@@ -29,25 +30,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const [areaFilter, setAreaFilter] = useState<'all' | TaskCategory>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  // New task form state (matching Screen 8 in reference)
-  const [category, setCategory] = useState<TaskCategory>('academic');
-  const [taskType, setTaskType] = useState<TaskType>('assignment');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [deadline, setDeadline] = useState('2026-10-04');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledStartTime, setScheduledStartTime] = useState('');
-  const [recurrence, setRecurrence] = useState<TaskRecurrence>('none');
-  const [reminderEnabled, setReminderEnabled] = useState(false);
-  const [reminderMinutes, setReminderMinutes] = useState('30');
-  const [priority, setPriority] = useState<PriorityLevel>('high');
-  const [courseCode, setCourseCode] = useState('');
-  const [addToPlan, setAddToPlan] = useState(true);
-
-  useEffect(() => {
-    onComposerStateChange?.(isAddModalOpen);
-    return () => onComposerStateChange?.(false);
-  }, [isAddModalOpen, onComposerStateChange]);
+  // Task creation lives in the shared <TaskComposer />, reused by course workspaces.
 
   const todayKey = getLocalDateKey();
   const isTaskForToday = (task: Task) => {
@@ -86,47 +69,6 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     }
     return true;
   });
-
-  const handleSaveTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-
-    const courseColors: Record<string, string> = {
-      CS101: '#EF4444',
-      Math: '#F59E0B',
-      Project: '#10B981',
-      Other: '#6366F1',
-    };
-
-    onAddTask(
-      {
-        title: title.trim(),
-        description: description.trim(),
-          courseCode: courseCode.trim() || undefined,
-          courseColor: courseColors[courseCode] || '#64748B',
-          category,
-          type: taskType,
-        deadline: new Date(`${deadline}T23:59:59`).toISOString(),
-        scheduledDate: scheduledDate || undefined,
-        scheduledStartTime: scheduledStartTime || undefined,
-        recurrence,
-        reminder: {
-          enabled: reminderEnabled,
-          minutesBefore: Number(reminderMinutes) || 30,
-        },
-        estimatedMinutes: 45,
-        priority,
-        progress: 0,
-        completed: false,
-        subtasks: [],
-      },
-      addToPlan
-    );
-
-    setTitle('');
-    setDescription('');
-    setIsAddModalOpen(false);
-  };
 
   return (
     <div className="w-full max-w-4xl mx-auto flex flex-col space-y-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
@@ -302,246 +244,16 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         </section>
       )}
 
-      {/* Full-page task composer */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-stretch justify-center bg-slate-50 dark:bg-slate-950 animate-fade-in">
-          <div
-            className="relative z-[61] w-full h-full bg-slate-50 dark:bg-slate-950 p-5 sm:p-8 overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="max-w-2xl mx-auto">
-              <div className="flex items-center justify-between pb-5 border-b border-slate-200 dark:border-slate-800">
-                <div>
-                  <p className="text-mobile-micro uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Task workspace</p>
-                  <h3 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">Create a task</h3>
-                </div>
-                <button
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-xl hover:bg-white dark:hover:bg-slate-900 transition-colors"
-                >
-                  Back to tasks
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveTask} className="space-y-5 py-6">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  Task Title *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. CS101 Assignment 2"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-medium focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                  Description (optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Write a short description..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-medium focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    Area
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as TaskCategory)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="academic">Academic</option>
-                    <option value="personal">Personal</option>
-                    <option value="health">Health</option>
-                    <option value="admin">Admin</option>
-                    <option value="work">Work</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    Task type
-                  </label>
-                  <select
-                    value={taskType}
-                    onChange={(e) => setTaskType(e.target.value as TaskType)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="assignment">Assignment</option>
-                    <option value="exam">Exam</option>
-                    <option value="project">Project</option>
-                    <option value="reading">Reading</option>
-                    <option value="habit">Habit</option>
-                    <option value="personal">Personal task</option>
-                    <option value="admin">Admin task</option>
-                    <option value="health">Health task</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    Course Code (optional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. CS101"
-                    value={courseCode}
-                    onChange={(e) => setCourseCode(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    Deadline
-                  </label>
-                  <input
-                    type="date"
-                    value={deadline}
-                    onChange={(e) => setDeadline(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3">
-                <div>
-                  <div className="text-xs font-bold text-slate-800 dark:text-slate-100">Task schedule</div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Set the deadline, planned time, repeats, and reminders.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                      Study date
-                    </label>
-                    <input
-                      type="date"
-                      value={scheduledDate}
-                      onChange={(e) => setScheduledDate(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                      Planned time
-                    </label>
-                    <input
-                      type="time"
-                      value={scheduledStartTime}
-                      onChange={(e) => setScheduledStartTime(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
-                    Repeat pattern
-                  </label>
-                  <select
-                    value={recurrence}
-                    onChange={(e) => setRecurrence(e.target.value as TaskRecurrence)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="none">Does not repeat</option>
-                    <option value="daily">Every day</option>
-                    <option value="weekdays">Every weekday</option>
-                    <option value="weekly">Every week</option>
-                  </select>
-                </div>
-
-                <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  <span>Remind me before the planned time</span>
-                  <input
-                    type="checkbox"
-                    checked={reminderEnabled}
-                    onChange={(e) => setReminderEnabled(e.target.checked)}
-                    className="w-4 h-4 rounded text-indigo-600 focus:ring-0"
-                  />
-                </label>
-
-                {reminderEnabled && (
-                  <select
-                    value={reminderMinutes}
-                    onChange={(e) => setReminderMinutes(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="10">10 minutes before</option>
-                    <option value="30">30 minutes before</option>
-                    <option value="60">1 hour before</option>
-                    <option value="1440">1 day before</option>
-                  </select>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">
-                  Priority
-                </label>
-                <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
-                  {(['high', 'medium', 'low'] as const).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setPriority(p)}
-                      className={`py-2 rounded-xl border capitalize transition-all ${
-                        priority === p
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                          : 'border-slate-200 dark:border-slate-800 text-slate-500'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Add to Study Plan Toggle */}
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-600" />
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                    Let StudyAI suggest steps
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={addToPlan}
-                  onChange={(e) => setAddToPlan(e.target.checked)}
-                  className="w-4 h-4 rounded text-indigo-600 focus:ring-0"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm shadow-sm active:scale-[0.98] transition-all"
-              >
-                Save Task
-              </button>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Full-page task composer (shared with course workspaces) */}
+      <TaskComposer
+        open={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onSubmit={onAddTask}
+        onOpenChange={onComposerStateChange}
+        heading="Create a task"
+        subheading="Task workspace"
+        cancelLabel="Back to tasks"
+      />
     </div>
   );
 };

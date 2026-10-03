@@ -92,7 +92,7 @@ export const GoalsScreen: React.FC<GoalsScreenProps> = ({ goals, onAddGoal, onSe
 
       {/* Add Goal Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-24 sm:pb-6">
           <div
             className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up"
             onClick={(e) => e.stopPropagation()}

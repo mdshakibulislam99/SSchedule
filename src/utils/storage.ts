@@ -12,6 +12,9 @@ import {
   AIMemoryItem,
   NotificationItem,
   ProgressMetrics,
+  CourseResource,
+  CourseQuiz,
+  CourseFlashcard,
 } from '../types';
 import { getLocalDateKey } from './dates';
 
@@ -32,6 +35,9 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'studyai_notifications',
   METRICS: 'studyai_metrics',
   THEME: 'studyai_theme',
+  RESOURCES: 'studyai_course_resources',
+  QUIZZES: 'studyai_course_quizzes',
+  FLASHCARDS: 'studyai_course_flashcards',
 };
 
 export const INITIAL_USER: UserProfile = {
@@ -57,8 +63,25 @@ export const INITIAL_COURSES: Course[] = [
     term: 'Fall 2026',
     credits: 4,
     schedulePattern: 'Mon / Wed · 08:00',
+    description:
+      'A rigorous introduction to algorithm design, complexity analysis, and the core data structures that power modern software.',
+    coverEmoji: '🌲',
+    objectives: [
+      'Analyze time and space complexity with Big-O notation',
+      'Implement balanced trees, heaps, and hash tables',
+      'Apply graph traversal and shortest-path algorithms',
+      'Prove correctness of recursive and greedy solutions',
+    ],
+    modules: [
+      { id: 'mod-cs101-1', title: 'Complexity & Big-O Analysis', description: 'Asymptotic notation and recurrence relations', order: 1, completed: true },
+      { id: 'mod-cs101-2', title: 'Balanced Trees', description: 'AVL trees, rotations, and balancing invariants', order: 2, completed: false },
+      { id: 'mod-cs101-3', title: 'Hashing & Heaps', description: 'Hash functions, collisions, and priority queues', order: 3, completed: false },
+      { id: 'mod-cs101-4', title: 'Graph Algorithms', description: 'BFS, DFS, Dijkstra, and topological sort', order: 4, completed: false },
+    ],
     materialsFileIds: ['file-1'],
+    resourceIds: ['res-cs101-avl', 'res-cs101-complexity', 'res-cs101-graphs'],
     studyPlan: ['Review lecture foundations', 'Complete Assignment 2', 'Practice exam problems'],
+    createdAt: '2026-08-15T09:00:00Z',
   },
   {
     id: 'course-math',
@@ -69,8 +92,25 @@ export const INITIAL_COURSES: Course[] = [
     term: 'Fall 2026',
     credits: 4,
     schedulePattern: 'Tue / Thu · 10:00',
+    description:
+      'Multivariable calculus covering vector fields, multiple integrals, and the major theorems of vector analysis.',
+    coverEmoji: '📐',
+    objectives: [
+      'Evaluate double and triple integrals in multiple coordinate systems',
+      'Compute line and surface integrals of vector fields',
+      'Apply Green\u2019s, Stokes\u2019, and Divergence theorems',
+      'Model physical systems using vector calculus',
+    ],
+    modules: [
+      { id: 'mod-math-1', title: 'Partial Derivatives', description: 'Gradients, directional derivatives, and optimization', order: 1, completed: true },
+      { id: 'mod-math-2', title: 'Multiple Integrals', description: 'Double/triple integrals and change of variables', order: 2, completed: false },
+      { id: 'mod-math-3', title: 'Vector Fields', description: 'Line integrals, flux, and circulation', order: 3, completed: false },
+      { id: 'mod-math-4', title: 'Integral Theorems', description: 'Green, Stokes, and Divergence theorems', order: 4, completed: false },
+    ],
     materialsFileIds: ['file-2'],
+    resourceIds: ['res-math-divergence', 'res-math-multiple-integrals'],
     studyPlan: ['Review vector calculus concepts', 'Complete practice set', 'Prepare for exam'],
+    createdAt: '2026-08-15T09:10:00Z',
   },
   {
     id: 'course-project',
@@ -81,8 +121,255 @@ export const INITIAL_COURSES: Course[] = [
     term: 'Fall 2026',
     credits: 3,
     schedulePattern: 'Weekly milestone',
+    description:
+      'A semester-long team project where students design, build, and ship a full-stack product from concept to demo day.',
+    coverEmoji: '🚀',
+    objectives: [
+      'Translate a problem statement into scoped requirements',
+      'Design pragmatic system and data architectures',
+      'Collaborate with version control and code review',
+      'Ship and present a working deliverable',
+    ],
+    modules: [
+      { id: 'mod-project-1', title: 'Discovery & Scoping', description: 'Problem definition and requirements', order: 1, completed: true },
+      { id: 'mod-project-2', title: 'Architecture', description: 'System design and data modeling', order: 2, completed: false },
+      { id: 'mod-project-3', title: 'Implementation', description: 'Build the core deliverable', order: 3, completed: false },
+      { id: 'mod-project-4', title: 'Ship & Present', description: 'Demo, documentation, and handoff', order: 4, completed: false },
+    ],
     materialsFileIds: ['file-3'],
+    resourceIds: ['res-project-scoping'],
     studyPlan: ['Confirm milestone requirements', 'Build the next deliverable', 'Review with teammates'],
+    createdAt: '2026-08-15T09:20:00Z',
+  },
+];
+
+export const INITIAL_RESOURCES: CourseResource[] = [
+  {
+    id: 'res-cs101-avl',
+    courseId: 'course-cs101',
+    courseCode: 'CS101',
+    moduleId: 'mod-cs101-2',
+    title: 'AVL Trees: Rotations & Balance Factors',
+    type: 'pdf',
+    content: `# AVL Trees
+
+An **AVL tree** is a self-balancing binary search tree where, for every node, the heights of the left and right subtrees differ by at most one. This keeps the tree height at O(log n), guaranteeing fast search, insert, and delete.
+
+## The Balance Factor
+
+The balance factor of a node is:
+
+> balance(n) = height(left subtree of n) - height(right subtree of n)
+
+For a valid AVL tree every node must have a balance factor in {-1, 0, +1}. Any other value triggers a rotation.
+
+## The Four Rotation Cases
+
+When a node becomes unbalanced after an insertion, one of four cases applies:
+
+1. **Left-Left (LL)** - a single right rotation on the unbalanced node.
+2. **Right-Right (RR)** - a single left rotation on the unbalanced node.
+3. **Left-Right (LR)** - a left rotation on the left child, then a right rotation on the node.
+4. **Right-Left (RL)** - a right rotation on the right child, then a left rotation on the node.
+
+## Why This Matters
+
+Because the tree is rebalanced on every insert and delete, the worst-case height stays logarithmic. This is the main advantage of AVL trees over plain binary search trees, which can degrade to O(n) when keys are inserted in sorted order.
+
+## Worked Example
+
+Insert 30, 20, 10 into an empty AVL tree. After inserting 10, the root 30 has balance factor +2 along the left spine - a Left-Left case. A single **right rotation** at 30 rebalances the tree so that 20 becomes the new root.
+
+## Key Takeaways
+
+- Balance factor must stay within -1, 0, +1.
+- Rotations restore balance in O(1) time.
+- Insertion and deletion remain O(log n).`,
+    estimatedReadMinutes: 6,
+    tags: ['Trees', 'Balancing', 'Algorithms'],
+    createdAt: '2026-09-01T10:00:00Z',
+    reading: { percent: 0, lastPosition: 0, completed: false },
+  },
+  {
+    id: 'res-cs101-complexity',
+    courseId: 'course-cs101',
+    courseCode: 'CS101',
+    moduleId: 'mod-cs101-1',
+    title: 'Asymptotic Analysis & Big-O Notation',
+    type: 'text',
+    content: `# Asymptotic Analysis
+
+Asymptotic analysis describes how the running time or memory of an algorithm grows as the input size n becomes large. We ignore constants and lower-order terms because they matter less at scale.
+
+## Common Complexity Classes
+
+- **O(1)** - constant time, independent of input size.
+- **O(log n)** - logarithmic, e.g. binary search.
+- **O(n)** - linear, a single pass over the data.
+- **O(n log n)** - typical of efficient sorting such as merge sort.
+- **O(n^2)** - quadratic, common in naive nested loops.
+
+## Recurrence Relations
+
+Divide-and-conquer algorithms are naturally described by recurrences. Merge sort satisfies:
+
+> T(n) = 2T(n/2) + O(n)
+
+Solving this recurrence gives T(n) = O(n log n).
+
+## Upper vs Lower Bounds
+
+- **Big-O** gives an upper bound.
+- **Big-Omega** gives a lower bound.
+- **Big-Theta** is a tight bound.
+
+## Practical Advice
+
+Always ask: what is the worst case, the average case, and the best case? Averages often depend on assumptions about input distribution.`,
+    estimatedReadMinutes: 4,
+    tags: ['Complexity', 'Foundations'],
+    createdAt: '2026-09-01T10:05:00Z',
+    reading: { percent: 100, lastPosition: 100, lastReadAt: '2026-10-01T09:00:00Z', completed: true },
+  },
+  {
+    id: 'res-cs101-graphs',
+    courseId: 'course-cs101',
+    courseCode: 'CS101',
+    moduleId: 'mod-cs101-4',
+    title: 'Graph Traversal & Shortest Paths',
+    type: 'slide',
+    content: `# Graph Traversal
+
+A graph G = (V, E) is a set of vertices V and edges E. Traversal algorithms visit every reachable vertex exactly once.
+
+## Breadth-First Search (BFS)
+
+BFS explores level by level using a **queue**. It finds the shortest path in terms of number of edges in an unweighted graph.
+
+## Depth-First Search (DFS)
+
+DFS explores as deep as possible before backtracking, using a **stack** (or recursion). It is the basis for topological sort and cycle detection.
+
+## Dijkstra's Algorithm
+
+For weighted graphs with non-negative weights, Dijkstra's algorithm computes single-source shortest paths using a **min-priority queue**. Each vertex is settled once, giving O((V + E) log V) with a binary heap.
+
+## Topological Sort
+
+A topological order of a directed acyclic graph lists vertices so that every edge points forward. It is used for dependency resolution and course scheduling.`,
+    estimatedReadMinutes: 5,
+    tags: ['Graphs', 'BFS', 'DFS', 'Dijkstra'],
+    createdAt: '2026-09-01T10:10:00Z',
+    reading: { percent: 0, lastPosition: 0, completed: false },
+  },
+  {
+    id: 'res-math-divergence',
+    courseId: 'course-math',
+    courseCode: 'Math',
+    moduleId: 'mod-math-4',
+    title: 'The Divergence Theorem',
+    type: 'pdf',
+    content: `# The Divergence Theorem
+
+The Divergence Theorem relates the flux of a vector field through a closed surface to the triple integral of its divergence over the enclosed volume.
+
+> Flux through S = triple integral of (div F) dV
+
+## Intuition
+
+Think of the vector field as the velocity of a fluid. The divergence measures how much the fluid is expanding at each point. The theorem says: the total flow out of a closed surface equals the total expansion inside.
+
+## Conditions
+
+- S must be a closed, piecewise-smooth surface.
+- F must have continuous partial derivatives on the enclosed region.
+
+## Worked Example
+
+Let F = <x, y, z> and let S be the unit sphere. Here div F = 3 everywhere, so the flux equals 3 times the volume of the sphere, giving 4 pi.
+
+## Applications
+
+- Deriving the continuity equation in fluid dynamics
+- Gauss's law in electrostatics
+- Simplifying difficult surface integrals into volume integrals`,
+    estimatedReadMinutes: 5,
+    tags: ['Vector Calculus', 'Theorems'],
+    createdAt: '2026-09-02T11:00:00Z',
+    reading: { percent: 20, lastPosition: 20, completed: false },
+  },
+  {
+    id: 'res-math-multiple-integrals',
+    courseId: 'course-math',
+    courseCode: 'Math',
+    moduleId: 'mod-math-2',
+    title: 'Multiple Integrals & Change of Variables',
+    type: 'text',
+    content: `# Multiple Integrals
+
+Double integrals integrate a function over a region in the plane; triple integrals integrate over a solid in space.
+
+## Iterated Integrals
+
+A double integral over a rectangle can be evaluated as an iterated integral:
+
+> double integral of f(x, y) dA = integral of integral of f(x, y) dy dx
+
+Fubini's Theorem lets us choose the order of integration when the function is continuous.
+
+## Change of Variables
+
+When a region is awkward in Cartesian coordinates, transform it. The **Jacobian determinant** accounts for how area or volume scales under the transformation.
+
+For polar coordinates the Jacobian is r, giving dA = r dr d(theta).
+
+## Choosing Coordinates
+
+- **Rectangular** for box-like regions.
+- **Polar** for circular symmetry in the plane.
+- **Cylindrical** for solids with rotational symmetry.
+- **Spherical** for balls, cones, and radial fields.`,
+    estimatedReadMinutes: 4,
+    tags: ['Integrals', 'Coordinates'],
+    createdAt: '2026-09-02T11:05:00Z',
+    reading: { percent: 0, lastPosition: 0, completed: false },
+  },
+  {
+    id: 'res-project-scoping',
+    courseId: 'course-project',
+    courseCode: 'Project',
+    moduleId: 'mod-project-1',
+    title: 'Scoping a Capstone Project',
+    type: 'docx',
+    content: `# Scoping Your Capstone
+
+Great projects fail more often from poor scoping than from poor engineering. Scope is the boundary of what you will and will not build.
+
+## Start With the Problem
+
+Write a one-sentence problem statement in plain language. If you cannot explain the problem without jargon, you do not yet understand it well enough to build.
+
+## Define Success
+
+List 3-5 measurable outcomes. "Users can complete checkout in under two minutes" is testable; "make it fast" is not.
+
+## Cut Relentlessly
+
+For every feature, ask: does this prove the core idea? If not, move it to a "later" list. A small feature that works beats a large feature that half-works.
+
+## Milestones
+
+Break the semester into weekly milestones, each with a concrete deliverable you can demo. Protect the last two weeks for integration and polish.
+
+## Risk Checklist
+
+- What is the hardest technical unknown?
+- What external dependency could block you?
+- Who is the customer and have you talked to them?`,
+    estimatedReadMinutes: 4,
+    tags: ['Planning', 'Milestones'],
+    createdAt: '2026-09-03T12:00:00Z',
+    reading: { percent: 0, lastPosition: 0, completed: false },
   },
 ];
 
@@ -469,13 +756,65 @@ export const StudyStorage = {
   getCourses(): Course[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.COURSES);
-      return data ? JSON.parse(data) : INITIAL_COURSES;
+      const parsed: Course[] = data ? JSON.parse(data) : INITIAL_COURSES;
+      // Normalize older records that predate the courses system so downstream
+      // screens can safely assume these arrays exist.
+      return parsed.map((course) => ({
+        ...course,
+        objectives: course.objectives || [],
+        modules: course.modules || [],
+        resourceIds: course.resourceIds || [],
+        materialsFileIds: course.materialsFileIds || [],
+        studyPlan: course.studyPlan || [],
+      }));
     } catch {
       return INITIAL_COURSES;
     }
   },
   saveCourses(courses: Course[]) {
     localStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify(courses));
+  },
+
+  getResources(): CourseResource[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.RESOURCES);
+      return data ? JSON.parse(data) : INITIAL_RESOURCES;
+    } catch {
+      return INITIAL_RESOURCES;
+    }
+  },
+  saveResources(resources: CourseResource[]) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RESOURCES, JSON.stringify(resources));
+    } catch {
+      // Quota exceeded (e.g. a stored file payload) — keep the app running
+      // in memory rather than crashing the write effect.
+      console.warn('StudyStorage: resources not persisted (storage quota).');
+    }
+  },
+
+  getQuizzes(): CourseQuiz[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.QUIZZES);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveQuizzes(quizzes: CourseQuiz[]) {
+    localStorage.setItem(STORAGE_KEYS.QUIZZES, JSON.stringify(quizzes));
+  },
+
+  getFlashcards(): CourseFlashcard[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.FLASHCARDS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveFlashcards(cards: CourseFlashcard[]) {
+    localStorage.setItem(STORAGE_KEYS.FLASHCARDS, JSON.stringify(cards));
   },
 
   getTasks(): Task[] {
@@ -523,7 +862,11 @@ export const StudyStorage = {
     }
   },
   saveFiles(files: StudyFile[]) {
-    localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(files));
+    try {
+      localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(files));
+    } catch {
+      console.warn('StudyStorage: files not persisted (storage quota).');
+    }
   },
 
   getResearch(): ResearchItem[] {

@@ -8,6 +8,11 @@ import {
   UserProfile,
   StudyFile,
   ResearchItem,
+  Course,
+  CourseResource,
+  CourseProgress,
+  CourseQuizQuestion,
+  CourseKeyTerm,
 } from '../types';
 import { getLocalDateKey } from '../utils/dates';
 
@@ -539,5 +544,243 @@ Format your response as a valid JSON object:
         ],
       },
     ];
+  },
+
+  // 6. Course Resource Summarizer
+  async summarizeResource(resource: CourseResource, config: AIProviderConfig): Promise<string> {
+    const provider = this.getProvider(config, 'file_analysis');
+    const prompt = `Summarize this course resource titled "${resource.title}" for a university student.
+Focus on the 3-5 most important ideas a student must remember for an exam.
+
+Resource text:
+"""
+${resource.content.slice(0, 4000)}
+"""
+
+Write a clear, well-structured summary with short paragraphs or bullet points. Do not invent facts.`;
+
+    try {
+      const raw = await provider.generateText(
+        prompt,
+        'You are an expert academic tutor who writes concise, accurate study summaries.'
+      );
+      if (raw && raw.trim()) return raw.trim();
+    } catch (e) {
+      console.warn('summarizeResource fallback used:', e);
+    }
+
+    const sentences = resource.content
+      .replace(/#+\s?/g, '')
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 40)
+      .slice(0, 4);
+    return sentences.length
+      ? sentences.map((s) => `• ${s}`).join('\n')
+      : `Key ideas from "${resource.title}" will appear here once your AI provider responds.`;
+  },
+
+  // 7. Explain a concept at a chosen depth
+  async explainConcept(text: string, level: 'simple' | 'standard' | 'advanced', config: AIProviderConfig): Promise<string> {
+    const provider = this.getProvider(config, 'routine');
+    const depthGuide = {
+      simple: 'Explain as if to a curious 12-year-old, using a concrete everyday analogy.',
+      standard: 'Explain clearly for a university undergraduate, with a worked idea.',
+      advanced: 'Explain rigorously with precise terminology and edge cases.',
+    }[level];
+
+    try {
+      const raw = await provider.generateText(
+        `Explain the following study material. ${depthGuide}\n\n"""\n${text.slice(0, 3500)}\n"""`,
+        'You are a patient, precise academic tutor.'
+      );
+      if (raw && raw.trim()) return raw.trim();
+    } catch (e) {
+      console.warn('explainConcept fallback used:', e);
+    }
+    return `Here is the ${level} explanation for this passage: focus on the core definition first, then how it is used, then one example that makes it concrete.`;
+  },
+
+  // 8. Extract key terms & definitions
+  async extractKeyTerms(resource: CourseResource, config: AIProviderConfig): Promise<CourseKeyTerm[]> {
+    const provider = this.getProvider(config, 'file_analysis');
+    const prompt = `Extract the 5-8 most important key terms from this resource and define each in one sentence.
+Return valid JSON only, in this exact shape:
+{ "terms": [ { "term": "...", "definition": "..." } ] }
+
+Resource: "${resource.title}"
+"""
+${resource.content.slice(0, 4000)}
+"""`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an expert academic tutor.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.terms) && parsed.terms.length > 0) {
+          return parsed.terms
+            .filter((t: any) => t && t.term)
+            .map((t: any) => ({ term: String(t.term), definition: String(t.definition || '') }));
+        }
+      }
+    } catch (e) {
+      console.warn('extractKeyTerms fallback used:', e);
+    }
+
+    return resource.tags.slice(0, 6).map((tag) => ({
+      term: tag,
+      definition: `A core concept in "${resource.title}".`,
+    }));
+  },
+
+  // 9. Generate a multiple-choice quiz from a resource
+  async generateQuizForResource(resource: CourseResource, config: AIProviderConfig): Promise<CourseQuizQuestion[]> {
+    const provider = this.getProvider(config, 'routine');
+    const prompt = `Create a 4-question multiple-choice quiz that tests real understanding of this resource.
+Return valid JSON only in this exact shape:
+{ "questions": [ { "question": "...", "options": ["A", "B", "C", "D"], "correctIndex": 0, "explanation": "why the answer is right" } ] }
+
+Resource: "${resource.title}"
+"""
+${resource.content.slice(0, 4000)}
+"""`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an exam-writing professor who writes fair, unambiguous questions.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+          return parsed.questions
+            .filter((q: any) => q && q.question && Array.isArray(q.options) && q.options.length >= 2)
+            .map((q: any, idx: number) => ({
+              id: `q-${Date.now()}-${idx}`,
+              question: String(q.question),
+              options: q.options.map((o: any) => String(o)),
+              correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : 0,
+              explanation: q.explanation ? String(q.explanation) : '',
+            }));
+        }
+      }
+    } catch (e) {
+      console.warn('generateQuizForResource fallback used:', e);
+    }
+
+    const terms = resource.tags.length ? resource.tags : ['the core idea', 'the definition', 'the application'];
+    return terms.slice(0, 4).map((term, idx) => ({
+      id: `q-fallback-${Date.now()}-${idx}`,
+      question: `Which statement best matches "${term}" from "${resource.title}"?`,
+      options: [
+        `It is a key concept covered in this resource.`,
+        `It is unrelated to this course.`,
+        `It only appears in a different subject.`,
+        `None of the above.`,
+      ],
+      correctIndex: 0,
+      explanation: `"${term}" is a tagged key concept of this resource.`,
+    }));
+  },
+
+  // 10. Generate a personalized course learning path
+  async generateCourseLearningPath(
+    course: Course,
+    resources: CourseResource[],
+    tasks: Task[],
+    config: AIProviderConfig
+  ): Promise<{ steps: string[]; reason: string }> {
+    const provider = this.getProvider(config, 'routine');
+    const openTasks = tasks.filter((t) => t.courseCode === course.code && !t.completed);
+    const prompt = `Create a focused study path for the course "${course.name}" (${course.code}).
+Objectives: ${course.objectives.join('; ') || 'n/a'}
+Modules: ${course.modules.map((m) => m.title).join('; ') || 'n/a'}
+Resources: ${resources.map((r) => r.title).join('; ') || 'n/a'}
+Open tasks: ${openTasks.map((t) => t.title).join('; ') || 'none'}
+
+Return valid JSON only:
+{ "steps": ["Step 1", "Step 2", "Step 3", "Step 4"], "reason": "why this order works" }`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an academic advisor optimizing study order for retention.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.steps) && parsed.steps.length > 0) {
+          return {
+            steps: parsed.steps.map((s: any) => String(s)),
+            reason: parsed.reason || 'Sequenced to build mastery without burnout.',
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('generateCourseLearningPath fallback used:', e);
+    }
+
+    const steps: string[] = [];
+    course.modules.filter((m) => !m.completed).slice(0, 2).forEach((m) => steps.push(`Study module: ${m.title}`));
+    resources.filter((r) => !r.reading.completed).slice(0, 2).forEach((r) => steps.push(`Read: ${r.title}`));
+    openTasks.slice(0, 1).forEach((t) => steps.push(`Work on task: ${t.title}`));
+    if (steps.length === 0) steps.push('Review all modules and confirm every module is marked complete.');
+    return {
+      steps,
+      reason: 'Ordered by outstanding modules, unread resources, then open tasks.',
+    };
+  },
+
+  // 11. Course progress insight
+  async courseProgressInsight(course: Course, progress: CourseProgress, config: AIProviderConfig): Promise<string> {
+    const provider = this.getProvider(config, 'routine');
+    const prompt = `A student is ${progress.percent}% through "${course.name}" (${course.code}).
+Tasks: ${progress.tasksCompleted}/${progress.tasksTotal} complete.
+Resources read: ${progress.resourcesRead}/${progress.resourcesTotal}.
+Modules complete: ${progress.modulesCompleted}/${progress.modulesTotal}.
+Write 2-3 sentences of specific, encouraging coaching on what to do next.`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an encouraging, concrete academic coach.');
+      if (raw && raw.trim()) return raw.trim();
+    } catch (e) {
+      console.warn('courseProgressInsight fallback used:', e);
+    }
+
+    const next = progress.resourcesTotal > progress.resourcesRead
+      ? 'read the next unread resource'
+      : progress.tasksTotal > progress.tasksCompleted
+        ? 'clear an open task for this course'
+        : 'review a completed module to lock in retention';
+    return `You're ${progress.percent}% through ${course.code}. Your best next step is to ${next}. Small, consistent sessions beat long cramming.`;
+  },
+
+  // 12. Generate flashcards from a resource
+  async generateFlashcards(resource: CourseResource, config: AIProviderConfig): Promise<{ front: string; back: string }[]> {
+    const provider = this.getProvider(config, 'routine');
+    const prompt = `Create 5 study flashcards from this resource.
+Return valid JSON only:
+{ "cards": [ { "front": "question or term", "back": "concise answer" } ] }
+
+Resource: "${resource.title}"
+"""
+${resource.content.slice(0, 4000)}
+"""`;
+
+    try {
+      const raw = await provider.generateText(prompt, 'You are an expert tutor creating spaced-repetition flashcards.');
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.cards) && parsed.cards.length > 0) {
+          return parsed.cards
+            .filter((c: any) => c && c.front && c.back)
+            .map((c: any) => ({ front: String(c.front), back: String(c.back) }));
+        }
+      }
+    } catch (e) {
+      console.warn('generateFlashcards fallback used:', e);
+    }
+
+    return resource.tags.slice(0, 5).map((tag) => ({
+      front: `Define: ${tag}`,
+      back: `A key concept from "${resource.title}".`,
+    }));
   },
 };

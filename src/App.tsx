@@ -16,6 +16,8 @@ import {
   syncUserProfileToFirestore,
   syncTasksToFirestore,
   syncScheduleToFirestore,
+  syncCoursesToFirestore,
+  syncResourcesToFirestore,
   fetchUserDataFromFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -26,6 +28,9 @@ import { WhatToDoNowScreen } from './components/screens/WhatToDoNowScreen';
 import { TasksScreen } from './components/screens/TasksScreen';
 import { TaskDetailScreen } from './components/screens/TaskDetailScreen';
 import { CourseWorkspaceScreen } from './components/screens/CourseWorkspaceScreen';
+import { CoursesScreen } from './components/screens/CoursesScreen';
+import { ResourceReaderScreen } from './components/screens/ResourceReaderScreen';
+import { CourseTutorScreen } from './components/screens/CourseTutorScreen';
 import { CalendarScreen } from './components/screens/CalendarScreen';
 import { AIWeekPlannerModal } from './components/screens/AIWeekPlannerModal';
 import { AIChatScreen } from './components/screens/AIChatScreen';
@@ -57,11 +62,16 @@ import {
   ProgressMetrics,
   AIActionProposal,
   Course,
+  CourseResource,
+  CourseResourceReading,
+  CourseQuiz,
+  CourseFlashcard,
 } from './types';
 import { StudyStorage } from './utils/storage';
 import { playChime } from './utils/audio';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
+import { computeCourseProgress, getCourseResources } from './utils/courses';
 
 function getEndTime(startTime: string, durationMinutes: number): string {
   const [hours, minutes] = startTime.split(':').map(Number);
@@ -80,6 +90,9 @@ export default function App() {
   // Core Persistent State
   const [user, setUser] = useState<UserProfile>(() => StudyStorage.getUser());
   const [courses, setCourses] = useState<Course[]>(() => StudyStorage.getCourses());
+  const [resources, setResources] = useState<CourseResource[]>(() => StudyStorage.getResources());
+  const [quizzes, setQuizzes] = useState<CourseQuiz[]>(() => StudyStorage.getQuizzes());
+  const [flashcards, setFlashcards] = useState<CourseFlashcard[]>(() => StudyStorage.getFlashcards());
   const [tasks, setTasks] = useState<Task[]>(() => StudyStorage.getTasks());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>(() => StudyStorage.getSchedule());
   const [goals, setGoals] = useState<Goal[]>(() => StudyStorage.getGoals());
@@ -96,7 +109,10 @@ export default function App() {
   const [activeSubScreen, setActiveSubScreen] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(tasks[0] || null);
   const [taskCourseFilter, setTaskCourseFilter] = useState<string | undefined>();
-  const [selectedCourseCode, setSelectedCourseCode] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
+  const [courseTutorPrefill, setCourseTutorPrefill] = useState<string | undefined>();
+  const [courseTutorQuizResourceId, setCourseTutorQuizResourceId] = useState<string | undefined>();
   const [selectedFileForChat, setSelectedFileForChat] = useState<StudyFile | null>(null);
 
   // Modals state
@@ -148,6 +164,8 @@ export default function App() {
             });
             await syncTasksToFirestore(fUser.uid, tasks);
             await syncScheduleToFirestore(fUser.uid, schedule);
+            await syncCoursesToFirestore(fUser.uid, courses);
+            await syncResourcesToFirestore(fUser.uid, resources);
           }
 
           if (cloudData.tasks && cloudData.tasks.length > 0) {
@@ -155,6 +173,12 @@ export default function App() {
           }
           if (cloudData.schedule && cloudData.schedule.length > 0) {
             setSchedule(cloudData.schedule);
+          }
+          if (cloudData.courses && cloudData.courses.length > 0) {
+            setCourses(cloudData.courses);
+          }
+          if (cloudData.resources && cloudData.resources.length > 0) {
+            setResources(cloudData.resources);
           }
           showToast(`Cloud connected: ${fUser.displayName || 'Google Account'}`);
         } catch (e) {
@@ -179,6 +203,18 @@ export default function App() {
       syncScheduleToFirestore(firebaseUser.uid, schedule);
     }
   }, [schedule, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser) {
+      syncCoursesToFirestore(firebaseUser.uid, courses);
+    }
+  }, [courses, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser) {
+      syncResourcesToFirestore(firebaseUser.uid, resources);
+    }
+  }, [resources, firebaseUser]);
 
   useEffect(() => {
     if (firebaseUser) {
@@ -223,6 +259,18 @@ export default function App() {
   useEffect(() => {
     StudyStorage.saveCourses(courses);
   }, [courses]);
+
+  useEffect(() => {
+    StudyStorage.saveResources(resources);
+  }, [resources]);
+
+  useEffect(() => {
+    StudyStorage.saveQuizzes(quizzes);
+  }, [quizzes]);
+
+  useEffect(() => {
+    StudyStorage.saveFlashcards(flashcards);
+  }, [flashcards]);
 
   useEffect(() => {
     StudyStorage.saveTasks(tasks);
@@ -328,9 +376,131 @@ export default function App() {
   // Handle Tab navigation
   const handleTabChange = (tab: NavTab) => {
     setActiveSubScreen(null);
-    setSelectedCourseCode(null);
+    setSelectedCourseId(null);
+    setSelectedResourceId(null);
     if (tab !== 'tasks') setTaskCourseFilter(undefined);
     setCurrentTab(tab);
+  };
+
+  // Open a course workspace by id (used by the Courses list + Home course cards).
+  const openCourseById = (courseId: string) => {
+    setSelectedCourseId(courseId);
+    setActiveSubScreen('course');
+  };
+
+  // Home course cards are keyed by course code; resolve (or create) the matching course.
+  const openCourseByCode = (courseCode: string) => {
+    const existing = courses.find((c) => c.code === courseCode);
+    if (existing) {
+      openCourseById(existing.id);
+      return;
+    }
+    const newCourse: Course = {
+      id: `course-${Date.now()}`,
+      code: courseCode,
+      name: courseCode,
+      color: '#6366F1',
+      objectives: [],
+      modules: [],
+      materialsFileIds: [],
+      resourceIds: [],
+      studyPlan: [],
+      createdAt: new Date().toISOString(),
+    };
+    setCourses((prev) => [...prev, newCourse]);
+    openCourseById(newCourse.id);
+  };
+
+  // Courses system actions
+  const handleCreateCourse = (data: { name: string; code: string; color: string }) => {
+    const newCourse: Course = {
+      id: `course-${Date.now()}`,
+      code: data.code,
+      name: data.name,
+      color: data.color,
+      objectives: [],
+      modules: [],
+      materialsFileIds: [],
+      resourceIds: [],
+      studyPlan: [],
+      createdAt: new Date().toISOString(),
+    };
+    setCourses((prev) => [...prev, newCourse]);
+    playChime('success');
+  };
+
+  const handleToggleModule = (courseId: string, moduleId: string) => {
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.id === courseId
+          ? { ...c, modules: c.modules.map((m) => (m.id === moduleId ? { ...m, completed: !m.completed } : m)) }
+          : c
+      )
+    );
+  };
+
+  const handleAddResource = (courseId: string, courseCode: string, data: Partial<CourseResource>) => {
+    const newRes: CourseResource = {
+      id: `res-${Date.now()}`,
+      courseId,
+      courseCode,
+      moduleId: data.moduleId,
+      title: data.title || 'Untitled resource',
+      type: data.type || 'text',
+      sourceUrl: data.sourceUrl,
+      content: data.content || '',
+      fileName: data.fileName,
+      mime: data.mime,
+      fileData: data.fileData,
+      estimatedReadMinutes: data.estimatedReadMinutes || 5,
+      tags: data.tags || [],
+      createdAt: new Date().toISOString(),
+      reading: { percent: 0, lastPosition: 0, completed: false },
+    };
+    setResources((prev) => [newRes, ...prev]);
+    setCourses((prev) =>
+      prev.map((c) => (c.id === courseId ? { ...c, resourceIds: [...c.resourceIds, newRes.id] } : c))
+    );
+    playChime('success');
+  };
+
+  /** Shared by the Files screen and the course workspace so uploads land in one place. */
+  const handleUploadFile = (newF: Partial<StudyFile>) => {
+    const f: StudyFile = {
+      id: `file-${Date.now()}`,
+      name: newF.name || 'Document.pdf',
+      size: newF.size || '1.5 MB',
+      type: newF.type || 'pdf',
+      uploadedAt: 'Just now',
+      summary: newF.summary || 'Summary generated by StudyAI.',
+      extractedDeadlines: newF.extractedDeadlines || [],
+      keyTopics: newF.keyTopics || ['Study Notes'],
+      courseCode: newF.courseCode,
+      dataUrl: newF.dataUrl,
+    };
+    setFiles((prev) => [f, ...prev]);
+    playChime('success');
+  };
+
+  const handleUpdateReading = (resourceId: string, patch: Partial<CourseResourceReading>) => {
+    setResources((prev) =>
+      prev.map((r) => (r.id === resourceId ? { ...r, reading: { ...r.reading, ...patch } } : r))
+    );
+  };
+
+  const handleSaveQuiz = (quiz: CourseQuiz) => {
+    setQuizzes((prev) => {
+      const exists = prev.some((q) => q.id === quiz.id);
+      return exists ? prev.map((q) => (q.id === quiz.id ? quiz : q)) : [quiz, ...prev];
+    });
+  };
+
+  const handleSaveFlashcards = (cards: CourseFlashcard[]) => {
+    setFlashcards((prev) => {
+      const map = new Map(prev.map((c) => [c.id, c]));
+      cards.forEach((c) => map.set(c.id, c));
+      return Array.from(map.values());
+    });
   };
 
   // Handle Action Execution (Section 4 & 44)
@@ -432,6 +602,62 @@ export default function App() {
   };
 
   // Task Actions
+  /**
+   * Single task-creation path shared by the Tasks screen and the course
+   * workspaces, so adding from a course behaves exactly like adding from Tasks.
+   */
+  const handleCreateTask = (taskData: Partial<Task>, autoPlan: boolean) => {
+    const newT: Task = {
+      id: `task-${Date.now()}`,
+      title: taskData.title || 'New Task',
+      description: taskData.description || '',
+      courseCode: taskData.courseCode,
+      courseColor: taskData.courseColor || (taskData.courseCode ? '#EF4444' : '#64748B'),
+      category: taskData.category || (taskData.courseCode ? 'academic' : 'personal'),
+      type: taskData.type || 'assignment',
+      deadline: taskData.deadline || '2026-10-04T23:59:00Z',
+      scheduledDate: taskData.scheduledDate,
+      scheduledStartTime: taskData.scheduledStartTime,
+      recurrence: taskData.recurrence || 'none',
+      reminder: taskData.reminder || { enabled: false, minutesBefore: 30 },
+      estimatedMinutes: taskData.estimatedMinutes || 45,
+      priority: taskData.priority || 'high',
+      progress: 0,
+      completed: false,
+      subtasks: [
+        { id: `sub-1`, title: 'Review lecture notes & constraints', completed: false, estimatedMinutes: 15, order: 1 },
+        { id: `sub-2`, title: 'Draft core solution', completed: false, estimatedMinutes: 20, order: 2 },
+        { id: `sub-3`, title: 'Verify and submit deliverable', completed: false, estimatedMinutes: 10, order: 3 },
+      ],
+      relatedFileIds: [],
+      relatedResearchIds: [],
+      aiPlanReason: 'Decomposed by StudyAI into focused 15-minute milestones.',
+      createdAt: new Date().toISOString(),
+    };
+    setTasks((prev) => [newT, ...prev]);
+
+    const scheduledDate = taskData.scheduledDate;
+    const scheduledStartTime = taskData.scheduledStartTime;
+    if (scheduledDate && scheduledStartTime) {
+      setSchedule((prev) => [
+        {
+          id: `sched-${Date.now()}`,
+          title: `${taskData.courseCode ? `${taskData.courseCode} · ` : ''}${newT.title}`,
+          startTime: scheduledStartTime,
+          endTime: getEndTime(scheduledStartTime, newT.estimatedMinutes),
+          date: scheduledDate,
+          type: 'study',
+          courseCode: taskData.courseCode,
+          color: newT.courseColor,
+          isCompleted: false,
+        },
+        ...prev,
+      ]);
+    }
+    playChime('success');
+    void autoPlan;
+  };
+
   const handleToggleTask = (taskId: string) => {
     setTasks((prev) =>
       prev.map((t) => {
@@ -523,33 +749,113 @@ export default function App() {
       ? tasks.find((task) => task.id === selectedTask.id) || selectedTask
       : null;
 
-    if (activeSubScreen === 'course' && selectedCourseCode) {
-      const course = courses.find((item) => item.code === selectedCourseCode);
-      if (course) {
+    const selectedCourse = selectedCourseId ? courses.find((c) => c.id === selectedCourseId) || null : null;
+    const selectedCourseResources = selectedCourse ? getCourseResources(selectedCourse, resources) : [];
+
+    if (activeSubScreen === 'courses') {
+      return (
+        <CoursesScreen
+          courses={courses}
+          tasks={tasks}
+          resources={resources}
+          onOpenCourse={openCourseById}
+          onCreateCourse={handleCreateCourse}
+        />
+      );
+    }
+
+    if (activeSubScreen === 'course' && selectedCourse) {
+      const courseProgress = computeCourseProgress(selectedCourse, tasks, resources);
+      return (
+        <CourseWorkspaceScreen
+          course={selectedCourse}
+          tasks={tasks}
+          files={files}
+          schedule={schedule}
+          resources={selectedCourseResources}
+          progress={courseProgress}
+          onBack={() => {
+            setActiveSubScreen(null);
+            setSelectedResourceId(null);
+          }}
+          onSelectTask={(task) => {
+            setSelectedTask(task);
+            setActiveSubScreen('task_detail');
+          }}
+          onOpenFiles={() => setActiveSubScreen('files')}
+          onOpenCalendar={() => {
+            setActiveSubScreen(null);
+            setCurrentTab('calendar');
+          }}
+          onAddPlanStep={(courseId, step) =>
+            setCourses((prev) =>
+              prev.map((item) => (item.id === courseId ? { ...item, studyPlan: [...item.studyPlan, step] } : item))
+            )
+          }
+          onToggleModule={handleToggleModule}
+          onOpenResource={(resource) => {
+            setSelectedResourceId(resource.id);
+            setActiveSubScreen('resource_reader');
+          }}
+          onOpenTutor={() => {
+            setCourseTutorPrefill(undefined);
+            setCourseTutorQuizResourceId(undefined);
+            setActiveSubScreen('course_tutor');
+          }}
+          onAddResource={(data) => handleAddResource(selectedCourse.id, selectedCourse.code, data)}
+          onUploadFile={handleUploadFile}
+          onAddTask={handleCreateTask}
+          onToggleTask={handleToggleTask}
+          onViewAllTasks={(courseCode) => {
+            setTaskCourseFilter(courseCode);
+            setActiveSubScreen(null);
+            setCurrentTab('tasks');
+          }}
+        />
+      );
+    }
+
+    if (activeSubScreen === 'resource_reader' && selectedCourse) {
+      const resource = selectedCourseResources.find((r) => r.id === selectedResourceId);
+      if (resource) {
         return (
-          <CourseWorkspaceScreen
-            course={course}
-            tasks={tasks}
-            files={files}
-            schedule={schedule}
-            onBack={() => setActiveSubScreen(null)}
-            onSelectTask={(task) => {
-              setSelectedTask(task);
-              setActiveSubScreen('task_detail');
+          <ResourceReaderScreen
+            resource={resource}
+            course={selectedCourse}
+            config={aiConfig}
+            onBack={() => setActiveSubScreen('course')}
+            onUpdateReading={handleUpdateReading}
+            onAskTutor={(res) => {
+              setCourseTutorPrefill(`Help me understand "${res.title}" from ${selectedCourse.code}.`);
+              setCourseTutorQuizResourceId(undefined);
+              setActiveSubScreen('course_tutor');
             }}
-            onOpenFiles={() => setActiveSubScreen('files')}
-            onOpenCalendar={() => {
-              setActiveSubScreen(null);
-              setCurrentTab('calendar');
+            onStartQuiz={(res) => {
+              setCourseTutorPrefill(undefined);
+              setCourseTutorQuizResourceId(res.id);
+              setActiveSubScreen('course_tutor');
             }}
-            onAddPlanStep={(courseId, step) =>
-              setCourses((prev) =>
-                prev.map((item) => (item.id === courseId ? { ...item, studyPlan: [...item.studyPlan, step] } : item))
-              )
-            }
           />
         );
       }
+    }
+
+    if (activeSubScreen === 'course_tutor' && selectedCourse) {
+      return (
+        <CourseTutorScreen
+          course={selectedCourse}
+          resources={resources}
+          tasks={tasks}
+          quizzes={quizzes}
+          flashcards={flashcards}
+          config={aiConfig}
+          initialPrompt={courseTutorPrefill}
+          initialQuizResourceId={courseTutorQuizResourceId}
+          onBack={() => setActiveSubScreen('course')}
+          onSaveQuiz={handleSaveQuiz}
+          onSaveFlashcards={handleSaveFlashcards}
+        />
+      );
     }
 
     if (activeSubScreen === 'what_to_do_now') {
@@ -671,20 +977,7 @@ export default function App() {
         <FilesScreen
           files={files}
           notes={notes}
-          onUploadFile={(newF) => {
-            const f: StudyFile = {
-              id: `file-${Date.now()}`,
-              name: newF.name || 'Document.pdf',
-              size: newF.size || '1.5 MB',
-              type: newF.type || 'pdf',
-              uploadedAt: 'Just now',
-              summary: newF.summary || 'Summary generated by StudyAI.',
-              extractedDeadlines: newF.extractedDeadlines || [],
-              keyTopics: newF.keyTopics || ['Study Notes'],
-            };
-            setFiles((prev) => [f, ...prev]);
-            playChime('success');
-          }}
+          onUploadFile={handleUploadFile}
           onAddNote={(title, content) => {
             const n: StudyNote = {
               id: `note-${Date.now()}`,
@@ -824,10 +1117,7 @@ export default function App() {
             onOpenCalendar={() => setCurrentTab('calendar')}
             onOpenNotifications={() => setActiveSubScreen('notifications')}
             onOpenSideMenu={() => setIsSideDrawerOpen(true)}
-            onOpenCourse={(courseCode) => {
-              setSelectedCourseCode(courseCode);
-              setActiveSubScreen('course');
-            }}
+            onOpenCourse={(courseCode) => openCourseByCode(courseCode)}
             onUpdateEnergy={(lvl) => setUser((prev) => ({ ...prev, energyLevel: lvl }))}
             onSelectTask={(task) => {
               setSelectedTask(task);
@@ -839,6 +1129,17 @@ export default function App() {
             }}
             onSignInWithGoogle={handleGoogleSignIn}
             isFirebaseSynced={Boolean(firebaseUser)}
+          />
+        );
+
+      case 'courses':
+        return (
+          <CoursesScreen
+            courses={courses}
+            tasks={tasks}
+            resources={resources}
+            onOpenCourse={openCourseById}
+            onCreateCourse={handleCreateCourse}
           />
         );
 
@@ -854,55 +1155,7 @@ export default function App() {
               setActiveSubScreen('task_detail');
             }}
             onToggleTask={handleToggleTask}
-            onAddTask={(taskData, autoPlan) => {
-              const newT: Task = {
-                id: `task-${Date.now()}`,
-                title: taskData.title || 'New Task',
-                description: taskData.description || '',
-                  courseCode: taskData.courseCode,
-                  courseColor: taskData.courseColor || (taskData.courseCode ? '#EF4444' : '#64748B'),
-                  category: taskData.category || (taskData.courseCode ? 'academic' : 'personal'),
-                type: taskData.type || 'assignment',
-                deadline: taskData.deadline || '2026-10-04T23:59:00Z',
-                scheduledDate: taskData.scheduledDate,
-                scheduledStartTime: taskData.scheduledStartTime,
-                recurrence: taskData.recurrence || 'none',
-                reminder: taskData.reminder || { enabled: false, minutesBefore: 30 },
-                estimatedMinutes: taskData.estimatedMinutes || 45,
-                priority: taskData.priority || 'high',
-                progress: 0,
-                completed: false,
-                subtasks: [
-                  { id: `sub-1`, title: 'Review lecture notes & constraints', completed: false, estimatedMinutes: 15, order: 1 },
-                  { id: `sub-2`, title: 'Draft core solution', completed: false, estimatedMinutes: 20, order: 2 },
-                  { id: `sub-3`, title: 'Verify and submit deliverable', completed: false, estimatedMinutes: 10, order: 3 },
-                ],
-                relatedFileIds: [],
-                relatedResearchIds: [],
-                aiPlanReason: 'Decomposed by StudyAI into focused 15-minute milestones.',
-                createdAt: new Date().toISOString(),
-              };
-              setTasks((prev) => [newT, ...prev]);
-              const scheduledDate = taskData.scheduledDate;
-              const scheduledStartTime = taskData.scheduledStartTime;
-              if (scheduledDate && scheduledStartTime) {
-                setSchedule((prev) => [
-                  {
-                    id: `sched-${Date.now()}`,
-                    title: `${taskData.courseCode ? `${taskData.courseCode} · ` : ''}${newT.title}`,
-                    startTime: scheduledStartTime,
-                    endTime: getEndTime(scheduledStartTime, newT.estimatedMinutes),
-                    date: scheduledDate,
-                    type: 'study',
-                    courseCode: taskData.courseCode,
-                    color: newT.courseColor,
-                    isCompleted: false,
-                  },
-                  ...prev,
-                ]);
-              }
-              playChime('success');
-            }}
+            onAddTask={handleCreateTask}
             onComposerStateChange={setIsTaskComposerOpen}
           />
         );
@@ -943,7 +1196,7 @@ export default function App() {
         return (
           <MoreScreen
             onNavigate={(dest) => {
-              if (dest === 'ai' || dest === 'calendar') {
+              if (dest === 'courses' || dest === 'ai' || dest === 'calendar') {
                 setCurrentTab(dest as NavTab);
               } else {
                 setActiveSubScreen(dest);
@@ -1075,7 +1328,7 @@ export default function App() {
           user={user}
           onSignOut={handleSignOut}
           onNavigate={(dest) => {
-            if (dest === 'home' || dest === 'tasks' || dest === 'ai' || dest === 'calendar') {
+            if (dest === 'home' || dest === 'tasks' || dest === 'courses' || dest === 'ai' || dest === 'calendar') {
               setCurrentTab(dest as NavTab);
               setActiveSubScreen(null);
             } else {

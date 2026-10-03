@@ -25,6 +25,14 @@ export interface UserProfile {
   photoURL?: string;
 }
 
+export interface CourseModule {
+  id: string;
+  title: string;
+  description?: string;
+  order: number;
+  completed: boolean;
+}
+
 export interface Course {
   id: string;
   code: string; // e.g. "CS101", "MATH"
@@ -34,8 +42,115 @@ export interface Course {
   term?: string;
   credits?: number;
   schedulePattern?: string;
+  description?: string;
+  objectives: string[];      // learning outcomes
+  modules: CourseModule[];   // units / weeks that structure the course
   materialsFileIds: string[];
+  resourceIds: string[];     // linked CourseResource ids
   studyPlan: string[];
+  coverEmoji?: string;
+  isArchived?: boolean;
+  createdAt?: string;
+}
+
+export type CourseResourceType = 'pdf' | 'docx' | 'text' | 'link' | 'slide' | 'video';
+
+export interface CourseResourceReading {
+  percent: number;      // 0 - 100 overall scroll progress
+  lastPosition: number; // 0 - 100 relative scroll position to resume from
+  lastReadAt?: string;  // ISO timestamp of the last reading session
+  completed: boolean;
+}
+
+export interface CourseResource {
+  id: string;
+  courseId: string;
+  courseCode: string;   // convenience for filtering, matches Course.code
+  moduleId?: string;
+  title: string;
+  type: CourseResourceType;
+  sourceUrl?: string;
+  content: string;      // readable body text (markdown-ish) for the reader view
+  /** Original filename when this resource came from an uploaded file. */
+  fileName?: string;
+  /** MIME type of the original file, used to pick the right viewer. */
+  mime?: string;
+  /**
+   * Base64 data URL of the original file (images / small PDFs) so the reader
+   * can open it in a distraction-free viewer. Only set for files under the
+   * storage threshold; large files fall back to metadata only.
+   */
+  fileData?: string;
+  estimatedReadMinutes: number;
+  tags: string[];
+  createdAt: string;
+  reading: CourseResourceReading;
+}
+
+export interface CourseProgress {
+  percent: number;
+  tasksCompleted: number;
+  tasksTotal: number;
+  resourcesRead: number;
+  resourcesTotal: number;
+  modulesCompleted: number;
+  modulesTotal: number;
+  lastActivityAt?: string;
+}
+
+export interface CourseQuizQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation?: string;
+}
+
+export interface CourseQuizAttempt {
+  id: string;
+  score: number; // 0 - 100
+  correctCount: number;
+  totalQuestions: number;
+  takenAt: string;
+}
+
+export interface CourseQuiz {
+  id: string;
+  courseId: string;
+  resourceId?: string;
+  title: string;
+  questions: CourseQuizQuestion[];
+  attempts: CourseQuizAttempt[];
+  createdAt: string;
+}
+
+export interface CourseFlashcard {
+  id: string;
+  courseId: string;
+  resourceId?: string;
+  front: string;
+  back: string;
+  mastered: boolean;
+  createdAt: string;
+}
+
+export interface CourseKeyTerm {
+  term: string;
+  definition: string;
+}
+
+export interface CourseInsight {
+  id: string;
+  courseId: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface CourseTutorMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: string;
 }
 
 export interface SubTask {
@@ -108,6 +223,8 @@ export interface StudyFile {
   extractedDeadlines?: { title: string; date: string }[];
   keyTopics?: string[];
   courseCode?: string;
+  /** Base64 data URL of the file bytes (set when small enough to store). */
+  dataUrl?: string;
 }
 
 export interface StudyNote {
