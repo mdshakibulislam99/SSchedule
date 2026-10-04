@@ -53,7 +53,20 @@ export const INITIAL_CALENDAR_SYNC: GoogleCalendarSyncState = {
   calendarId: 'primary',
 };
 
-export const INITIAL_USER: UserProfile = {
+export const CLEAN_USER: UserProfile = {
+  id: 'user-student',
+  name: '',
+  email: '',
+  avatarUrl: '',
+  university: '',
+  studyField: 'Computer Science',
+  year: '1st Year',
+  goals: ['Finish assignments', 'Study for exams', 'Improve grades'],
+  energyLevel: 4,
+  isOnboarded: false, // Clean user starts with onboarding
+};
+
+export const DEMO_USER: UserProfile = {
   id: 'user-alex-1',
   name: 'Alex Carter',
   email: 'alex@example.com',
@@ -62,9 +75,11 @@ export const INITIAL_USER: UserProfile = {
   studyField: 'Computer Science',
   year: '2nd Year',
   goals: ['Finish assignments', 'Study for exams', 'Improve grades'],
-  energyLevel: 4, // 1-5 scale (Good energy)
-  isOnboarded: true, // Default to ready, user can re-trigger onboarding from menu
+  energyLevel: 4,
+  isOnboarded: true,
 };
+
+export const INITIAL_USER: UserProfile = CLEAN_USER;
 
 export const INITIAL_COURSES: Course[] = [
   {
@@ -753,7 +768,7 @@ export const INITIAL_NOTIFICATION_SETTINGS: NotificationSettings = {
   quietHoursEnd: '07:00',
 };
 
-export const INITIAL_METRICS: ProgressMetrics = {
+export const DEMO_METRICS: ProgressMetrics = {
   weeklyGoalPercentage: 68,
   studyTimeFormatted: '28h 45m',
   studyTimeDelta: '+12%',
@@ -768,6 +783,19 @@ export const INITIAL_METRICS: ProgressMetrics = {
     { course: 'Other', percentage: 21, color: '#6366F1' },
   ],
 };
+
+export const CLEAN_METRICS: ProgressMetrics = {
+  weeklyGoalPercentage: 0,
+  studyTimeFormatted: '0h 0m',
+  studyTimeDelta: '0%',
+  tasksCompleted: 0,
+  tasksTotal: 0,
+  focusScore: 0,
+  dayStreak: 0,
+  subjectBreakdown: [],
+};
+
+export const INITIAL_METRICS = CLEAN_METRICS;
 
 export function ensureResourceAIContext(r: CourseResource): CourseResource {
   if (r.aiContext && r.aiContext.status === 'ready' && r.aiContext.denseContext) {
@@ -843,7 +871,7 @@ export const StudyStorage = {
   getCourses(): Course[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.COURSES);
-      const parsed: Course[] = data ? JSON.parse(data) : INITIAL_COURSES;
+      const parsed: Course[] = data ? JSON.parse(data) : [];
       // Normalize older records that predate the courses system so downstream
       // screens can safely assume these arrays exist.
       return parsed.map((course) => ({
@@ -855,7 +883,7 @@ export const StudyStorage = {
         studyPlan: course.studyPlan || [],
       }));
     } catch {
-      return INITIAL_COURSES;
+      return [];
     }
   },
   saveCourses(courses: Course[]) {
@@ -865,10 +893,10 @@ export const StudyStorage = {
   getResources(): CourseResource[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.RESOURCES);
-      const list: CourseResource[] = data ? JSON.parse(data) : INITIAL_RESOURCES;
+      const list: CourseResource[] = data ? JSON.parse(data) : [];
       return list.map(ensureResourceAIContext);
     } catch {
-      return INITIAL_RESOURCES.map(ensureResourceAIContext);
+      return [];
     }
   },
   saveResources(resources: CourseResource[]) {
@@ -908,9 +936,9 @@ export const StudyStorage = {
   getTasks(): Task[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.TASKS);
-      return data ? JSON.parse(data) : INITIAL_TASKS;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_TASKS;
+      return [];
     }
   },
   saveTasks(tasks: Task[]) {
@@ -920,9 +948,9 @@ export const StudyStorage = {
   getSchedule(): ScheduleEvent[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SCHEDULE);
-      return data ? JSON.parse(data) : INITIAL_SCHEDULE;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_SCHEDULE;
+      return [];
     }
   },
   saveSchedule(schedule: ScheduleEvent[]) {
@@ -932,9 +960,9 @@ export const StudyStorage = {
   getGoals(): Goal[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.GOALS);
-      return data ? JSON.parse(data) : INITIAL_GOALS;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_GOALS;
+      return [];
     }
   },
   saveGoals(goals: Goal[]) {
@@ -944,10 +972,10 @@ export const StudyStorage = {
   getFiles(): StudyFile[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.FILES);
-      const list: StudyFile[] = data ? JSON.parse(data) : INITIAL_FILES;
+      const list: StudyFile[] = data ? JSON.parse(data) : [];
       return list.map(ensureFileAIContext);
     } catch {
-      return INITIAL_FILES.map(ensureFileAIContext);
+      return [];
     }
   },
   saveFiles(files: StudyFile[]) {
@@ -961,9 +989,9 @@ export const StudyStorage = {
   getResearch(): ResearchItem[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.RESEARCH);
-      return data ? JSON.parse(data) : INITIAL_RESEARCH;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_RESEARCH;
+      return [];
     }
   },
   saveResearch(items: ResearchItem[]) {
@@ -985,9 +1013,9 @@ export const StudyStorage = {
   getAIMemory(): AIMemoryItem[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.AI_MEMORY);
-      return data ? JSON.parse(data) : INITIAL_AI_MEMORY;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_AI_MEMORY;
+      return [];
     }
   },
   saveAIMemory(memory: AIMemoryItem[]) {
@@ -997,9 +1025,9 @@ export const StudyStorage = {
   getNotifications(): NotificationItem[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-      return data ? JSON.parse(data) : INITIAL_NOTIFICATIONS;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_NOTIFICATIONS;
+      return [];
     }
   },
   saveNotifications(notifs: NotificationItem[]) {
@@ -1022,9 +1050,9 @@ export const StudyStorage = {
   getNotes(): StudyNote[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.NOTES);
-      return data ? JSON.parse(data) : INITIAL_NOTES;
+      return data ? JSON.parse(data) : [];
     } catch {
-      return INITIAL_NOTES;
+      return [];
     }
   },
   saveNotes(notes: StudyNote[]) {
@@ -1057,6 +1085,46 @@ export const StudyStorage = {
   },
   saveMetrics(metrics: ProgressMetrics) {
     localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(metrics));
+  },
+
+  /**
+   * Load rich demo data into localStorage (useful for development & testing)
+   */
+  loadDemoData(): void {
+    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(DEMO_USER));
+    localStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify(INITIAL_COURSES));
+    localStorage.setItem(STORAGE_KEYS.RESOURCES, JSON.stringify(INITIAL_RESOURCES));
+    localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
+    localStorage.setItem(STORAGE_KEYS.SCHEDULE, JSON.stringify(INITIAL_SCHEDULE));
+    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(INITIAL_GOALS));
+    localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(INITIAL_FILES));
+    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(INITIAL_NOTES));
+    localStorage.setItem(STORAGE_KEYS.RESEARCH, JSON.stringify(INITIAL_RESEARCH));
+    localStorage.setItem(STORAGE_KEYS.AI_MEMORY, JSON.stringify(INITIAL_AI_MEMORY));
+    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(INITIAL_NOTIFICATIONS));
+    localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(DEMO_METRICS));
+  },
+
+  /**
+   * Clear all study and personal data to simulate a completely new user
+   */
+  clearAllData(): void {
+    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(CLEAN_USER));
+    localStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.RESOURCES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.QUIZZES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FLASHCARDS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.SCHEDULE, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.RESEARCH, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.AI_MEMORY, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(CLEAN_METRICS));
+    localStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify([]));
+    localStorage.removeItem(STORAGE_KEYS.CALENDAR_OUTBOX);
   },
 
   getCalendarSync(): GoogleCalendarSyncState {

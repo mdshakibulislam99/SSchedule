@@ -238,6 +238,49 @@ export default function App() {
     }, 3500);
   };
 
+  const handleLoadDemoData = () => {
+    StudyStorage.loadDemoData();
+    setUser(StudyStorage.getUser());
+    setCourses(StudyStorage.getCourses());
+    setResources(StudyStorage.getResources());
+    setTasks(StudyStorage.getTasks());
+    setSchedule(StudyStorage.getSchedule());
+    setGoals(StudyStorage.getGoals());
+    setFiles(StudyStorage.getFiles());
+    setNotes(StudyStorage.getNotes());
+    setResearch(StudyStorage.getResearch());
+    setAIMemory(StudyStorage.getAIMemory());
+    setNotifications(StudyStorage.getNotifications());
+    setMetrics(StudyStorage.getMetrics());
+    setShowOnboarding(false);
+    showToast('Sample demo data loaded (CS101, assignments & schedule).');
+  };
+
+  const handleClearAllData = () => {
+    StudyStorage.clearAllData();
+    setUser(StudyStorage.getUser());
+    setCourses([]);
+    setResources([]);
+    setAnnotations([]);
+    setQuizzes([]);
+    setFlashcards([]);
+    setTasks([]);
+    setSchedule([]);
+    setGoals([]);
+    setFiles([]);
+    setNotes([]);
+    setResearch([]);
+    setAIMemory([]);
+    setNotifications([]);
+    setMetrics(StudyStorage.getMetrics());
+    setSelectedTask(null);
+    setSelectedCourseId(null);
+    setSelectedResourceId(null);
+    setSelectedFileForChat(null);
+    setShowOnboarding(true);
+    showToast('Clean student mode active. All mock data cleared.');
+  };
+
   const isAIProviderConfigured = (config: AIProviderConfig) => {
     if (config.activeProvider === 'puter') return Boolean(config.puterUser);
     if (config.activeProvider === 'gemini') return Boolean(config.apiKeys.gemini);
@@ -1765,6 +1808,8 @@ export default function App() {
           onOpenGoals={() => setActiveSubScreen('goals')}
           onOpenStats={() => setActiveSubScreen('progress')}
           onRestartOnboarding={() => setShowOnboarding(true)}
+          onLoadDemoData={handleLoadDemoData}
+          onClearAllData={handleClearAllData}
           onSignInWithGoogle={handleGoogleSignIn}
           onSignOut={handleSignOut}
           isFirebaseSynced={Boolean(firebaseUser)}

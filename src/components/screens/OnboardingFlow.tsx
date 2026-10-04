@@ -29,9 +29,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
   const [step, setStep] = useState<number>(1);
   const [selectedField, setSelectedField] = useState<string>(initialUser.studyField || 'Computer Science');
   const [selectedGoals, setSelectedGoals] = useState<string[]>(initialUser.goals || ['Finish assignments']);
-  const [name, setName] = useState<string>(initialUser.name || 'Alex Carter');
-  const [university, setUniversity] = useState<string>(initialUser.university || 'Stanford University');
-  const [year, setYear] = useState<string>(initialUser.year || '2nd Year');
+  const [name, setName] = useState<string>(initialUser.name || '');
+  const [university, setUniversity] = useState<string>(initialUser.university || '');
+  const [year, setYear] = useState<string>(initialUser.year || '1st Year');
 
   // Mirror the in-app back chevron on the Android hardware back button. Returning
   // false on the first step lets the press fall through and exit the app.
@@ -282,7 +282,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
           <div className="flex justify-center py-2">
             <div className="relative">
               <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xl font-bold shadow-lg">
-                {name.charAt(0) || 'A'}
+                {name.trim() ? name.trim().charAt(0).toUpperCase() : <User className="w-8 h-8 opacity-80" />}
               </div>
               <div className="absolute bottom-0 right-0 p-1.5 rounded-full bg-indigo-600 text-white shadow-sm border-2 border-white dark:border-slate-950">
                 <User className="w-3.5 h-3.5" />

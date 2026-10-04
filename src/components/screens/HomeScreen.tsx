@@ -130,7 +130,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               )}
             </div>
             <h1 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">
-              {timeGreeting}, {user.name.split(' ')[0]}
+              {timeGreeting}, {user.name ? user.name.split(' ')[0] : 'Student'}
             </h1>
           </div>
         </div>
