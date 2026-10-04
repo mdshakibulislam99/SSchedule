@@ -444,3 +444,65 @@ export interface ProgressMetrics {
     color: string;
   }[];
 }
+
+export interface AppVersionConfig {
+  latestVersion: string;
+  minRequiredVersion: string;
+  forceUpdate: boolean;
+  gracePeriodDays?: number; // Days the user is granted before being hard-blocked (default: 7)
+  downloadUrl: string;
+  title?: string;
+  message?: string;
+  releaseNotes?: string[];
+  updatedAt?: string;
+}
+
+export interface AppUpdateCheckResult {
+  isUpdateRequired: boolean;
+  isUpdateAvailable: boolean;
+  isGracePeriodActive: boolean;
+  isHardBlocked: boolean;
+  daysRemaining: number;
+  gracePeriodDays: number;
+  deadlineDate: string;
+  currentVersion: string;
+  minRequiredVersion: string;
+  latestVersion: string;
+  downloadUrl: string;
+  title: string;
+  message: string;
+  releaseNotes: string[];
+}
+
+export type OfflineSyncCollection =
+  | 'tasks'
+  | 'schedule'
+  | 'courses'
+  | 'resources'
+  | 'goals'
+  | 'files'
+  | 'notes'
+  | 'profile'
+  | 'integrations';
+
+export type OfflineSyncAction = 'upsert' | 'delete' | 'batch_upsert';
+
+export interface OfflineQueueItem {
+  id: string;
+  userId: string;
+  collection: OfflineSyncCollection;
+  docId: string;
+  action: OfflineSyncAction;
+  data?: any;
+  timestamp: string;
+  retryCount: number;
+  lastError?: string;
+}
+
+export interface OfflineSyncStatus {
+  isOnline: boolean;
+  isSyncing: boolean;
+  pendingCount: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}

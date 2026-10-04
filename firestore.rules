@@ -39,6 +39,14 @@ service cloud.firestore {
       match /files/{fileId} {
         allow read, write: if isOwner(userId);
       }
+
+      match /integrations/{integrationId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
     }
 
     match /{document=**} {

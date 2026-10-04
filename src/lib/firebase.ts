@@ -11,6 +11,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   getDocFromServer,
   getDoc,
@@ -19,6 +22,7 @@ import {
   getDocs,
   writeBatch,
   deleteDoc,
+  Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState } from '../types';
@@ -26,7 +30,22 @@ import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleC
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Initialize Firestore with robust multi-tab persistent offline cache
+function initFirestoreWithOfflinePersistence(): Firestore {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch (err) {
+    // Falls back to getFirestore if already initialized or not supported in current environment
+    return getFirestore(app);
+  }
+}
+
+export const db: Firestore = initFirestoreWithOfflinePersistence();
 export const googleProvider = new GoogleAuthProvider();
 
 // Connection test as requested by Firebase Integration guidelines

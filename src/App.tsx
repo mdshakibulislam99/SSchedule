@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
+import { RefreshCw } from 'lucide-react';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
 import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
@@ -26,6 +27,9 @@ import {
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { registerBackHandler } from './lib/native';
+import { offlineSyncService } from './services/offlineSyncService';
+import { useOfflineSync } from './hooks/useOfflineSync';
+import { OfflineSyncBadge } from './components/OfflineSyncBadge';
 
 import { OnboardingFlow } from './components/screens/OnboardingFlow';
 import { HomeScreen } from './components/screens/HomeScreen';
@@ -53,6 +57,7 @@ import { NotificationSettingsScreen } from './components/screens/NotificationSet
 import { MoreScreen } from './components/screens/MoreScreen';
 import { AIMemoryModal } from './components/screens/AIMemoryModal';
 import { AISetupPrompt } from './components/mobile/AISetupPrompt';
+import { ForceUpdateModal } from './components/mobile/ForceUpdateModal';
 
 import {
   UserProfile,
@@ -76,6 +81,7 @@ import {
   CourseQuiz,
   CourseFlashcard,
   GoogleCalendarSyncState,
+  AppUpdateCheckResult,
 } from './types';
 import { StudyStorage } from './utils/storage';
 import { playChime } from './utils/audio';
@@ -83,6 +89,7 @@ import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
 import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
+import { AppUpdateService } from './services/appUpdateService';
 
 function getEndTime(startTime: string, durationMinutes: number): string {
   const [hours, minutes] = startTime.split(':').map(Number);
@@ -141,6 +148,9 @@ export default function App() {
     const target = schedule.find((s) => s.id === id);
     if (target && calendarSync.connected) gcal.queueDelete(target);
     setSchedule((prev) => prev.filter((s) => s.id !== id));
+    if (firebaseUser) {
+      offlineSyncService.enqueueDelete(firebaseUser.uid, 'schedule', id);
+    }
   };
 
   const updateScheduleEvent = (event: ScheduleEvent) => {
@@ -201,6 +211,25 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isFirebaseSyncing, setIsFirebaseSyncing] = useState<boolean>(false);
+  const offlineSync = useOfflineSync(firebaseUser?.uid);
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateCheckResult | null>(null);
+  const [isGraceModalDismissed, setIsGraceModalDismissed] = useState(false);
+
+  const checkAppUpdates = async () => {
+    try {
+      const res = await AppUpdateService.checkAppVersion();
+      setUpdateInfo(res);
+      if (res.isHardBlocked) {
+        setIsGraceModalDismissed(false);
+      }
+    } catch (err) {
+      console.warn('Update check failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    void checkAppUpdates();
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -237,6 +266,7 @@ export default function App() {
   useEffect(() => {
     const unsub = onAuthChange(async (fUser) => {
       setFirebaseUser(fUser);
+      offlineSyncService.init(fUser ? fUser.uid : null);
       if (fUser) {
         setIsFirebaseSyncing(true);
         try {
@@ -282,6 +312,7 @@ export default function App() {
             setCalendarSync(cloudData.calendarSync);
           }
           showToast(`Cloud connected: ${fUser.displayName || 'Google Account'}`);
+          void offlineSyncService.syncNow();
         } catch (e) {
           console.warn('Sync load error:', e);
         } finally {
@@ -292,34 +323,45 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Sync state to Firestore when updated and user is signed in
+  // Sync state to Firestore with resilient offline queuing
   useEffect(() => {
     if (firebaseUser) {
       syncTasksToFirestore(firebaseUser.uid, tasks);
+      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'tasks', tasks);
     }
   }, [tasks, firebaseUser]);
 
   useEffect(() => {
     if (firebaseUser) {
       syncScheduleToFirestore(firebaseUser.uid, schedule);
+      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'schedule', schedule);
     }
   }, [schedule, firebaseUser]);
 
   useEffect(() => {
     if (firebaseUser) {
       syncCoursesToFirestore(firebaseUser.uid, courses);
+      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'courses', courses);
     }
   }, [courses, firebaseUser]);
 
   useEffect(() => {
     if (firebaseUser) {
       syncResourcesToFirestore(firebaseUser.uid, resources);
+      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'resources', resources);
     }
   }, [resources, firebaseUser]);
 
   useEffect(() => {
     if (firebaseUser) {
+      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'goals', goals);
+    }
+  }, [goals, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser) {
       syncUserProfileToFirestore(firebaseUser.uid, user);
+      offlineSyncService.enqueueUpsert(firebaseUser.uid, 'profile', firebaseUser.uid, user);
     }
   }, [user, firebaseUser]);
 
@@ -341,6 +383,7 @@ export default function App() {
     try {
       await signOutUser();
       setFirebaseUser(null);
+      offlineSyncService.setActiveUser(null);
       setUser((prev) => ({
         ...prev,
         isFirebaseSynced: false,
@@ -393,6 +436,7 @@ export default function App() {
   useEffect(() => {
     if (firebaseUser) {
       syncGoogleCalendarStateToFirestore(firebaseUser.uid, calendarSync);
+      offlineSyncService.enqueueUpsert(firebaseUser.uid, 'integrations', 'googleCalendar', calendarSync);
     }
   }, [calendarSync, firebaseUser]);
 
@@ -695,6 +739,7 @@ export default function App() {
 
     if (firebaseUser) {
       deleteCourseFromFirestore(firebaseUser.uid, courseId);
+      offlineSyncService.enqueueDelete(firebaseUser.uid, 'courses', courseId);
     }
 
     showToast(`Deleted course "${course.name}"`);
@@ -1240,6 +1285,7 @@ export default function App() {
 
     if (firebaseUser) {
       deleteTaskFromFirestore(firebaseUser.uid, taskId);
+      offlineSyncService.enqueueDelete(firebaseUser.uid, 'tasks', taskId);
     }
 
     showToast(`Deleted task "${targetTask?.title || 'Task'}"`);
@@ -1660,6 +1706,8 @@ export default function App() {
           config={aiConfig}
           calendarSync={calendarSync}
           notificationSettings={notificationSettings}
+          updateInfo={updateInfo}
+          onCheckUpdates={checkAppUpdates}
           onBack={goBackSubScreen}
           onOpenAIProvider={() => setActiveSubScreen('ai_provider')}
           onOpenNotifications={() => setActiveSubScreen('notification_settings')}
@@ -1959,6 +2007,51 @@ export default function App() {
               </div>
             )}
 
+            {/* 7-Day Grace Period Reminder Banner (visible when user dismissed modal to continue studying) */}
+            {updateInfo?.isGracePeriodActive && isGraceModalDismissed && (
+              <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-sm z-30 shrink-0 border-b border-amber-600/30">
+                <div className="flex items-center gap-2 truncate">
+                  <span className="text-sm">⏱️</span>
+                  <span className="truncate">
+                    Update required in {updateInfo.daysRemaining} {updateInfo.daysRemaining === 1 ? 'day' : 'days'} (v{updateInfo.latestVersion})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsGraceModalDismissed(false)}
+                  className="ml-2 px-2.5 py-1 rounded-lg bg-slate-950 text-white text-[11px] font-bold hover:bg-slate-800 transition-colors shrink-0 cursor-pointer shadow-sm"
+                >
+                  Update Now
+                </button>
+              </div>
+            )}
+
+            {/* Offline Resilience & Auto-Sync Banner */}
+            {!offlineSync.isOnline && (
+              <div className="bg-amber-500/90 text-slate-950 px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-sm z-30 shrink-0 border-b border-amber-600/30 backdrop-blur-md">
+                <div className="flex items-center gap-2 truncate">
+                  <span className="text-sm">⚡</span>
+                  <span className="truncate">
+                    Offline Mode — {offlineSync.pendingCount > 0 ? `${offlineSync.pendingCount} changes queued locally. Will auto-sync when online.` : 'Changes are safely stored offline and will auto-sync once reconnected.'}
+                  </span>
+                </div>
+                <span className="ml-2 px-2 py-0.5 rounded bg-amber-950/20 text-slate-950 text-[10px] uppercase font-bold shrink-0">
+                  Offline
+                </span>
+              </div>
+            )}
+
+            {offlineSync.isOnline && offlineSync.isSyncing && (
+              <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-sm z-30 shrink-0 border-b border-indigo-700 animate-pulse">
+                <div className="flex items-center gap-2 truncate">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span className="truncate">
+                    Restoring connection — Synchronizing offline changes with Firestore ({offlineSync.pendingCount} remaining)...
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Scrollable Viewport Content */}
             <div
               className={`flex-1 min-h-0 ${
@@ -2054,6 +2147,14 @@ export default function App() {
             playChime('success');
           }}
           onDeleteMemory={(id) => setAIMemory((prev) => prev.filter((m) => m.id !== id))}
+        />
+
+        {/* Mandatory App Force-Update Modal with 7-Day Grace Period */}
+        <ForceUpdateModal
+          updateInfo={!isGraceModalDismissed || updateInfo?.isHardBlocked ? updateInfo : null}
+          onCheckAgain={checkAppUpdates}
+          onContinueWithGrace={() => setIsGraceModalDismissed(true)}
+          onDismissOptional={() => setUpdateInfo(null)}
         />
       </div>
     </div>

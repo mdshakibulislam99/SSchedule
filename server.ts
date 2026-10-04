@@ -48,6 +48,75 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
+// App Version & Force-Update Configuration
+interface AppVersionConfigPayload {
+  latestVersion: string;
+  minRequiredVersion: string;
+  forceUpdate: boolean;
+  gracePeriodDays: number;
+  downloadUrl: string;
+  title: string;
+  message: string;
+  releaseNotes: string[];
+  updatedAt: string;
+}
+
+let appVersionConfig: AppVersionConfigPayload = {
+  latestVersion: process.env.LATEST_APP_VERSION || '1.0.0',
+  minRequiredVersion: process.env.MIN_REQUIRED_APP_VERSION || '1.0.0',
+  forceUpdate: process.env.FORCE_APP_UPDATE === 'true',
+  gracePeriodDays: Number(process.env.APP_UPDATE_GRACE_DAYS) || 7,
+  downloadUrl: process.env.APP_DOWNLOAD_URL || 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
+  title: 'Update Required',
+  message: 'A critical update is required to continue using ChronoPulse AI. Please update your app to access your study schedule and AI features.',
+  releaseNotes: [
+    'Smart Schedule & Task Optimizer improvements',
+    'Enhanced multi-model AI responses & study tutor',
+    'Critical stability and offline sync fixes',
+  ],
+  updatedAt: new Date().toISOString(),
+};
+
+// Public endpoint for mobile clients to query version requirements
+app.get('/api/app-version', (_req: Request, res: Response) => {
+  res.json(appVersionConfig);
+});
+
+// Management endpoint to update version policy on the fly
+app.post('/api/app-version', (req: Request, res: Response) => {
+  try {
+    const {
+      latestVersion,
+      minRequiredVersion,
+      forceUpdate,
+      gracePeriodDays,
+      downloadUrl,
+      title,
+      message,
+      releaseNotes,
+    } = req.body;
+
+    if (latestVersion) appVersionConfig.latestVersion = String(latestVersion);
+    if (minRequiredVersion) appVersionConfig.minRequiredVersion = String(minRequiredVersion);
+    if (typeof forceUpdate === 'boolean') appVersionConfig.forceUpdate = forceUpdate;
+    if (typeof gracePeriodDays === 'number' && gracePeriodDays >= 0) {
+      appVersionConfig.gracePeriodDays = gracePeriodDays;
+    }
+    if (downloadUrl) appVersionConfig.downloadUrl = String(downloadUrl);
+    if (title) appVersionConfig.title = String(title);
+    if (message) appVersionConfig.message = String(message);
+    if (Array.isArray(releaseNotes)) appVersionConfig.releaseNotes = releaseNotes.map(String);
+    appVersionConfig.updatedAt = new Date().toISOString();
+
+    return res.json({
+      success: true,
+      config: appVersionConfig,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to update version configuration' });
+  }
+});
+
 // Gemini AI generation endpoint with Google Search Grounding support
 app.post('/api/ai/gemini', async (req: Request, res: Response) => {
   try {

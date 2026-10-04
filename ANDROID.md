@@ -78,6 +78,39 @@ npm run android:assets   # scripts/generate-android-assets.py, no deps needed
 npm run cap:sync
 ```
 
+## Mandatory App Updates (Force-Update System)
+
+The app includes an automated version check and non-dismissible force-update modal:
+
+1. **How it works**:
+   - On launch, the app compares its local version (`CURRENT_APP_VERSION = "1.0.0"`) against the remote backend endpoint `/api/app-version`.
+   - If the installed version is lower than `minRequiredVersion`, or if `forceUpdate: true` and the version is below `latestVersion`, the app displays a full-screen, non-dismissible **"Update Required"** modal.
+   - The Android hardware back button is intercepted so users cannot back out or bypass the modal without updating.
+   - Clicking **"Update Now"** opens the download/store link directly (`APP_DOWNLOAD_URL`).
+
+2. **Triggering a mandatory update when releasing a new version**:
+   - You can update environment variables on your server:
+     ```env
+     LATEST_APP_VERSION=1.1.0
+     MIN_REQUIRED_APP_VERSION=1.1.0
+     FORCE_APP_UPDATE=true
+     APP_DOWNLOAD_URL=https://play.google.com/store/apps/details?id=com.chronopulse.ai
+     ```
+   - Or send an HTTP POST request to your API:
+     ```bash
+     curl -X POST https://your-api.example.com/api/app-version \
+       -H "Content-Type: application/json" \
+       -d '{
+         "latestVersion": "1.1.0",
+         "minRequiredVersion": "1.1.0",
+         "forceUpdate": true,
+         "title": "Update Required",
+         "message": "A critical update is required to continue using ChronoPulse AI.",
+         "releaseNotes": ["New AI study features", "Important bug fixes"]
+       }'
+     ```
+   - You can also test the force-update flow directly inside the app in **Settings > App Version & Updates > Update Policy & Simulation Controls**.
+
 ## Known WebView limitations
 
 These are platform constraints of the embedded WebView, not build problems:

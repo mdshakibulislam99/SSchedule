@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Task, ScheduleEvent, UserProfile, NotificationItem } from '../../types';
 import { getLocalDateKey } from '../../utils/dates';
+import { OfflineSyncBadge } from '../OfflineSyncBadge';
 
 interface HomeScreenProps {
   user: UserProfile;
@@ -121,10 +122,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div>
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="font-medium">{formattedToday}</span>
-              {isFirebaseSynced && (
+              {user.firebaseUid && (
                 <>
                   <span>·</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">Synced</span>
+                  <OfflineSyncBadge userId={user.firebaseUid} compact={true} />
                 </>
               )}
             </div>
