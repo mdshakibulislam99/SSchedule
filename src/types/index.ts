@@ -335,6 +335,7 @@ export interface AIMessage {
   suggestedChips?: string[];
   actions?: AIActionProposal[];
   contextLabel?: string;
+  isError?: boolean;
 }
 
 export interface AIActionProposal {
@@ -362,6 +363,7 @@ export interface AIConversation {
   messages: AIMessage[];
   contextTaskId?: string;
   contextFileId?: string;
+  courseId?: string;
   updatedAt: string;
 }
 

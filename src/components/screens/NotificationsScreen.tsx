@@ -14,6 +14,7 @@ import {
   Check,
 } from 'lucide-react';
 import { NotificationItem } from '../../types';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface NotificationsScreenProps {
   notifications: NotificationItem[];
@@ -36,6 +37,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 }) => {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [notificationToDelete, setNotificationToDelete] = useState<NotificationItem | null>(null);
 
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -368,7 +370,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       <span>{item.read ? 'Mark unread' : 'Mark read'}</span>
                     </button>
                     <button
-                      onClick={() => handleDelete(item.id)}
+                      onClick={() => setNotificationToDelete(item)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
                       title="Delete notification"
                     >
@@ -381,6 +383,22 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           ))
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(notificationToDelete)}
+        title="Delete notification?"
+        description={
+          notificationToDelete
+            ? `"${notificationToDelete.title}" will be removed from your notification history.`
+            : ''
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (notificationToDelete) handleDelete(notificationToDelete.id);
+          setNotificationToDelete(null);
+        }}
+        onCancel={() => setNotificationToDelete(null)}
+      />
     </div>
   );
 };

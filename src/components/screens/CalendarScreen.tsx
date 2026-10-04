@@ -24,6 +24,7 @@ import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils
 import { SCHEDULE_EVENT_COLORS, SCHEDULE_EVENT_EMOJI } from '../../services/calendarSync';
 import { AIOrchestrator } from '../../services/aiOrchestrator';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface CalendarScreenProps {
   schedule: ScheduleEvent[];
@@ -136,6 +137,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   });
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ScheduleEvent | null>(null);
+  const [eventToDelete, setEventToDelete] = useState<ScheduleEvent | null>(null);
 
   // Quick AI Assistant in Calendar
   const [aiInput, setAiInput] = useState('');
@@ -969,7 +971,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteEvent(event.id);
+                      setEventToDelete(event);
                     }}
                     className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     title="Remove event"
@@ -1156,6 +1158,22 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(eventToDelete)}
+        title="Delete calendar event?"
+        description={
+          eventToDelete
+            ? `"${eventToDelete.title}" will be removed from your calendar. This can't be undone.`
+            : ''
+        }
+        confirmLabel="Delete event"
+        onConfirm={() => {
+          if (eventToDelete) onDeleteEvent(eventToDelete.id);
+          setEventToDelete(null);
+        }}
+        onCancel={() => setEventToDelete(null)}
+      />
     </div>
   );
 };

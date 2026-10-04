@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, BrainCircuit, Trash2, Plus, Sparkles, Check } from 'lucide-react';
 import { AIMemoryItem } from '../../types';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface AIMemoryModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export const AIMemoryModal: React.FC<AIMemoryModalProps> = ({
 }) => {
   const [newStatement, setNewStatement] = useState('');
   const [newCategory, setNewCategory] = useState<'preference' | 'schedule' | 'strength' | 'weakness'>('preference');
+  const [memoryToDelete, setMemoryToDelete] = useState<AIMemoryItem | null>(null);
 
   if (!isOpen) return null;
 
@@ -71,7 +73,7 @@ export const AIMemoryModal: React.FC<AIMemoryModalProps> = ({
               </div>
 
               <button
-                onClick={() => onDeleteMemory(item.id)}
+                onClick={() => setMemoryToDelete(item)}
                 className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
                 title="Forget this memory"
               >
@@ -116,6 +118,22 @@ export const AIMemoryModal: React.FC<AIMemoryModalProps> = ({
           </div>
         </form>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(memoryToDelete)}
+        title="Forget this memory?"
+        description={
+          memoryToDelete
+            ? `StudyAI will stop remembering: "${memoryToDelete.statement}"`
+            : ''
+        }
+        confirmLabel="Forget"
+        onConfirm={() => {
+          if (memoryToDelete) onDeleteMemory(memoryToDelete.id);
+          setMemoryToDelete(null);
+        }}
+        onCancel={() => setMemoryToDelete(null)}
+      />
     </div>
   );
 };

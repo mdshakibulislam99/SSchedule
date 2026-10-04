@@ -3,6 +3,8 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
   User as FirebaseUser,
@@ -39,13 +41,39 @@ async function testConnection() {
 }
 testConnection();
 
+// Popup failures that a full-page redirect can recover from.
+const POPUP_FALLBACK_CODES = [
+  'auth/popup-blocked',
+  'auth/cancelled-popup-request',
+  'auth/operation-not-supported-in-this-environment',
+  'auth/internal-error',
+];
+
 // Sign in with Google
 export async function signInWithGoogle(): Promise<FirebaseUser | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
   } catch (error: any) {
-    console.error('Google Sign-In failed:', error);
+    const code = String(error?.code || '');
+    console.error('Google Sign-In failed:', code || error?.message, error);
+    if (POPUP_FALLBACK_CODES.includes(code)) {
+      // Popups are unavailable here (blocked, embedded view, or partitioned
+      // storage). Fall back to a full-page redirect, which isn't popup-gated.
+      await signInWithRedirect(auth, googleProvider);
+      return null;
+    }
+    throw error;
+  }
+}
+
+// Completes a sign-in that used the redirect fallback (call once on load).
+export async function completeGoogleRedirect(): Promise<FirebaseUser | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    return result?.user ?? null;
+  } catch (error: any) {
+    console.error('Google redirect sign-in failed:', error?.code || error?.message, error);
     throw error;
   }
 }

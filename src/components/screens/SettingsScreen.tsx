@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, NotificationSettings } from '../../types';
 import { StudyStorage } from '../../utils/storage';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface SettingsScreenProps {
   user: UserProfile;
@@ -52,6 +53,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onResetData,
 }) => {
   const [backupSuccess, setBackupSuccess] = React.useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = React.useState(false);
 
   const handleDownloadBackup = () => {
     const jsonStr = StudyStorage.exportBackup();
@@ -288,13 +290,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       {/* Reset Seed Demo Data Button */}
       <div className="pt-2">
         <button
-          onClick={onResetData}
+          onClick={() => setShowResetConfirm(true)}
           className="w-full py-3 rounded-2xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Reset Sample Demo Data</span>
         </button>
       </div>
+
+      <ConfirmDialog
+        isOpen={showResetConfirm}
+        title="Reset all app data?"
+        description="This clears every saved task, course, schedule event, note, and preference on this device and reloads the app. This can't be undone."
+        confirmLabel="Reset everything"
+        onConfirm={onResetData}
+        onCancel={() => setShowResetConfirm(false)}
+      />
     </div>
   );
 };

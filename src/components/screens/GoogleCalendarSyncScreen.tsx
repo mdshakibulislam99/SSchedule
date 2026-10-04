@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { GoogleCalendarSyncState } from '../../types';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface GoogleCalendarSyncScreenProps {
   calendarSync: GoogleCalendarSyncState;
@@ -42,6 +43,7 @@ export const GoogleCalendarSyncScreen: React.FC<GoogleCalendarSyncScreenProps> =
 }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -142,7 +144,7 @@ export const GoogleCalendarSyncScreen: React.FC<GoogleCalendarSyncScreenProps> =
               <span>{needReconnect ? 'Reconnect & Sync' : 'Sync now'}</span>
             </button>
             <button
-              onClick={() => run(onDisconnect)}
+              onClick={() => setShowDisconnectConfirm(true)}
               disabled={busy}
               className="px-4 py-3 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
             >
@@ -206,6 +208,20 @@ export const GoogleCalendarSyncScreen: React.FC<GoogleCalendarSyncScreenProps> =
           <li>Add your app origin (e.g. <code className="font-mono text-[10px] bg-slate-200/70 dark:bg-slate-800 px-1 py-0.5 rounded">http://localhost:3000</code>) to the OAuth client's authorized JavaScript origins.</li>
         </ol>
       </section>
+
+      <ConfirmDialog
+        isOpen={showDisconnectConfirm}
+        title="Disconnect Google Calendar?"
+        description="Syncing between StudyAI and your Google Calendar will stop. Your existing calendar events are not deleted."
+        confirmLabel="Disconnect"
+        variant="warning"
+        icon="alert"
+        onConfirm={() => {
+          setShowDisconnectConfirm(false);
+          run(onDisconnect);
+        }}
+        onCancel={() => setShowDisconnectConfirm(false)}
+      />
     </div>
   );
 };

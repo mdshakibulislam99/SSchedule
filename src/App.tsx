@@ -11,6 +11,7 @@ import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
 import { VoiceAIModal } from './components/mobile/VoiceAIModal';
 import {
   signInWithGoogle,
+  completeGoogleRedirect,
   signOutUser,
   onAuthChange,
   syncUserProfileToFirestore,
@@ -222,6 +223,14 @@ export default function App() {
     action();
   };
 
+  // Finish a Google sign-in that used the redirect fallback
+  useEffect(() => {
+    completeGoogleRedirect().catch((err) => {
+      const code = String(err?.code || err?.message || 'unknown');
+      showToast(`Google Sign-In failed (${code}).`);
+    });
+  }, []);
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthChange(async (fUser) => {
@@ -319,8 +328,9 @@ export default function App() {
         playChime('success');
       }
     } catch (err: any) {
-      if (!err?.message?.includes('closed-by-user')) {
-        showToast('Google Sign-In was cancelled or failed.');
+      const code = String(err?.code || err?.message || 'unknown');
+      if (!code.includes('popup-closed-by-user')) {
+        showToast(`Google Sign-In failed (${code}).`);
       }
     }
   };

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Send,
   Mic,
+  History,
   Plus,
   Menu,
   Sparkles,
@@ -25,6 +26,8 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
+import { MarkdownMessage } from '../common/MarkdownMessage';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import {
   AIMessage,
   AIActionProposal,
@@ -89,6 +92,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [conversations, setConversations] = useState<AIConversation[]>(() => StudyStorage.getConversations());
   const [currentConversationId, setCurrentConversationId] = useState<string>(() => `conv-${Date.now()}`);
+  const [conversationToDelete, setConversationToDelete] = useState<AIConversation | null>(null);
 
   // Helper to extract clean concise course title, e.g. CS101, Calculus
   const getShortCourseTitle = (c: Course): string => {
@@ -257,6 +261,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       title,
       messages,
       contextTaskId: attachedTask?.id,
+      courseId: selectedCourseId === 'all' ? undefined : selectedCourseId,
       updatedAt: new Date().toISOString(),
     };
 
@@ -305,16 +310,15 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   const handleLoadConversation = (conv: AIConversation) => {
     setCurrentConversationId(conv.id);
     setMessages(conv.messages);
-    if (conv.contextTaskId) {
-      const match = allTasks.find((t) => t.id === conv.contextTaskId);
-      if (match) setAttachedTask(match);
-    }
+    setSelectedCourseId(conv.courseId || 'all');
+    setAttachedMaterial(null);
+    const task = conv.contextTaskId ? allTasks.find((t) => t.id === conv.contextTaskId) || null : null;
+    setAttachedTask(task);
     setIsHistoryOpen(false);
   };
 
   // Delete conversation from history
-  const handleDeleteConversation = (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteConversation = (convId: string) => {
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== convId);
       StudyStorage.saveConversations(next);
@@ -411,7 +415,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         messageToSend = `[ATTACHED STUDY MATERIAL: "${attachedMaterial.name}"]\n${attachedMaterial.content.slice(0, 3000)}\n\nStudent Query: ${text}`;
       }
 
-      const aiResponse = await AIOrchestrator.chatWithContext(messageToSend, messages, context, config, true);
+      const aiResponse = await AIOrchestrator.chatWithContext(messageToSend, messages, context, config);
 
       const aiMsg: AIMessage = {
         id: `ai-${Date.now()}`,
@@ -423,16 +427,17 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       };
 
       setMessages((prev) => [...prev, aiMsg]);
-    } catch {
-      const fallbackMsg: AIMessage = {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error || 'Unknown error');
+      const isLimitError = /429|quota|rate.?limit|resource_exhausted|too many requests|limit reached/i.test(errorMessage);
+      const errorMsg: AIMessage = {
         id: `ai-err-${Date.now()}`,
         sender: 'ai',
-        text: focusedCourse
-          ? `I'm focused on ${focusedCourse.code}. What specific topic or problem would you like to review?`
-          : `I've checked your schedule and tasks. What would you like to tackle next?`,
+        text: `${isLimitError ? 'AI limit reached' : 'AI request failed'}: ${errorMessage || 'The provider returned no details.'}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isError: true,
       };
-      setMessages((prev) => [...prev, fallbackMsg]);
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsTyping(false);
     }
@@ -512,7 +517,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
           </div>
         </div>
 
-        {/* Right side controls: General Tab with Three Lines Menu to open Chat History sidebar */}
+        {/* Right side controls: History button to open the Chat History sidebar */}
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
@@ -521,21 +526,8 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
             title="Open Chat History Sidebar"
             aria-label="View Chat History"
           >
-            <Menu className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-500 shrink-0" />
-            <span>{focusedCourse ? focusedCourse.code : 'General'}</span>
-            {focusedCourse && (
-              <span
-                role="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSelectScope('all');
-                }}
-                className="hover:text-rose-500 cursor-pointer ml-0.5 text-slate-400 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                title="Reset to General Study"
-              >
-                <X className="w-3 h-3" />
-              </span>
-            )}
+            <History className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-500 shrink-0" />
+            <span>History</span>
           </button>
         </div>
       </header>
@@ -635,7 +627,10 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={(e) => handleDeleteConversation(conv.id, e)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConversationToDelete(conv);
+                        }}
                         className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-white dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
                         title="Delete conversation"
                       >
@@ -715,10 +710,12 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                   className={`p-3.5 rounded-[1.25rem] text-xs sm:text-sm leading-relaxed ${
                     isUser
                       ? 'bg-indigo-600 text-white rounded-br-sm shadow-sm'
-                      : 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-sm shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
+                      : msg.isError
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 rounded-bl-sm shadow-sm'
+                        : 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-sm shadow-[0_6px_18px_rgba(15,23,42,0.04)]'
                   }`}
                 >
-                  {msg.text}
+                  <MarkdownMessage text={msg.text} isUser={isUser} />
                 </div>
 
                 {!isUser && (
@@ -1262,6 +1259,22 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(conversationToDelete)}
+        title="Delete chat?"
+        description={
+          conversationToDelete
+            ? `"${conversationToDelete.title}" and its messages will be permanently removed.`
+            : ''
+        }
+        confirmLabel="Delete chat"
+        onConfirm={() => {
+          if (conversationToDelete) handleDeleteConversation(conversationToDelete.id);
+          setConversationToDelete(null);
+        }}
+        onCancel={() => setConversationToDelete(null)}
+      />
     </div>
   );
 };

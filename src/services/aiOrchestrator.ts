@@ -17,7 +17,7 @@ import {
   CourseKeyTerm,
   ResourceAIContext,
 } from '../types';
-import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../utils/dates';
+import { getLocalDateKey } from '../utils/dates';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -252,8 +252,18 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     }
 
     const todayDateKey = getLocalDateKey();
+    const recentHistory = history
+      .filter((message) => !message.isError && (message.sender === 'user' || (message.sender === 'ai' && message.id.startsWith('ai-'))))
+      .slice(-12)
+      .map((message) => `${message.sender === 'user' ? 'Student' : 'StudyAI'}: ${message.text.slice(0, 2000)}`)
+      .join('\n');
+    const conversationPrompt = recentHistory
+      ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
+      : userMessage;
     const systemInstruction = `${contextPrompt}
 Today's Date: ${todayDateKey}.
+Use the recent conversation history to understand references and follow-up questions. Continue the established topic unless the student clearly changes subjects. Answer the specific question first; do not redirect to scheduling or generic study suggestions unless requested. Keep replies consistent with prior explanations, and ask a brief clarifying question only when the thread does not provide enough context.
+Format your reply with clean markdown: put each list item on its own line (numbered items as "1. ", bullet items as "- "), bold key terms with **double asterisks**, and use short headings when helpful. Never run list items together in one paragraph.
 Respond warmly, concisely, and supportively. Keep responses focused on actionable student study tactics.
 ${enableSearch ? 'Google Search Grounding is enabled. Provide factual, cited answers.' : ''}
 
@@ -285,9 +295,9 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
       let rawText = '';
       let citationsText = '';
 
-      if (enableSearch) {
+      if (enableSearch && provider.type === 'gemini') {
         const gemini = new GeminiAIProvider(config.apiKeys.gemini);
-        const groundedRes = await gemini.generateGroundedText(userMessage, systemInstruction);
+        const groundedRes = await gemini.generateGroundedText(conversationPrompt, systemInstruction);
         rawText = groundedRes.text;
 
         if (groundedRes.sources && groundedRes.sources.length > 0) {
@@ -298,7 +308,7 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
               .join('\n');
         }
       } else {
-        rawText = await provider.generateText(userMessage, systemInstruction);
+        rawText = await provider.generateText(conversationPrompt, systemInstruction);
       }
 
       // Extract actions if present
@@ -359,191 +369,9 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
           'Explain key concepts',
         ],
       };
-    } catch (err: any) {
-      console.warn('AI chat error, using intelligent local orchestrator:', err);
-      // High-precision heuristic fallback with action proposal
-      const lowerMessage = userMessage.toLowerCase();
-      const detectedDate = parseNaturalDate(userMessage);
-      const { startTime, endTime } = parseNaturalTime(userMessage);
-
-      // 1. Move / Reschedule Event
-      if (lowerMessage.includes('move') || lowerMessage.includes('reschedule') || lowerMessage.includes('change time')) {
-        let targetTitle = 'Study Session';
-        if (context.schedule && context.schedule.length > 0) {
-          const match = context.schedule.find((s) => lowerMessage.includes(s.title.toLowerCase()));
-          if (match) targetTitle = match.title;
-          else targetTitle = context.schedule[0].title;
-        }
-
-        return {
-          text: `I can reschedule "${targetTitle}" to ${detectedDate} from ${startTime} to ${endTime}. Confirm below to update your calendar.`,
-          actions: [
-            {
-              id: `act-${Date.now()}`,
-              type: 'edit_schedule',
-              title: `Reschedule: ${targetTitle}`,
-              description: `Move to ${detectedDate} · ${startTime}–${endTime}`,
-              details: {
-                targetEventTitle: targetTitle,
-                date: detectedDate,
-                startTime,
-                endTime,
-                newTitle: targetTitle,
-              },
-              status: 'pending',
-            },
-          ],
-          suggestedChips: ['Confirm & Apply', 'Pick another day', 'Add 30 minutes'],
-        };
-      }
-
-      // 2. Delete Task or Schedule Event
-      if (lowerMessage.startsWith('delete') || lowerMessage.startsWith('remove') || lowerMessage.includes('cancel')) {
-        const isEvent = lowerMessage.includes('event') || lowerMessage.includes('meeting') || lowerMessage.includes('block') || lowerMessage.includes('class');
-        const cleanTarget = userMessage.replace(/^(please\s+)?(delete|remove|cancel)\s+(the\s+)?(task|event|block|session)?\s*/i, '').trim();
-
-        if (isEvent) {
-          return {
-            text: `I've prepared to remove the calendar event "${cleanTarget || 'Event'}". Confirm below to proceed.`,
-            actions: [
-              {
-                id: `act-${Date.now()}`,
-                type: 'delete_schedule',
-                title: `Remove Event: ${cleanTarget || 'Event'}`,
-                description: `Remove this block from your calendar.`,
-                details: { targetEventTitle: cleanTarget },
-                status: 'pending',
-              },
-            ],
-            suggestedChips: ['Confirm removal', 'Keep it'],
-          };
-        } else {
-          return {
-            text: `I've prepared to remove the task "${cleanTarget || 'Task'}". Confirm below to proceed.`,
-            actions: [
-              {
-                id: `act-${Date.now()}`,
-                type: 'delete_task',
-                title: `Delete Task: ${cleanTarget || 'Task'}`,
-                description: `Remove this task from your plan.`,
-                details: { targetTaskTitle: cleanTarget },
-                status: 'pending',
-              },
-            ],
-            suggestedChips: ['Confirm removal', 'Keep it'],
-          };
-        }
-      }
-
-      // 3. Edit Task
-      if (lowerMessage.startsWith('edit task') || lowerMessage.includes('change deadline') || lowerMessage.includes('change task')) {
-        let targetTitle = context.currentTask ? context.currentTask.title : 'Assignment';
-        if (context.tasks && context.tasks.length > 0) {
-          const match = context.tasks.find((t) => lowerMessage.includes(t.title.toLowerCase()));
-          if (match) targetTitle = match.title;
-        }
-
-        return {
-          text: `I prepared an update for "${targetTitle}". Confirm to apply the new schedule and deadline.`,
-          actions: [
-            {
-              id: `act-${Date.now()}`,
-              type: 'edit_task',
-              title: `Update Task: ${targetTitle}`,
-              description: `Date: ${detectedDate} · Time: ${startTime} · Priority: High`,
-              details: {
-                targetTaskTitle: targetTitle,
-                newTitle: targetTitle,
-                scheduledDate: detectedDate,
-                scheduledStartTime: startTime,
-                deadline: detectedDate,
-                priority: 'high',
-              },
-              status: 'pending',
-            },
-          ],
-          suggestedChips: ['Confirm update', 'Change to medium priority'],
-        };
-      }
-
-      // 4. Create Task
-      if (/(add|create|remind).*(task|assignment|todo|homework|project|paper)/.test(lowerMessage)) {
-        const isRecurring = lowerMessage.includes('daily') || lowerMessage.includes('every day');
-        let title = userMessage
-          .replace(/^(please\s+)?(add|create|remind me to|schedule)\s+(a\s+)?(daily\s+|every day\s+)?/i, '')
-          .replace(/^(task|todo|assignment|homework)\s+(to\s+)?/i, '')
-          .replace(/\s+(for|on|at|due)\s+.*$/i, '')
-          .trim() || 'New Study Task';
-
-        let courseCode = context.currentCourse ? context.currentCourse.code : 'CS101';
-        if (lowerMessage.includes('math')) courseCode = 'Math';
-        if (lowerMessage.includes('cs101') || lowerMessage.includes('algorithm')) courseCode = 'CS101';
-
-        return {
-          text: `I prepared "${title}" for ${courseCode} on ${detectedDate} at ${startTime}. Confirm below to add it to your plan and calendar.`,
-          actions: [
-            {
-              id: `act-${Date.now()}`,
-              type: 'create_task',
-              title,
-              description: `Course: ${courseCode} · Due: ${detectedDate} · Planned: ${startTime}`,
-              details: {
-                title,
-                courseCode,
-                deadline: detectedDate,
-                scheduledDate: detectedDate,
-                scheduledStartTime: startTime,
-                recurrence: isRecurring ? 'daily' : 'none',
-                reminderEnabled: true,
-                reminderMinutes: 30,
-                estimatedMinutes: 45,
-                priority: 'high',
-              },
-              status: 'pending',
-            },
-          ],
-          suggestedChips: ['Confirm & Add', 'Change time', 'Make it weekly'],
-        };
-      }
-
-      // 5. Schedule Block / Study Session
-      if (lowerMessage.includes('schedule') || lowerMessage.includes('study') || lowerMessage.includes('add block') || lowerMessage.includes('plan')) {
-        let blockTitle = userMessage
-          .replace(/^(please\s+)?(schedule|plan|add|book)\s+(a\s+)?/i, '')
-          .replace(/\s+(for|on|at|from)\s+.*$/i, '')
-          .trim();
-        if (!blockTitle || blockTitle.length < 3) {
-          blockTitle = context.currentTask ? `${context.currentTask.title} Focus` : 'Deep Study Session';
-        }
-
-        return {
-          text: `I scheduled "${blockTitle}" on ${detectedDate} from ${startTime} to ${endTime}. Confirm below to lock it into your calendar.`,
-          actions: [
-            {
-              id: `act-${Date.now()}`,
-              type: 'add_schedule',
-              title: blockTitle,
-              description: `${detectedDate} · ${startTime}–${endTime} (Focus block)`,
-              details: {
-                title: blockTitle,
-                startTime,
-                endTime,
-                date: detectedDate,
-                type: 'study',
-                courseCode: context.currentCourse?.code,
-                color: '#6366F1',
-              },
-              status: 'pending',
-            },
-          ],
-          suggestedChips: ['Confirm & Add', 'Choose Another Time', 'Adjust to 1 Hour'],
-        };
-      }
-
-      return {
-        text: `I reviewed your deadlines and timetable. Would you like me to schedule a study session, add a new task, or adjust an existing block on your calendar?`,
-        suggestedChips: ['Schedule study for tomorrow', 'Add a new task', 'Reschedule upcoming session'],
-      };
+    } catch (err) {
+      console.error('AI chat request failed:', err);
+      throw err;
     }
   },
 

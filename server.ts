@@ -47,6 +47,9 @@ app.post('/api/ai/gemini', async (req: Request, res: Response) => {
     }
 
     const customKey = req.headers['x-gemini-key'] as string | undefined;
+    if (!customKey && !process.env.GEMINI_API_KEY) {
+      return res.status(400).json({ error: 'Gemini API key is missing. Add a key in AI Provider settings or configure GEMINI_API_KEY.' });
+    }
     const ai = getGeminiClient(customKey);
 
     // If search grounding is requested, use gemini-3.5-flash with googleSearch tool
@@ -109,9 +112,12 @@ app.post('/api/ai/gemini', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Gemini API error:', error);
-    return res.status(500).json({
-      error: error?.message || 'Failed to generate response with Gemini',
-    });
+    const message = error?.message || 'Failed to generate response with Gemini';
+    const status = Number(error?.status || error?.statusCode) === 429 ||
+      /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
+      ? 429
+      : 500;
+    return res.status(status).json({ error: message });
   }
 });
 
