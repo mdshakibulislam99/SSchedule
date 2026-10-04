@@ -21,6 +21,8 @@ import {
   FileText,
   CheckSquare,
   MessageSquare,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
 import {
@@ -139,6 +141,42 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  // Text-to-Speech (Audio Read Aloud) state
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const handleSpeak = (msgId: string, text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    if (speakingMsgId === msgId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    // Strip markdown formatting symbols for clean speech reading
+    const cleanSpeech = text
+      .replace(/[#*_`~>-]/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.onend = () => setSpeakingMsgId(null);
+    utterance.onerror = () => setSpeakingMsgId(null);
+    setSpeakingMsgId(msgId);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const focusedCourse = useMemo(() => {
     if (selectedCourseId === 'all') return null;
@@ -682,6 +720,26 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                 >
                   {msg.text}
                 </div>
+
+                {!isUser && (
+                  <button
+                    type="button"
+                    onClick={() => handleSpeak(msg.id, msg.text)}
+                    className={`p-1.5 rounded-xl transition-all self-end mb-1 cursor-pointer shrink-0 ${
+                      speakingMsgId === msg.id
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                    title={speakingMsgId === msg.id ? 'Stop reading' : 'Read aloud'}
+                    aria-label={speakingMsgId === msg.id ? 'Stop reading' : 'Read aloud'}
+                  >
+                    {speakingMsgId === msg.id ? (
+                      <VolumeX className="w-3.5 h-3.5 animate-pulse" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Action Proposal Cards */}
@@ -972,34 +1030,31 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
 
         {/* Input Bar Row */}
         <div className="flex items-center gap-2">
-          {/* Requirement 3: Voice Button Outside & Left of Chat Input with paired + Icon */}
-          <div className="flex items-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs p-0.5 shrink-0">
-            {/* Simple Voice Button */}
-            <button
-              type="button"
-              onClick={onOpenVoiceModal}
-              className="h-9 px-2.5 rounded-xl flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-indigo-600 hover:bg-indigo-50/80 dark:hover:bg-indigo-950/50 transition-all active:scale-95 cursor-pointer"
-              title="Voice AI Conversation (Speak)"
-              aria-label="Speak with voice input"
-            >
-              <Mic className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            </button>
+          {/* Standalone Voice Input Area / Button outside */}
+          <button
+            type="button"
+            onClick={onOpenVoiceModal}
+            className="w-10 h-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs flex items-center justify-center text-slate-700 dark:text-slate-200 hover:text-indigo-600 hover:bg-indigo-50/80 dark:hover:bg-indigo-950/50 transition-all active:scale-95 shrink-0 cursor-pointer"
+            title="Voice AI Conversation (Speak)"
+            aria-label="Speak with voice input"
+          >
+            <Mic className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+          </button>
 
-            {/* Subtle Divider between Voice & + */}
-            <div className="w-[1px] h-4 bg-slate-200 dark:bg-slate-800 my-auto" />
-
-            {/* Plus (+) Button for Upload Data/Materials & Area Selection */}
-            <div className="relative" ref={plusMenuRef}>
+          {/* Message Input Container (With + Button INSIDE the text area) */}
+          <div className="flex-1 flex items-center gap-2 p-1.5 pl-2 pr-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm focus-within:border-indigo-500 transition-colors">
+            {/* Plus (+) Button inside the text area */}
+            <div className="relative shrink-0" ref={plusMenuRef}>
               <button
                 type="button"
                 onClick={() => {
                   setIsPlusMenuOpen((prev) => !prev);
                   setPlusMenuTab('main');
                 }}
-                className={`h-9 px-2 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer ${
+                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer ${
                   isPlusMenuOpen
                     ? 'bg-indigo-600 text-white'
-                    : 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50/80 dark:hover:bg-indigo-950/50'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
                 title="Add materials, upload data, or select study area"
                 aria-label="Upload materials or select topic"
@@ -1177,10 +1232,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Message Input Container */}
-          <div className="flex-1 flex items-center gap-2 p-1.5 px-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm focus-within:border-indigo-500 transition-colors">
             <input
               type="text"
               placeholder={
@@ -1195,7 +1247,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSend();
               }}
-              className="flex-1 bg-transparent text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
+              className="flex-1 bg-transparent text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none min-w-0"
             />
 
             <button

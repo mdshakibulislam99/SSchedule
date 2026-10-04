@@ -17,6 +17,7 @@ import {
   Bot,
   Zap,
   CheckCircle2,
+  Download,
 } from 'lucide-react';
 import { GoogleCalendarSyncState, ScheduleEvent, ScheduleEventType, Task, AIProviderConfig, AIActionProposal } from '../../types';
 import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
@@ -60,6 +61,52 @@ function durationLabel(start: string, end: string): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return [h ? `${h}h` : null, m ? `${m}m` : null].filter(Boolean).join(' ') || '0m';
+}
+
+function exportScheduleToICS(events: ScheduleEvent[]) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const now = new Date();
+  const timeStamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+
+  const icsLines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//ChronoPulse AI//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:ChronoPulse Schedule',
+  ];
+
+  events.forEach((ev) => {
+    const dStr = (ev.date || getLocalDateKey()).replace(/-/g, '');
+    const sStr = (ev.startTime || '09:00').replace(/:/g, '') + '00';
+    const eStr = (ev.endTime || '10:00').replace(/:/g, '') + '00';
+
+    icsLines.push('BEGIN:VEVENT');
+    icsLines.push(`UID:${ev.id}@chronopulse.ai`);
+    icsLines.push(`DTSTAMP:${timeStamp}`);
+    icsLines.push(`DTSTART:${dStr}T${sStr}`);
+    icsLines.push(`DTEND:${dStr}T${eStr}`);
+    icsLines.push(`SUMMARY:${ev.title.replace(/[,;\\]/g, ' ')}`);
+    if (ev.location) {
+      icsLines.push(`LOCATION:${ev.location.replace(/[,;\\]/g, ' ')}`);
+    }
+    icsLines.push(`DESCRIPTION:${(ev.type || 'Study').toUpperCase()} Block`);
+    icsLines.push('STATUS:CONFIRMED');
+    icsLines.push('END:VEVENT');
+  });
+
+  icsLines.push('END:VCALENDAR');
+
+  const blob = new Blob([icsLines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `chronopulse_schedule_${getLocalDateKey()}.ics`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({
@@ -311,6 +358,21 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   }, [selectedDate, todayKey]);
 
   const dayEvents = eventsByDate[selectedDate] || [];
+
+  const conflictingEventIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (let i = 0; i < dayEvents.length; i++) {
+      for (let j = i + 1; j < dayEvents.length; j++) {
+        const e1 = dayEvents[i];
+        const e2 = dayEvents[j];
+        if (e1.startTime < e2.endTime && e1.endTime > e2.startTime) {
+          ids.add(e1.id);
+          ids.add(e2.id);
+        }
+      }
+    }
+    return ids;
+  }, [dayEvents]);
   const monthEventCount = useMemo(
     () =>
       schedule.filter((e) => {
@@ -481,15 +543,24 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           <button
             onClick={onOpenSyncSettings}
             title="Google Calendar settings"
-            className="w-8 h-8 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors"
+            className="w-8 h-8 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors cursor-pointer"
           >
             <Settings2 className="w-4 h-4" />
           </button>
 
           <button
+            onClick={() => exportScheduleToICS(schedule)}
+            title="Export Schedule as .ics file (Apple, Outlook, Google Calendar)"
+            className="w-8 h-8 rounded-full text-slate-500 dark:text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+            aria-label="Export schedule as ics file"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+
+          <button
             onClick={openAddModal}
             title="Add block"
-            className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md active:scale-95 transition-all shrink-0"
+            className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md active:scale-95 transition-all shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -640,12 +711,12 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
 
       {/* AI Schedule & Task Assistant Bar */}
       <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-indigo-50/90 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 shadow-xs space-y-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200">
-            <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>AI Schedule & Task Assistant</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200 min-w-0">
+            <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <span className="truncate">AI Schedule & Task Assistant</span>
           </div>
-          <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded-full border border-indigo-200/60 dark:border-indigo-800">
+          <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded-full border border-indigo-200/60 dark:border-indigo-800 shrink-0 whitespace-nowrap">
             Chat to Add & Reschedule
           </span>
         </div>
@@ -696,21 +767,21 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           <button
             type="button"
             onClick={() => handleAskAIInCalendar('Schedule a 2 hour study session tomorrow at 3pm')}
-            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0 whitespace-nowrap"
           >
             ⚡ 2h Study Tomorrow 3pm
           </button>
           <button
             type="button"
             onClick={() => handleAskAIInCalendar('Add 30 min focus review today at 4pm')}
-            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0 whitespace-nowrap"
           >
             🎯 30m Review Today 4pm
           </button>
           <button
             type="button"
             onClick={() => handleAskAIInCalendar('Add task finish CS101 assignment due Friday at 11:59pm')}
-            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0 whitespace-nowrap"
           >
             📋 Add Task due Friday
           </button>
@@ -782,6 +853,16 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           </span>
         </div>
 
+        {/* Schedule Conflict Warning */}
+        {conflictingEventIds.size > 0 && (
+          <div className="p-2.5 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2 animate-fade-in">
+            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="leading-tight">
+              <strong>Schedule overlap:</strong> {conflictingEventIds.size} events on this day overlap. Use quick adjust (-30m / +30m) to resolve.
+            </span>
+          </div>
+        )}
+
         {dayEvents.length === 0 ? (
           <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800 text-center">
             <Clock className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
@@ -819,103 +900,127 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                   openEditModal(event);
                 }
               }}
-              className="group p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center gap-3 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all cursor-pointer"
+              className="group p-3 sm:p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs hover:border-indigo-300 dark:hover:border-indigo-800 transition-all cursor-pointer"
             >
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0"
-                style={{ backgroundColor: `${event.color}18` }}
-              >
-                {SCHEDULE_EVENT_EMOJI[event.type] || '📌'}
+              {/* Top Row: Icon + Event Details + Edit/Delete */}
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 mt-0.5"
+                    style={{ backgroundColor: `${event.color}18` }}
+                  >
+                    {SCHEDULE_EVENT_EMOJI[event.type] || '📌'}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {event.title}
+                      </span>
+                      {event.source === 'google' && (
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded shrink-0">
+                          Google
+                        </span>
+                      )}
+                      {conflictingEventIds.has(event.id) && (
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.5 rounded shrink-0">
+                          ⚠️ Overlap
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      <div className="flex items-center gap-1 shrink-0 font-medium tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>
+                          {event.startTime} – {event.endTime}
+                        </span>
+                      </div>
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums shrink-0"
+                        style={{ backgroundColor: `${event.color}18`, color: event.color }}
+                      >
+                        {durationLabel(event.startTime, event.endTime)}
+                      </span>
+                      {event.location && (
+                        <span className="truncate text-slate-400 text-[11px] max-w-[140px] sm:max-w-xs">
+                          📍 {event.location}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Edit & Delete Actions */}
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEditModal(event);
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Edit event"
+                    aria-label={`Edit ${event.title}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteEvent(event.id);
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Remove event"
+                    aria-label={`Delete ${event.title}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
-              <div className="min-w-0 flex-1">
+              {/* Bottom Quick-Adjust Strip */}
+              <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-medium text-slate-400 shrink-0">
+                  Quick reschedule:
+                </span>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                    {event.title}
-                  </span>
-                  {event.source === 'google' && (
-                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded shrink-0">
-                      Google
-                    </span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleNudgeEventTime(event, -30);
+                    }}
+                    className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                    title="Move 30 minutes earlier"
+                  >
+                    -30m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleNudgeEventTime(event, 30);
+                    }}
+                    className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                    title="Move 30 minutes later"
+                  >
+                    +30m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleMoveToTomorrow(event);
+                    }}
+                    className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Move to tomorrow"
+                  >
+                    <Zap className="w-2.5 h-2.5" />
+                    <span>+1d</span>
+                  </button>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  <Clock className="w-3 h-3 shrink-0" />
-                  <span className="font-semibold tabular-nums text-slate-600 dark:text-slate-300">
-                    {event.startTime} – {event.endTime}
-                  </span>
-                  {event.location && (
-                    <>
-                      <span>·</span>
-                      <span className="truncate">{event.location}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="text-right shrink-0">
-                <div className="text-[11px] font-bold tabular-nums" style={{ color: event.color }}>
-                  {durationLabel(event.startTime, event.endTime)}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleNudgeEventTime(event, -30);
-                  }}
-                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Move 30 minutes earlier"
-                >
-                  -30m
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleNudgeEventTime(event, 30);
-                  }}
-                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Move 30 minutes later"
-                >
-                  +30m
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMoveToTomorrow(event);
-                  }}
-                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-0.5"
-                  title="Move to tomorrow"
-                >
-                  <Zap className="w-2.5 h-2.5" />
-                  <span>+1d</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openEditModal(event);
-                  }}
-                  className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  title="Edit event"
-                  aria-label={`Edit ${event.title}`}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteEvent(event.id);
-                  }}
-                  className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  title="Remove event"
-                  aria-label={`Delete ${event.title}`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
               </div>
             </div>
           ))

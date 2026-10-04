@@ -13,8 +13,12 @@ import {
   CalendarClock,
   LogOut,
   RotateCcw,
+  Download,
+  UploadCloud,
+  Check,
 } from 'lucide-react';
 import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, NotificationSettings } from '../../types';
+import { StudyStorage } from '../../utils/storage';
 
 interface SettingsScreenProps {
   user: UserProfile;
@@ -47,6 +51,40 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   isDark,
   onResetData,
 }) => {
+  const [backupSuccess, setBackupSuccess] = React.useState<string | null>(null);
+
+  const handleDownloadBackup = () => {
+    const jsonStr = StudyStorage.exportBackup();
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chronopulse_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setBackupSuccess('Backup downloaded successfully!');
+    setTimeout(() => setBackupSuccess(null), 3500);
+  };
+
+  const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      const success = StudyStorage.importBackup(text);
+      if (success) {
+        setBackupSuccess('Backup restored successfully! Reloading workspace...');
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        alert('Invalid backup file. Please select a valid ChronoPulse backup JSON file.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Top Header */}
@@ -206,11 +244,52 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
       </div>
 
+      {/* Data Backup & Restore */}
+      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Workspace Backup & Restore</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Export your study data as a JSON file or restore from a previous backup.
+            </p>
+          </div>
+        </div>
+
+        {backupSuccess && (
+          <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-1.5 animate-fade-in">
+            <Check className="w-4 h-4" />
+            <span>{backupSuccess}</span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleDownloadBackup}
+            className="flex-1 py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download Backup (.json)</span>
+          </button>
+
+          <label className="flex-1 py-2 px-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-600 dark:text-indigo-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-indigo-200/60 dark:border-indigo-800">
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span>Restore Backup</span>
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleRestoreFile}
+              className="hidden"
+            />
+          </label>
+        </div>
+      </div>
+
       {/* Reset Seed Demo Data Button */}
       <div className="pt-2">
         <button
           onClick={onResetData}
-          className="w-full py-3 rounded-2xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+          className="w-full py-3 rounded-2xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Reset Sample Demo Data</span>

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Play, Pause, RotateCcw, CheckCircle2, Sparkles, Volume2, ArrowLeft } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, CheckCircle2, Sparkles, Volume2, VolumeX, ArrowLeft, Headphones } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Task } from '../../types';
-import { playChime } from '../../utils/audio';
+import { playChime, startAmbientSound, stopAmbientSound, AmbientSoundType } from '../../utils/audio';
 
 interface StudySessionScreenProps {
   task: Task;
@@ -23,6 +23,18 @@ export const StudySessionScreen: React.FC<StudySessionScreenProps> = ({
   const [totalMinutes, setTotalMinutes] = useState(task.estimatedMinutes || 45);
   const [secondsLeft, setSecondsLeft] = useState((task.estimatedMinutes || 45) * 60);
   const [isRunning, setIsRunning] = useState(false);
+  const [ambientSound, setAmbientSound] = useState<AmbientSoundType>('none');
+
+  useEffect(() => {
+    if (isRunning && ambientSound !== 'none') {
+      startAmbientSound(ambientSound, 0.25);
+    } else {
+      stopAmbientSound();
+    }
+    return () => {
+      stopAmbientSound();
+    };
+  }, [isRunning, ambientSound]);
 
   useEffect(() => {
     let t: any = null;
@@ -183,11 +195,44 @@ export const StudySessionScreen: React.FC<StudySessionScreenProps> = ({
 
           <button
             onClick={handleFinish}
-            className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center hover:bg-emerald-100 transition-colors"
+            className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center hover:bg-emerald-100 transition-colors cursor-pointer"
             title="Finish & Save"
           >
             <CheckCircle2 className="w-6 h-6" />
           </button>
+        </div>
+
+        {/* Ambient Sound Selector */}
+        <div className="flex flex-col items-center gap-1.5 pt-1">
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            <Headphones className="w-3.5 h-3.5" />
+            <span>Ambient Focus Audio</span>
+            {ambientSound !== 'none' && isRunning && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ml-1" />
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-[11px]">
+            {[
+              { id: 'none', label: 'Off' },
+              { id: 'rain', label: '🌧️ Rain' },
+              { id: 'white', label: '💨 White Noise' },
+              { id: 'binaural', label: '🧠 Alpha Beats' },
+            ].map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setAmbientSound(s.id as AmbientSoundType)}
+                className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                  ambientSound === s.id
+                    ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs font-bold'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-300'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Subtask Quick Progress */}

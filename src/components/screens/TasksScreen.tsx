@@ -65,6 +65,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isFinishedExpanded, setIsFinishedExpanded] = useState(false);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [sortBy, setSortBy] = useState<'deadline' | 'priority' | 'quick' | 'title'>('deadline');
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
   const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
@@ -199,6 +200,23 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     if (filter === 'week') return true;
     if (filter === 'overdue') return new Date(t.deadline).getTime() < Date.now();
     return false;
+  });
+
+  const sortedDueTasks = [...displayedDueTasks].sort((a, b) => {
+    if (sortBy === 'deadline') {
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    }
+    if (sortBy === 'priority') {
+      const pWeight: Record<string, number> = { high: 3, medium: 2, low: 1 };
+      return (pWeight[b.priority || 'medium'] || 2) - (pWeight[a.priority || 'medium'] || 2);
+    }
+    if (sortBy === 'quick') {
+      return (a.estimatedMinutes || 30) - (b.estimatedMinutes || 30);
+    }
+    if (sortBy === 'title') {
+      return a.title.localeCompare(b.title);
+    }
+    return 0;
   });
 
   const dueCount = tasks.filter((t) => !t.completed).length;
@@ -345,6 +363,36 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Sort Controls Bar */}
+      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <span className="text-[10px] uppercase font-bold text-slate-400 shrink-0 mr-0.5">Sort:</span>
+          {[
+            { id: 'deadline', label: '📅 Earliest Due' },
+            { id: 'priority', label: '🚨 Priority' },
+            { id: 'quick', label: '⚡ Quick Wins' },
+            { id: 'title', label: '🔤 Title' },
+          ].map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setSortBy(s.id as any)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                sortBy === s.id
+                  ? 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 font-bold border border-indigo-200/80 dark:border-indigo-800'
+                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200/60 dark:border-slate-800 hover:border-slate-300'
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <span className="text-[11px] font-mono shrink-0 ml-2 text-slate-400">
+          {sortedDueTasks.length} {sortedDueTasks.length === 1 ? 'task' : 'tasks'}
+        </span>
       </div>
 
       {/* AI Task Assistant Bar (Chat with AI to add or edit tasks) */}
@@ -565,7 +613,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
       ) : (
         /* VIEW: DUE TASKS (Main List) */
         <div className="space-y-2">
-          {displayedDueTasks.length === 0 ? (
+          {sortedDueTasks.length === 0 ? (
             <div className="text-center py-12 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800 p-6">
               <CheckCircle2 className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
               <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">
@@ -579,7 +627,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               </button>
             </div>
           ) : (
-            displayedDueTasks.map((task) => (
+            sortedDueTasks.map((task) => (
               <div
                 key={task.id}
                 onClick={() => onSelectTask(task)}
@@ -602,7 +650,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
 
                   {/* Details */}
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 text-[11px]">
+                    <div className="flex items-center gap-1.5 text-[11px] flex-wrap">
                       {task.courseCode ? (
                         <span
                           className="font-extrabold uppercase font-mono tracking-wider text-[10px]"
@@ -622,6 +670,11 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                       {task.priority === 'high' && (
                         <span className="text-[10px] font-bold text-rose-500">
                           · High
+                        </span>
+                      )}
+                      {task.estimatedMinutes && (
+                        <span className="text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                          {task.estimatedMinutes}m
                         </span>
                       )}
                     </div>

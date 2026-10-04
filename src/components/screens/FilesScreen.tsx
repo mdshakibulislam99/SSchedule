@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft } from 'lucide-react';
+import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft, Maximize2 } from 'lucide-react';
 import { CourseResource, StudyFile, StudyNote, Task } from '../../types';
 import { FileViewer } from '../course/FileViewer';
 import { saveFileBlob } from '../../utils/fileStorage';
@@ -294,212 +294,282 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       )}
 
       {/* File Detail & AI File Chat Modal (Section 14 & 15) */}
+      {/* File Detail & AI File Chat Modal (Section 14 & 15) */}
       {selectedFile && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-24 sm:pb-6">
+        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in p-0 sm:p-4">
           <div
-            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up max-h-[85vh] overflow-y-auto space-y-4"
+            className="w-full sm:max-w-3xl lg:max-w-4xl h-[94dvh] sm:h-[88vh] bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border-t sm:border border-slate-200 dark:border-slate-800 shadow-2xl animate-slide-up flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-2" />
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 shrink-0 space-y-2.5">
+              <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto sm:hidden" />
 
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-indigo-600" />
-                <h3 className="text-base font-bold text-slate-900 dark:text-white truncate max-w-[260px]">
-                  {selectedFile.name}
-                </h3>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                      {selectedFile.name}
+                    </h3>
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <span>{selectedFile.size}</span>
+                      {selectedFile.courseCode && (
+                        <>
+                          <span>·</span>
+                          <span className="font-semibold text-indigo-600 dark:text-indigo-400">{selectedFile.courseCode}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {canReadInApp(selectedFile) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReaderFile(selectedFile);
+                        setSelectedFile(null);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-600 dark:text-indigo-400 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Open full reader mode"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Fullscreen</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAskAIAboutFile(selectedFile);
+                      setSelectedFile(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 text-emerald-600 dark:text-emerald-400 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Ask AI about this file"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Ask AI</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    aria-label="Close file viewer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
-              <button onClick={() => setSelectedFile(null)} className="p-1 text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
+
+              {/* Segmented View Tabs */}
+              <div className="flex items-center gap-1 rounded-2xl bg-slate-100 dark:bg-slate-950 p-1 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setFileTab('file')}
+                  className={`flex-1 rounded-xl py-2 transition-colors cursor-pointer ${
+                    fileTab === 'file'
+                      ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300'
+                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Document
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFileTab('summary')}
+                  className={`flex-1 rounded-xl py-2 transition-colors cursor-pointer ${
+                    fileTab === 'summary'
+                      ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300'
+                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFileTab('aiContext')}
+                  className={`flex-1 rounded-xl py-2 transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                    fileTab === 'aiContext'
+                      ? 'bg-white text-emerald-600 shadow-sm dark:bg-slate-800 dark:text-emerald-400'
+                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>AI Context</span>
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-1 rounded-2xl bg-slate-100 dark:bg-slate-950 p-1 text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setFileTab('file')}
-                className={`flex-1 rounded-xl py-2.5 transition-colors ${fileTab === 'file' ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500'}`}
-              >
-                File
-              </button>
-              <button
-                type="button"
-                onClick={() => setFileTab('summary')}
-                className={`flex-1 rounded-xl py-2.5 transition-colors ${fileTab === 'summary' ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500'}`}
-              >
-                Summary
-              </button>
-              <button
-                type="button"
-                onClick={() => setFileTab('aiContext')}
-                className={`flex-1 rounded-xl py-2.5 transition-colors flex items-center justify-center gap-1.5 ${fileTab === 'aiContext' ? 'bg-white text-emerald-600 shadow-sm dark:bg-slate-800 dark:text-emerald-400' : 'text-slate-500'}`}
-              >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-                <span>AI Context</span>
-              </button>
-            </div>
-
-            {fileTab === 'file' && (
-              <div className="h-[58vh] min-h-[320px] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
-                {canReadInApp(selectedFile) ? (
+            {/* Document Content Viewport (Takes 100% of remaining space with no double scrollbars!) */}
+            <div className="flex-1 min-h-0 relative overflow-hidden bg-slate-100 dark:bg-slate-950">
+              {fileTab === 'file' && (
+                canReadInApp(selectedFile) ? (
                   <FileViewer resource={createViewerResource(selectedFile)} mode="inline" />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-center text-xs text-slate-500">
                     The original file is unavailable. Re-upload it to view it here.
                   </div>
-                )}
-              </div>
-            )}
+                )
+              )}
 
-            {fileTab === 'summary' && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-                {selectedFile.summary || 'No summary is available for this file.'}
-              </div>
-            )}
-
-            {fileTab === 'aiContext' && (
-              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-                {/* Status banner */}
-                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                        {selectedFile.aiContext?.status === 'ready'
-                          ? 'Auto-Indexed & Persisted'
-                          : selectedFile.aiContext?.status === 'analyzing'
-                            ? 'Indexing Material Context…'
-                            : 'Context Ready'}
-                      </p>
-                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400">
-                        Cached permanently for instant future AI learning
-                      </p>
-                    </div>
+              {fileTab === 'summary' && (
+                <div className="h-full overflow-y-auto p-4 sm:p-6 text-sm leading-relaxed text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 space-y-3">
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Executive Summary</h4>
+                    <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                      {selectedFile.summary || selectedFile.aiContext?.summary || 'No summary is available for this file yet. Tap Ask AI to analyze it.'}
+                    </p>
                   </div>
-                  {onReindexFile && (
-                    <button
-                      type="button"
-                      onClick={() => onReindexFile(selectedFile.id)}
-                      className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 text-[11px] font-bold border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0"
-                      title="Re-run Gemini AI analysis on this file"
-                    >
-                      <RotateCw className="w-3 h-3 text-indigo-600" />
-                      <span>Re-index</span>
-                    </button>
+                </div>
+              )}
+
+              {fileTab === 'aiContext' && (
+                <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-4 bg-white dark:bg-slate-900">
+                  {/* Status banner */}
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                          {selectedFile.aiContext?.status === 'ready'
+                            ? 'Auto-Indexed & Persisted'
+                            : selectedFile.aiContext?.status === 'analyzing'
+                              ? 'Indexing Material Context…'
+                              : 'Context Ready'}
+                        </p>
+                        <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400">
+                          Cached permanently for instant future AI learning
+                        </p>
+                      </div>
+                    </div>
+                    {onReindexFile && (
+                      <button
+                        type="button"
+                        onClick={() => onReindexFile(selectedFile.id)}
+                        className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 text-[11px] font-bold border border-slate-200 dark:border-slate-700 flex items-center gap-1 shrink-0 cursor-pointer"
+                        title="Re-run Gemini AI analysis on this file"
+                      >
+                        <RotateCw className="w-3 h-3 text-indigo-600" />
+                        <span>Re-index</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Summary */}
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 space-y-1.5">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Executive Summary</h4>
+                    <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
+                      {selectedFile.aiContext?.summary || selectedFile.summary || 'Document indexed for study.'}
+                    </p>
+                  </div>
+
+                  {/* Key Concepts */}
+                  {selectedFile.aiContext?.keyConcepts && selectedFile.aiContext.keyConcepts.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Key Concepts</h4>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedFile.aiContext.keyConcepts.map((concept, i) => (
+                          <span
+                            key={i}
+                            className="px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-xs font-semibold border border-indigo-100 dark:border-indigo-900/60"
+                          >
+                            {concept}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dense Knowledge Digest */}
+                  <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                        <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                        Pre-Indexed Study Digest
+                      </h4>
+                      <span className="text-[10px] font-bold text-slate-400">Zero re-parsing needed</span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-line font-mono text-[11px] bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      {selectedFile.aiContext?.denseContext || 'Knowledge digest prepared for AI learning sessions.'}
+                    </p>
+                  </div>
+
+                  {/* Comprehension Questions */}
+                  {selectedFile.aiContext?.studyQuestions && selectedFile.aiContext.studyQuestions.length > 0 && (
+                    <div className="p-4 rounded-2xl bg-violet-50/50 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-900/50 space-y-2">
+                      <h4 className="text-xs font-bold text-violet-950 dark:text-violet-200 flex items-center gap-1.5">
+                        <HelpCircle className="w-3.5 h-3.5 text-violet-600" />
+                        Pre-Generated Study Questions
+                      </h4>
+                      <div className="space-y-1.5">
+                        {selectedFile.aiContext.studyQuestions.map((q, i) => (
+                          <div
+                            key={i}
+                            onClick={() => {
+                              setSelectedFile(null);
+                              onAskAIAboutFile(selectedFile);
+                            }}
+                            className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-violet-100/80 dark:border-violet-800/40 text-xs text-slate-700 dark:text-slate-200 hover:border-violet-400 cursor-pointer flex items-center justify-between gap-2 group transition-all"
+                          >
+                            <span className="italic">"{q}"</span>
+                            <span className="text-[10px] font-bold text-indigo-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                              Ask AI →
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Suggested Tasks */}
+                  {selectedFile.aiContext?.suggestedTasks && selectedFile.aiContext.suggestedTasks.length > 0 && (
+                    <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50 space-y-2">
+                      <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                        <ListChecks className="w-3.5 h-3.5 text-amber-600" />
+                        Extracted Action Items
+                      </h4>
+                      <div className="space-y-1.5">
+                        {selectedFile.aiContext.suggestedTasks.map((t, i) => (
+                          <div
+                            key={i}
+                            className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-100/80 dark:border-amber-800/40 text-xs flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <p className="font-semibold text-slate-800 dark:text-slate-200">{t.title}</p>
+                              <span className="text-[10px] text-slate-400 capitalize">{t.priority} priority · {t.estimatedMinutes}m</span>
+                            </div>
+                            {onAddTask && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onAddTask({
+                                    title: t.title,
+                                    priority: t.priority,
+                                    estimatedMinutes: t.estimatedMinutes,
+                                    courseCode: selectedFile.courseCode || 'Study',
+                                  });
+                                  setUploadNotice(`Added task: ${t.title}`);
+                                  window.setTimeout(() => setUploadNotice(null), 3500);
+                                }}
+                                className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-500 shrink-0 cursor-pointer"
+                              >
+                                + Add Task
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {/* Summary */}
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 space-y-1.5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Executive Summary</h4>
-                  <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                    {selectedFile.aiContext?.summary || selectedFile.summary || 'Document indexed for study.'}
-                  </p>
-                </div>
-
-                {/* Key Concepts */}
-                {selectedFile.aiContext?.keyConcepts && selectedFile.aiContext.keyConcepts.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Key Concepts</h4>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedFile.aiContext.keyConcepts.map((concept, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-xs font-semibold border border-indigo-100 dark:border-indigo-900/60"
-                        >
-                          {concept}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Dense Knowledge Digest */}
-                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-                      Pre-Indexed Study Digest
-                    </h4>
-                    <span className="text-[10px] font-bold text-slate-400">Zero re-parsing needed</span>
-                  </div>
-                  <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-line font-mono text-[11px] bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                    {selectedFile.aiContext?.denseContext || 'Knowledge digest prepared for AI learning sessions.'}
-                  </p>
-                </div>
-
-                {/* Comprehension Questions */}
-                {selectedFile.aiContext?.studyQuestions && selectedFile.aiContext.studyQuestions.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-violet-50/50 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-900/50 space-y-2">
-                    <h4 className="text-xs font-bold text-violet-950 dark:text-violet-200 flex items-center gap-1.5">
-                      <HelpCircle className="w-3.5 h-3.5 text-violet-600" />
-                      Pre-Generated Study Questions
-                    </h4>
-                    <div className="space-y-1.5">
-                      {selectedFile.aiContext.studyQuestions.map((q, i) => (
-                        <div
-                          key={i}
-                          onClick={() => {
-                            setSelectedFile(null);
-                            onAskAIAboutFile(selectedFile);
-                          }}
-                          className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-violet-100/80 dark:border-violet-800/40 text-xs text-slate-700 dark:text-slate-200 hover:border-violet-400 cursor-pointer flex items-center justify-between gap-2 group transition-all"
-                        >
-                          <span className="italic">"{q}"</span>
-                          <span className="text-[10px] font-bold text-indigo-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                            Ask AI →
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Suggested Tasks */}
-                {selectedFile.aiContext?.suggestedTasks && selectedFile.aiContext.suggestedTasks.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50 space-y-2">
-                    <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
-                      <ListChecks className="w-3.5 h-3.5 text-amber-600" />
-                      Extracted Action Items
-                    </h4>
-                    <div className="space-y-1.5">
-                      {selectedFile.aiContext.suggestedTasks.map((t, i) => (
-                        <div
-                          key={i}
-                          className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-100/80 dark:border-amber-800/40 text-xs flex items-center justify-between gap-2"
-                        >
-                          <div>
-                            <p className="font-semibold text-slate-800 dark:text-slate-200">{t.title}</p>
-                            <span className="text-[10px] text-slate-400 capitalize">{t.priority} priority · {t.estimatedMinutes}m</span>
-                          </div>
-                          {onAddTask && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onAddTask({
-                                  title: t.title,
-                                  priority: t.priority,
-                                  estimatedMinutes: t.estimatedMinutes,
-                                  courseCode: selectedFile.courseCode || 'Study',
-                                });
-                                setUploadNotice(`Added task: ${t.title}`);
-                                window.setTimeout(() => setUploadNotice(null), 3500);
-                              }}
-                              className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold hover:bg-indigo-500 shrink-0"
-                            >
-                              + Add Task
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
+              )}
+            </div>
           </div>
         </div>
       )}

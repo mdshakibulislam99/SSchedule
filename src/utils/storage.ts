@@ -1098,4 +1098,34 @@ export const StudyStorage = {
       console.warn('StudyStorage: conversations not persisted (quota).');
     }
   },
+
+  exportBackup(): string {
+    const backup: Record<string, any> = {
+      app: 'ChronoPulse AI',
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+    };
+    Object.values(STORAGE_KEYS).forEach((storageKey) => {
+      try {
+        const val = localStorage.getItem(storageKey);
+        if (val) backup[storageKey] = JSON.parse(val);
+      } catch {}
+    });
+    return JSON.stringify(backup, null, 2);
+  },
+
+  importBackup(jsonStr: string): boolean {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (!parsed || typeof parsed !== 'object') return false;
+      Object.values(STORAGE_KEYS).forEach((storageKey) => {
+        if (parsed[storageKey] !== undefined) {
+          localStorage.setItem(storageKey, JSON.stringify(parsed[storageKey]));
+        }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
 };

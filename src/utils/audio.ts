@@ -109,3 +109,109 @@ export function playChime(type: ChimeType = 'reminder') {
     console.warn('Audio chime playback was inhibited or unsupported:', err);
   }
 }
+
+export type AmbientSoundType = 'none' | 'rain' | 'white' | 'binaural';
+
+let activeAmbientNodes: { stop: () => void } | null = null;
+let activeAmbientGain: GainNode | null = null;
+
+export function stopAmbientSound() {
+  try {
+    if (activeAmbientGain && audioCtx) {
+      activeAmbientGain.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + 0.2);
+    }
+    setTimeout(() => {
+      if (activeAmbientNodes) {
+        try {
+          activeAmbientNodes.stop();
+        } catch {}
+        activeAmbientNodes = null;
+      }
+      if (activeAmbientGain) {
+        try {
+          activeAmbientGain.disconnect();
+        } catch {}
+        activeAmbientGain = null;
+      }
+    }, 250);
+  } catch {}
+}
+
+export function startAmbientSound(type: AmbientSoundType, volume: number = 0.25) {
+  stopAmbientSound();
+  if (type === 'none') return;
+
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(Math.max(0.05, Math.min(volume, 0.5)), ctx.currentTime + 0.4);
+    activeAmbientGain = gain;
+
+    if (type === 'white') {
+      const bufferSize = ctx.sampleRate * 3;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let b0 = 0, b1 = 0, b2 = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        data[i] = (b0 + b1 + b2 + white * 0.08) * 0.12;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      noise.loop = true;
+      noise.connect(gain);
+      gain.connect(ctx.destination);
+      noise.start();
+      activeAmbientNodes = { stop: () => noise.stop() };
+    } else if (type === 'rain') {
+      const bufferSize = ctx.sampleRate * 3;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * 0.18;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      noise.loop = true;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 750;
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      noise.start();
+      activeAmbientNodes = { stop: () => noise.stop() };
+    } else if (type === 'binaural') {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      osc1.type = 'sine';
+      osc2.type = 'sine';
+      osc1.frequency.value = 196;
+      osc2.frequency.value = 204; // 8Hz Alpha beat
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      osc1.start();
+      osc2.start();
+      activeAmbientNodes = {
+        stop: () => {
+          try {
+            osc1.stop();
+            osc2.stop();
+          } catch {}
+        },
+      };
+    }
+  } catch (err) {
+    console.warn('Ambient focus sound error:', err);
+  }
+}
