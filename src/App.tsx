@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
@@ -25,6 +25,7 @@ import {
   syncGoogleCalendarStateToFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
+import { registerBackHandler } from './lib/native';
 
 import { OnboardingFlow } from './components/screens/OnboardingFlow';
 import { HomeScreen } from './components/screens/HomeScreen';
@@ -194,6 +195,7 @@ export default function App() {
   const [isWeekPlannerOpen, setIsWeekPlannerOpen] = useState(false);
   const [isAIMemoryOpen, setIsAIMemoryOpen] = useState(false);
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
+  const [closeComposerSignal, setCloseComposerSignal] = useState(0);
   const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!user.isOnboarded);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1803,6 +1805,7 @@ export default function App() {
             onDeleteTask={handleDeleteTask}
             onExecuteAction={handleExecuteAction}
             onComposerStateChange={setIsTaskComposerOpen}
+            closeComposerSignal={closeComposerSignal}
           />
         );
 
@@ -1879,8 +1882,52 @@ export default function App() {
     }
   };
 
+  // Android hardware back button. Handlers unwind newest-layer-first so the
+  // user pops sheets/sub-screens instead of being dropped out of the app.
+  const nativeBackRef = useRef<() => boolean>(() => false);
+  nativeBackRef.current = () => {
+    // Onboarding handles its own back presses (stepping backwards through the
+    // flow), so defer to it and only exit once it is on its first step.
+    if (showOnboarding) return false;
+    if (isQuickActionsOpen) {
+      setIsQuickActionsOpen(false);
+      return true;
+    }
+    if (isVoiceModalOpen) {
+      setIsVoiceModalOpen(false);
+      return true;
+    }
+    if (isWeekPlannerOpen) {
+      setIsWeekPlannerOpen(false);
+      return true;
+    }
+    if (isAIMemoryOpen) {
+      setIsAIMemoryOpen(false);
+      return true;
+    }
+    if (isAISetupPromptOpen) {
+      setIsAISetupPromptOpen(false);
+      return true;
+    }
+    if (isTaskComposerOpen) {
+      setCloseComposerSignal((n) => n + 1);
+      return true;
+    }
+    if (activeSubScreen) {
+      goBackSubScreen();
+      return true;
+    }
+    if (currentTab !== 'home') {
+      handleTabChange('home');
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => registerBackHandler(() => nativeBackRef.current()), []);
+
   return (
-    <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
+    <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
       <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
@@ -1925,7 +1972,7 @@ export default function App() {
 
             {/* Fixed Mobile Bottom Nav Bar */}
             {!isTaskComposerOpen && (
-              <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+              <div className="fixed bottom-0 left-0 right-0 z-40 pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
                 <MobileBottomNav
                   currentTab={currentTab}
                   onTabChange={handleTabChange}

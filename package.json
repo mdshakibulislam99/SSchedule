@@ -9,9 +9,20 @@
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "cap:sync": "npm run build && cap sync android",
+    "cap:open": "cap open android",
+    "apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "apk:release": "npm run cap:sync && cd android && ./gradlew assembleRelease",
+    "apk:install": "npm run cap:sync && cd android && ./gradlew installDebug",
+    "android:keystore": "keytool -genkeypair -v -keystore android/app/release.keystore -alias chronopulse -keyalg RSA -keysize 2048 -validity 10000 -storepass chronopulse -keypass chronopulse -dname CN=ChronoPulse-AI,OU=Mobile,O=ChronoPulse,C=BD",
+    "android:assets": "python3 scripts/generate-android-assets.py"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/canvas-confetti": "^1.9.0",
@@ -28,12 +39,14 @@
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.27.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2"

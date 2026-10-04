@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, Check, Sparkles, User, GraduationCap, ChevronLeft, Apple } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
 import { UserProfile } from '../../types';
+import { registerBackHandler } from '../../lib/native';
 
 interface OnboardingFlowProps {
   onComplete: (user: UserProfile) => void;
@@ -31,6 +32,16 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
   const [name, setName] = useState<string>(initialUser.name || 'Alex Carter');
   const [university, setUniversity] = useState<string>(initialUser.university || 'Stanford University');
   const [year, setYear] = useState<string>(initialUser.year || '2nd Year');
+
+  // Mirror the in-app back chevron on the Android hardware back button. Returning
+  // false on the first step lets the press fall through and exit the app.
+  useEffect(() => {
+    return registerBackHandler(() => {
+      if (step <= 1) return false;
+      setStep(step - 1);
+      return true;
+    });
+  }, [step]);
 
   const toggleGoal = (goal: string) => {
     setSelectedGoals((prev) =>

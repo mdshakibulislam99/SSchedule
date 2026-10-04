@@ -16,6 +16,16 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+// The packaged Android/iOS app runs from https://localhost and has no origin
+// relationship with this server, so the AI endpoints must opt in to CORS.
+app.use((req: Request, res: Response, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-gemini-key');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // Initialize GoogleGenAI on the server
 function getGeminiClient(customApiKey?: string): GoogleGenAI {
   const key = customApiKey || process.env.GEMINI_API_KEY;

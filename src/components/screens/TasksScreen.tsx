@@ -35,6 +35,8 @@ interface TasksScreenProps {
   onDeleteTask?: (taskId: string) => void;
   onExecuteAction?: (action: AIActionProposal) => void;
   onComposerStateChange?: (isOpen: boolean) => void;
+  /** Increment to request that the composer closes (used by the Android back button). */
+  closeComposerSignal?: number;
 }
 
 const AREA_CHOICES: { id: 'all' | TaskCategory; label: string }[] = [
@@ -58,6 +60,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   onDeleteTask,
   onExecuteAction,
   onComposerStateChange,
+  closeComposerSignal,
 }) => {
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'overdue' | 'finished'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,6 +78,14 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [proposedAction, setProposedAction] = useState<AIActionProposal | null>(null);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+
+  // Lets the Android hardware back button dismiss the composer instead of
+  // dropping the user straight out of the app.
+  useEffect(() => {
+    if (!closeComposerSignal) return;
+    setIsAddModalOpen(false);
+    if (onComposerStateChange) onComposerStateChange(false);
+  }, [closeComposerSignal, onComposerStateChange]);
 
   const handleAskAIInTasks = async (queryText?: string) => {
     const textToSend = (queryText || aiInput).trim();

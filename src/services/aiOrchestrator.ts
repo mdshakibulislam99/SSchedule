@@ -18,6 +18,7 @@ import {
   ResourceAIContext,
 } from '../types';
 import { getLocalDateKey } from '../utils/dates';
+import { apiUrl } from '../lib/api';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -72,7 +73,7 @@ export class GeminiAIProvider implements IAIProvider {
     if (this.apiKey) {
       headers['x-gemini-key'] = this.apiKey;
     }
-    const res = await fetch('/api/ai/gemini', {
+    const res = await fetch(apiUrl('/api/ai/gemini'), {
       method: 'POST',
       headers,
       body: JSON.stringify({ prompt, systemInstruction }),
@@ -93,7 +94,7 @@ export class GeminiAIProvider implements IAIProvider {
     if (this.apiKey) {
       headers['x-gemini-key'] = this.apiKey;
     }
-    const res = await fetch('/api/ai/gemini', {
+    const res = await fetch(apiUrl('/api/ai/gemini'), {
       method: 'POST',
       headers,
       body: JSON.stringify({ prompt, systemInstruction, enableSearch: true }),
@@ -122,7 +123,7 @@ export class ExternalProxyAIProvider implements IAIProvider {
   }
 
   async generateText(prompt: string, systemInstruction?: string): Promise<string> {
-    const res = await fetch('/api/ai/proxy', {
+    const res = await fetch(apiUrl('/api/ai/proxy'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
