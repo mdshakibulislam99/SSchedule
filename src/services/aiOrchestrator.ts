@@ -9,13 +9,15 @@ import {
   StudyFile,
   ResearchItem,
   Course,
+  CourseModule,
   CourseResource,
+  AIGeneratedCourseResult,
   CourseProgress,
   CourseQuizQuestion,
   CourseKeyTerm,
   ResourceAIContext,
 } from '../types';
-import { getLocalDateKey } from '../utils/dates';
+import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../utils/dates';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -227,20 +229,57 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
         contextPrompt += `Current Open File: "${context.currentFile.name}" (${context.currentFile.summary || 'Course document'}).\n`;
       }
     }
-    if (context.schedule) {
-      const todaySched = context.schedule
-        .map((s) => `${s.startTime}-${s.endTime}: ${s.title} (${s.type})`)
-        .join(', ');
-      contextPrompt += `Today's Schedule: ${todaySched}.\n`;
+    if (context.tasks && context.tasks.length > 0) {
+      const taskSummaries = context.tasks
+        .slice(0, 15)
+        .map(
+          (t) =>
+            `- "${t.title}" (ID: ${t.id}, Course: ${t.courseCode || 'General'}, Due: ${t.deadline.split('T')[0]}, Scheduled: ${t.scheduledDate || 'None'} ${t.scheduledStartTime || ''}, Priority: ${t.priority}, Done: ${t.completed})`
+        )
+        .join('\n');
+      contextPrompt += `Active Tasks:\n${taskSummaries}\n`;
     }
 
+    if (context.schedule && context.schedule.length > 0) {
+      const schedSummaries = context.schedule
+        .slice(0, 20)
+        .map(
+          (s) =>
+            `- "${s.title}" (ID: ${s.id}, Date: ${s.date}, Time: ${s.startTime}–${s.endTime}, Type: ${s.type})`
+        )
+        .join('\n');
+      contextPrompt += `Schedule Blocks:\n${schedSummaries}\n`;
+    }
+
+    const todayDateKey = getLocalDateKey();
     const systemInstruction = `${contextPrompt}
+Today's Date: ${todayDateKey}.
 Respond warmly, concisely, and supportively. Keep responses focused on actionable student study tactics.
 ${enableSearch ? 'Google Search Grounding is enabled. Provide factual, cited answers.' : ''}
-If the student asks to schedule a study session, move study time, or create tasks, output an action proposal at the end formatted strictly as:
-[ACTION: {"type": "add_schedule", "title": "...", "startTime": "15:00", "endTime": "16:30", "date": "2026-10-03"}]
-or [ACTION: {"type": "create_task", "title": "...", "courseCode": "CS101", "deadline": "2026-10-04", "scheduledDate": "2026-10-03", "scheduledStartTime": "15:00", "recurrence": "none", "reminderEnabled": true, "reminderMinutes": 30, "estimatedMinutes": 45}].
-For repeating tasks, use recurrence "daily", "weekdays", or "weekly" and set scheduledDate to the first day. Use date-only deadlines in YYYY-MM-DD format. Only create an action when the student clearly asks you to add or schedule something.`;
+
+CRITICAL AI CAPABILITY - SCHEDULE & TASK ACTIONS:
+You have direct authorization to add, edit, reschedule, or delete tasks and calendar blocks for the student.
+When the user asks to add, schedule, move, edit, or delete any task or calendar event (e.g., "Add Math homework tomorrow at 3pm", "Move CS101 study to Friday 4pm", "Change Assignment 2 deadline to Oct 10", "Delete task...", "Schedule study slot for Physics on Oct 6 from 2pm to 4pm"), output an action proposal at the end formatted strictly as:
+
+1. Add Schedule Event:
+[ACTION: {"type": "add_schedule", "title": "Math Study Session", "date": "2026-10-05", "startTime": "15:00", "endTime": "16:30", "courseCode": "Math", "eventType": "study"}]
+
+2. Edit / Move / Reschedule Schedule Event:
+[ACTION: {"type": "edit_schedule", "targetEventTitle": "CS101 Algorithms", "targetEventId": "sched-123", "date": "2026-10-06", "startTime": "16:00", "endTime": "17:30", "newTitle": "CS101 Algorithms"}]
+
+3. Create Task:
+[ACTION: {"type": "create_task", "title": "Math Problem Set 3", "courseCode": "Math", "deadline": "2026-10-08", "scheduledDate": "2026-10-05", "scheduledStartTime": "15:00", "priority": "high", "estimatedMinutes": 60, "recurrence": "none"}]
+
+4. Edit Existing Task:
+[ACTION: {"type": "edit_task", "targetTaskTitle": "Assignment 2", "targetTaskId": "task-456", "newTitle": "Assignment 2", "scheduledDate": "2026-10-06", "scheduledStartTime": "14:00", "deadline": "2026-10-10", "priority": "high"}]
+
+5. Delete Task:
+[ACTION: {"type": "delete_task", "targetTaskTitle": "Old Quiz Prep", "targetTaskId": "task-789"}]
+
+6. Delete Schedule Event:
+[ACTION: {"type": "delete_schedule", "targetEventTitle": "Cancelled Lab", "targetEventId": "sched-999"}]
+
+Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only create an action when the student clearly asks you to add, move, edit, schedule, or remove something.`;
 
     try {
       let rawText = '';
@@ -273,11 +312,35 @@ For repeating tasks, use recurrence "daily", "weekdays", or "weekly" and set sch
             cleanText = cleanText.replace(match, '').trim();
             const jsonStr = match.replace(/^\[ACTION:\s*/, '').replace(/\]$/, '');
             const parsed = JSON.parse(jsonStr);
+
+            let actionTitle = parsed.title || 'Recommended Action';
+            let actionDesc = 'Proposed by StudyAI based on your request.';
+
+            if (parsed.type === 'add_schedule') {
+              actionTitle = parsed.title || 'Study Session';
+              actionDesc = `${parsed.date || todayDateKey} · ${parsed.startTime || '15:00'}–${parsed.endTime || '16:00'}${parsed.courseCode ? ` (${parsed.courseCode})` : ''}`;
+            } else if (parsed.type === 'edit_schedule') {
+              actionTitle = `Reschedule: ${parsed.newTitle || parsed.targetEventTitle || 'Event'}`;
+              actionDesc = `Move to ${parsed.date || 'new date'} at ${parsed.startTime || '15:00'}–${parsed.endTime || '16:00'}`;
+            } else if (parsed.type === 'create_task') {
+              actionTitle = parsed.title || 'New Task';
+              actionDesc = `${parsed.courseCode ? `[${parsed.courseCode}] ` : ''}Due ${parsed.deadline || todayDateKey}${parsed.scheduledStartTime ? ` · Planned at ${parsed.scheduledStartTime}` : ''}`;
+            } else if (parsed.type === 'edit_task') {
+              actionTitle = `Update Task: ${parsed.newTitle || parsed.targetTaskTitle || 'Task'}`;
+              actionDesc = `Set deadline: ${parsed.deadline || 'Updated'}${parsed.scheduledStartTime ? ` · Time: ${parsed.scheduledStartTime}` : ''}`;
+            } else if (parsed.type === 'delete_task') {
+              actionTitle = `Delete Task: ${parsed.targetTaskTitle || 'Task'}`;
+              actionDesc = `Remove this task from your study plan.`;
+            } else if (parsed.type === 'delete_schedule') {
+              actionTitle = `Remove Event: ${parsed.targetEventTitle || 'Event'}`;
+              actionDesc = `Remove this calendar block from your schedule.`;
+            }
+
             actions.push({
               id: `act-${Date.now()}-${idx}`,
               type: parsed.type || 'add_schedule',
-              title: parsed.title || 'Recommended Study Session',
-              description: `Proposed by StudyAI based on your available study window.`,
+              title: actionTitle,
+              description: actionDesc,
               details: parsed,
               status: 'pending',
             });
@@ -300,68 +363,186 @@ For repeating tasks, use recurrence "daily", "weekdays", or "weekly" and set sch
       console.warn('AI chat error, using intelligent local orchestrator:', err);
       // High-precision heuristic fallback with action proposal
       const lowerMessage = userMessage.toLowerCase();
-      if (/(add|create|remind|schedule).*(task|assignment|todo|review)/.test(lowerMessage) || lowerMessage.includes('every day')) {
-        const isRecurring = lowerMessage.includes('daily') || lowerMessage.includes('every day');
-        const title = userMessage
-          .replace(/^(please\s+)?(add|create|remind me to|schedule)\s+(a\s+)?(daily\s+|every day\s+)?/i, '')
-          .replace(/^(task|todo|assignment)\s+(to\s+)?/i, '')
-          .replace(/\s+(for|on|at)\s+.*$/i, '')
-          .trim() || 'Study task';
-        const today = getLocalDateKey();
+      const detectedDate = parseNaturalDate(userMessage);
+      const { startTime, endTime } = parseNaturalTime(userMessage);
+
+      // 1. Move / Reschedule Event
+      if (lowerMessage.includes('move') || lowerMessage.includes('reschedule') || lowerMessage.includes('change time')) {
+        let targetTitle = 'Study Session';
+        if (context.schedule && context.schedule.length > 0) {
+          const match = context.schedule.find((s) => lowerMessage.includes(s.title.toLowerCase()));
+          if (match) targetTitle = match.title;
+          else targetTitle = context.schedule[0].title;
+        }
+
         return {
-          text: `I prepared a ${isRecurring ? 'daily ' : ''}task for you. Confirm it below to add it to your plan.`,
+          text: `I can reschedule "${targetTitle}" to ${detectedDate} from ${startTime} to ${endTime}. Confirm below to update your calendar.`,
+          actions: [
+            {
+              id: `act-${Date.now()}`,
+              type: 'edit_schedule',
+              title: `Reschedule: ${targetTitle}`,
+              description: `Move to ${detectedDate} · ${startTime}–${endTime}`,
+              details: {
+                targetEventTitle: targetTitle,
+                date: detectedDate,
+                startTime,
+                endTime,
+                newTitle: targetTitle,
+              },
+              status: 'pending',
+            },
+          ],
+          suggestedChips: ['Confirm & Apply', 'Pick another day', 'Add 30 minutes'],
+        };
+      }
+
+      // 2. Delete Task or Schedule Event
+      if (lowerMessage.startsWith('delete') || lowerMessage.startsWith('remove') || lowerMessage.includes('cancel')) {
+        const isEvent = lowerMessage.includes('event') || lowerMessage.includes('meeting') || lowerMessage.includes('block') || lowerMessage.includes('class');
+        const cleanTarget = userMessage.replace(/^(please\s+)?(delete|remove|cancel)\s+(the\s+)?(task|event|block|session)?\s*/i, '').trim();
+
+        if (isEvent) {
+          return {
+            text: `I've prepared to remove the calendar event "${cleanTarget || 'Event'}". Confirm below to proceed.`,
+            actions: [
+              {
+                id: `act-${Date.now()}`,
+                type: 'delete_schedule',
+                title: `Remove Event: ${cleanTarget || 'Event'}`,
+                description: `Remove this block from your calendar.`,
+                details: { targetEventTitle: cleanTarget },
+                status: 'pending',
+              },
+            ],
+            suggestedChips: ['Confirm removal', 'Keep it'],
+          };
+        } else {
+          return {
+            text: `I've prepared to remove the task "${cleanTarget || 'Task'}". Confirm below to proceed.`,
+            actions: [
+              {
+                id: `act-${Date.now()}`,
+                type: 'delete_task',
+                title: `Delete Task: ${cleanTarget || 'Task'}`,
+                description: `Remove this task from your plan.`,
+                details: { targetTaskTitle: cleanTarget },
+                status: 'pending',
+              },
+            ],
+            suggestedChips: ['Confirm removal', 'Keep it'],
+          };
+        }
+      }
+
+      // 3. Edit Task
+      if (lowerMessage.startsWith('edit task') || lowerMessage.includes('change deadline') || lowerMessage.includes('change task')) {
+        let targetTitle = context.currentTask ? context.currentTask.title : 'Assignment';
+        if (context.tasks && context.tasks.length > 0) {
+          const match = context.tasks.find((t) => lowerMessage.includes(t.title.toLowerCase()));
+          if (match) targetTitle = match.title;
+        }
+
+        return {
+          text: `I prepared an update for "${targetTitle}". Confirm to apply the new schedule and deadline.`,
+          actions: [
+            {
+              id: `act-${Date.now()}`,
+              type: 'edit_task',
+              title: `Update Task: ${targetTitle}`,
+              description: `Date: ${detectedDate} · Time: ${startTime} · Priority: High`,
+              details: {
+                targetTaskTitle: targetTitle,
+                newTitle: targetTitle,
+                scheduledDate: detectedDate,
+                scheduledStartTime: startTime,
+                deadline: detectedDate,
+                priority: 'high',
+              },
+              status: 'pending',
+            },
+          ],
+          suggestedChips: ['Confirm update', 'Change to medium priority'],
+        };
+      }
+
+      // 4. Create Task
+      if (/(add|create|remind).*(task|assignment|todo|homework|project|paper)/.test(lowerMessage)) {
+        const isRecurring = lowerMessage.includes('daily') || lowerMessage.includes('every day');
+        let title = userMessage
+          .replace(/^(please\s+)?(add|create|remind me to|schedule)\s+(a\s+)?(daily\s+|every day\s+)?/i, '')
+          .replace(/^(task|todo|assignment|homework)\s+(to\s+)?/i, '')
+          .replace(/\s+(for|on|at|due)\s+.*$/i, '')
+          .trim() || 'New Study Task';
+
+        let courseCode = context.currentCourse ? context.currentCourse.code : 'CS101';
+        if (lowerMessage.includes('math')) courseCode = 'Math';
+        if (lowerMessage.includes('cs101') || lowerMessage.includes('algorithm')) courseCode = 'CS101';
+
+        return {
+          text: `I prepared "${title}" for ${courseCode} on ${detectedDate} at ${startTime}. Confirm below to add it to your plan and calendar.`,
           actions: [
             {
               id: `act-${Date.now()}`,
               type: 'create_task',
               title,
-              description: `${isRecurring ? 'Repeats every day. ' : ''}Planned for today with a 30-minute reminder.`,
+              description: `Course: ${courseCode} · Due: ${detectedDate} · Planned: ${startTime}`,
               details: {
                 title,
-                courseCode: 'Other',
-                deadline: today,
-                scheduledDate: today,
-                scheduledStartTime: '18:00',
+                courseCode,
+                deadline: detectedDate,
+                scheduledDate: detectedDate,
+                scheduledStartTime: startTime,
                 recurrence: isRecurring ? 'daily' : 'none',
                 reminderEnabled: true,
                 reminderMinutes: 30,
-                estimatedMinutes: 30,
-                priority: 'medium',
+                estimatedMinutes: 45,
+                priority: 'high',
               },
               status: 'pending',
             },
           ],
-          suggestedChips: ['Add to my tasks', 'Change the time', 'Make it weekly'],
+          suggestedChips: ['Confirm & Add', 'Change time', 'Make it weekly'],
         };
       }
 
-      if (userMessage.toLowerCase().includes('schedule') || userMessage.toLowerCase().includes('study')) {
+      // 5. Schedule Block / Study Session
+      if (lowerMessage.includes('schedule') || lowerMessage.includes('study') || lowerMessage.includes('add block') || lowerMessage.includes('plan')) {
+        let blockTitle = userMessage
+          .replace(/^(please\s+)?(schedule|plan|add|book)\s+(a\s+)?/i, '')
+          .replace(/\s+(for|on|at|from)\s+.*$/i, '')
+          .trim();
+        if (!blockTitle || blockTitle.length < 3) {
+          blockTitle = context.currentTask ? `${context.currentTask.title} Focus` : 'Deep Study Session';
+        }
+
         return {
-          text: `I analyzed your calendar for tomorrow. You have a prime 2-hour focus gap from 3:00 PM – 5:00 PM right before your evening break. I can lock this in for your focus session.`,
+          text: `I scheduled "${blockTitle}" on ${detectedDate} from ${startTime} to ${endTime}. Confirm below to lock it into your calendar.`,
           actions: [
             {
               id: `act-${Date.now()}`,
               type: 'add_schedule',
-              title: context.currentTask ? `${context.currentTask.title} Focus` : 'Deep Study Session',
-              description: 'Tomorrow · 3:00 PM – 5:00 PM (Matches your high-energy focus rhythm)',
+              title: blockTitle,
+              description: `${detectedDate} · ${startTime}–${endTime} (Focus block)`,
               details: {
-                title: context.currentTask ? `${context.currentTask.title} Focus` : 'Deep Study Session',
-                startTime: '15:00',
-                endTime: '17:00',
-                date: getLocalDateKey(),
+                title: blockTitle,
+                startTime,
+                endTime,
+                date: detectedDate,
                 type: 'study',
+                courseCode: context.currentCourse?.code,
                 color: '#6366F1',
               },
               status: 'pending',
             },
           ],
-          suggestedChips: ['Add to Schedule', 'Choose Another Time', 'Adjust to 1 Hour'],
+          suggestedChips: ['Confirm & Add', 'Choose Another Time', 'Adjust to 1 Hour'],
         };
       }
 
       return {
-        text: `I reviewed your deadlines, syllabus notes, and schedule. For ${context.currentTask ? context.currentTask.title : 'your upcoming assignments'}, I recommend focusing on the double-rotation algorithm and reviewing practice test cases.`,
-        suggestedChips: ['Show full plan', 'Break into subtasks', 'Start 25m Timer'],
+        text: `I reviewed your deadlines and timetable. Would you like me to schedule a study session, add a new task, or adjust an existing block on your calendar?`,
+        suggestedChips: ['Schedule study for tomorrow', 'Add a new task', 'Reschedule upcoming session'],
       };
     }
   },
@@ -1193,6 +1374,200 @@ Analyze and return valid JSON only with this exact shape:
           estimatedMinutes: 30,
         },
       ],
+    };
+  },
+
+  // 16. Parse or Generate full Course syllabus & structure with AI
+  async parseOrGenerateCourse(
+    prompt: string,
+    config?: AIProviderConfig
+  ): Promise<AIGeneratedCourseResult> {
+    const raw = prompt.trim();
+    if (config) {
+      try {
+        const provider = this.getProvider(config, 'routine');
+        const systemPrompt = `You are StudyAI's curriculum architect. When given a student's prompt about a course, syllabus, or class they are taking, generate a complete structured course object in JSON format.
+Output ONLY a valid JSON object matching this schema:
+{
+  "code": "standard uppercase course code e.g. CS301, MATH201, BIO101",
+  "name": "full title of the course e.g. Machine Learning & Neural Networks",
+  "color": "hex color matching subject (choose from: #EF4444 red, #F59E0B amber, #10B981 emerald, #6366F1 indigo, #0EA5E9 cyan, #EC4899 pink, #8B5CF6 purple)",
+  "coverEmoji": "single relevant emoji e.g. 💻, 📐, 🔬, 📊, 🧠, ⚖️, 🎨, 📘",
+  "professor": "instructor name or empty string",
+  "description": "2-3 sentence overview of what the course covers and core skills developed",
+  "objectives": ["Outcome 1", "Outcome 2", "Outcome 3"],
+  "modules": [
+    { "title": "Module 1: Title", "description": "Short description of unit" },
+    { "title": "Module 2: Title", "description": "Short description of unit" },
+    { "title": "Module 3: Title", "description": "Short description of unit" }
+  ],
+  "suggestedTasks": [
+    { "title": "Review syllabus and textbook reading", "priority": "high", "estimatedMinutes": 30 },
+    { "title": "Complete Module 1 practice problems", "priority": "medium", "estimatedMinutes": 45 }
+  ],
+  "aiSummary": "1 sentence summarizing what was configured for the student"
+}`;
+
+        const result = await provider.generateText(
+          `Configure a complete course based on this request:\n"${raw}"`,
+          systemPrompt
+        );
+
+        const jsonMatch = result.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed && (parsed.name || parsed.code)) {
+            const modules: CourseModule[] = Array.isArray(parsed.modules)
+              ? parsed.modules.map((m: any, idx: number) => ({
+                  id: `mod-${Date.now()}-${idx}`,
+                  title: String(m.title || `Unit ${idx + 1}`),
+                  description: m.description ? String(m.description) : undefined,
+                  order: idx + 1,
+                  completed: false,
+                }))
+              : [];
+
+            return {
+              code: String(parsed.code || 'GEN101').toUpperCase().trim(),
+              name: String(parsed.name || raw).trim(),
+              color: String(parsed.color || '#6366F1'),
+              coverEmoji: String(parsed.coverEmoji || '📘'),
+              professor: parsed.professor ? String(parsed.professor).trim() : undefined,
+              description: parsed.description ? String(parsed.description).trim() : undefined,
+              objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map(String) : [],
+              modules,
+              initialTasks: Array.isArray(parsed.suggestedTasks)
+                ? parsed.suggestedTasks.map((t: any) => ({
+                    title: String(t.title || 'Starter task'),
+                    priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
+                    estimatedMinutes: Number(t.estimatedMinutes) || 45,
+                  }))
+                : undefined,
+              aiSummary: String(parsed.aiSummary || `Configured ${parsed.code || 'course'} with ${modules.length} modules.`),
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('parseOrGenerateCourse AI API error, falling back to smart heuristic:', err);
+      }
+    }
+
+    // High quality deterministic fallback
+    const codeMatch = raw.match(/\b([A-Za-z]{2,5})\s*[-_ ]?\s*(\d{2,4}[A-Za-z]?)\b/);
+    let extractedCode = codeMatch ? `${codeMatch[1].toUpperCase()}${codeMatch[2]}` : '';
+    let extractedName = raw
+      .replace(/\b([A-Za-z]{2,5})\s*[-_ ]?\s*(\d{2,4}[A-Za-z]?)\b/i, '')
+      .replace(/^(course|class|generate|add|create|syllabus for)?\s*/i, '')
+      .replace(/\s+(with|by|prof|dr)\s+.*$/i, '')
+      .trim();
+
+    let extractedProfessor: string | undefined = undefined;
+    const profMatch = raw.match(/(?:with|by|prof\.?|dr\.?)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+    if (profMatch) extractedProfessor = profMatch[1];
+
+    let extractedColor = '#6366F1';
+    let extractedEmoji = '📘';
+    let defaultModules = ['Foundations & Core Principles', 'Analytical Methods & Practice', 'Advanced Applications & Synthesis'];
+    let defaultObjectives = [
+      'Master core conceptual models and foundational terminology',
+      'Apply analytical problem-solving techniques to complex problem sets',
+      'Synthesize subject knowledge through collaborative practice and projects',
+    ];
+
+    const lower = raw.toLowerCase();
+    if (lower.includes('cs') || lower.includes('computer') || lower.includes('algorithm') || lower.includes('code') || lower.includes('programming') || lower.includes('software') || lower.includes('machine learning') || lower.includes('ai')) {
+      extractedColor = '#EF4444';
+      extractedEmoji = '💻';
+      if (!extractedCode) extractedCode = 'CS201';
+      if (!extractedName) extractedName = 'Data Structures & Algorithms';
+      defaultModules = ['Complexity Analysis & Primitive Structures', 'Trees, Heaps & Hash Maps', 'Graph Algorithms & Dynamic Programming'];
+      defaultObjectives = [
+        'Analyze asymptotic time and space complexity of computational algorithms',
+        'Implement fundamental tree and graph traversal algorithms',
+        'Design optimized algorithmic solutions for real-world software problems',
+      ];
+    } else if (lower.includes('math') || lower.includes('calc') || lower.includes('algebra') || lower.includes('stats') || lower.includes('calculus')) {
+      extractedColor = '#F59E0B';
+      extractedEmoji = '📐';
+      if (!extractedCode) extractedCode = 'MATH201';
+      if (!extractedName) extractedName = 'Linear Algebra & Calculus';
+      defaultModules = ['Vector Spaces & Transformations', 'Eigenvalues & Diagonalization', 'Multivariable Optimization'];
+      defaultObjectives = [
+        'Formulate and solve matrix equations and linear systems',
+        'Calculate eigenvalues and perform spectral decompositions',
+        'Apply gradient descent and multivariable techniques to optimization problems',
+      ];
+    } else if (lower.includes('bio') || lower.includes('chem') || lower.includes('organic') || lower.includes('physics')) {
+      extractedColor = '#10B981';
+      extractedEmoji = '🔬';
+      if (!extractedCode) extractedCode = 'BIO101';
+      if (!extractedName) extractedName = 'Molecular Biology & Genetics';
+      defaultModules = ['Cell Structure & Membrane Dynamics', 'DNA Replication, Transcription & Translation', 'Genetic Inheritance & Epigenetics'];
+      defaultObjectives = [
+        'Identify biochemical pathways governing cellular respiration',
+        'Explain mechanisms of gene expression and regulation',
+        'Design controlled laboratory hypotheses and interpret experimental assays',
+      ];
+    } else if (lower.includes('econ') || lower.includes('finance') || lower.includes('business') || lower.includes('accounting') || lower.includes('market')) {
+      extractedColor = '#0EA5E9';
+      extractedEmoji = '📊';
+      if (!extractedCode) extractedCode = 'ECON101';
+      if (!extractedName) extractedName = 'Principles of Microeconomics';
+      defaultModules = ['Supply, Demand & Elasticity', 'Firm Cost Structures & Market Types', 'Market Failures, Public Goods & Externalities'];
+      defaultObjectives = [
+        'Model consumer surplus, producer surplus, and deadweight loss',
+        'Evaluate market equilibria under perfect competition and monopoly',
+        'Formulate policy recommendations for externalities and market failures',
+      ];
+    } else if (lower.includes('psych') || lower.includes('neuro') || lower.includes('brain') || lower.includes('cognit')) {
+      extractedColor = '#8B5CF6';
+      extractedEmoji = '🧠';
+      if (!extractedCode) extractedCode = 'PSYCH201';
+      if (!extractedName) extractedName = 'Cognitive Neuroscience';
+      defaultModules = ['Neural Signaling & Brain Anatomy', 'Sensory Perception & Memory Systems', 'Executive Function & Consciousness'];
+      defaultObjectives = [
+        'Describe action potential mechanics and synaptic transmission',
+        'Differentiate between working memory, episodic, and procedural memory',
+        'Analyze neuroimaging methodologies including fMRI and EEG',
+      ];
+    } else if (lower.includes('law') || lower.includes('pol') || lower.includes('gov') || lower.includes('justice') || lower.includes('history')) {
+      extractedColor = '#6366F1';
+      extractedEmoji = '⚖️';
+      if (!extractedCode) extractedCode = 'GOV101';
+      if (!extractedName) extractedName = 'Constitutional Law & Governance';
+      defaultModules = ['Institutional Frameworks & Separation of Powers', 'Due Process & Fundamental Rights', 'Precedents, Statutes & Judicial Review'];
+    }
+
+    if (!extractedCode) extractedCode = 'COURSE101';
+    if (!extractedName) extractedName = raw || 'New Academic Course';
+
+    extractedName = extractedName
+      .split(' ')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+
+    const modules: CourseModule[] = defaultModules.map((m, idx) => ({
+      id: `mod-${Date.now()}-${idx}`,
+      title: m,
+      order: idx + 1,
+      completed: false,
+    }));
+
+    return {
+      code: extractedCode,
+      name: extractedName,
+      color: extractedColor,
+      coverEmoji: extractedEmoji,
+      professor: extractedProfessor,
+      description: `Comprehensive academic curriculum for ${extractedName} (${extractedCode}). Covers foundational theory, core methodologies, and practical applications.`,
+      objectives: defaultObjectives,
+      modules,
+      initialTasks: [
+        { title: `Read syllabus for ${extractedCode}`, priority: 'high', estimatedMinutes: 20 },
+        { title: `Set up notes and folder for ${extractedCode}`, priority: 'medium', estimatedMinutes: 15 },
+        { title: `Review Unit 1: ${defaultModules[0]}`, priority: 'medium', estimatedMinutes: 45 },
+      ],
+      aiSummary: `Configured ${extractedCode} · ${extractedName}${extractedProfessor ? ` (${extractedProfessor})` : ''} with ${modules.length} syllabus modules.`,
     };
   },
 };

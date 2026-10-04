@@ -12,22 +12,33 @@ import {
   CalendarClock,
   AlertTriangle,
   Pencil,
+  Send,
+  Check,
+  Bot,
+  Zap,
+  CheckCircle2,
 } from 'lucide-react';
-import { GoogleCalendarSyncState, ScheduleEvent, ScheduleEventType } from '../../types';
-import { getLocalDateKey } from '../../utils/dates';
+import { GoogleCalendarSyncState, ScheduleEvent, ScheduleEventType, Task, AIProviderConfig, AIActionProposal } from '../../types';
+import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
 import { SCHEDULE_EVENT_COLORS, SCHEDULE_EVENT_EMOJI } from '../../services/calendarSync';
+import { AIOrchestrator } from '../../services/aiOrchestrator';
+import { INITIAL_AI_CONFIG } from '../../utils/storage';
 
 interface CalendarScreenProps {
   schedule: ScheduleEvent[];
+  tasks?: Task[];
+  aiConfig?: AIProviderConfig;
   calendarSync: GoogleCalendarSyncState;
   isSyncing: boolean;
   onOpenWeekPlanner: () => void;
   onAddEvent: (event: Omit<ScheduleEvent, 'id'>) => void;
   onUpdateEvent: (event: ScheduleEvent) => void;
   onDeleteEvent: (id: string) => void;
+  onExecuteAction?: (action: AIActionProposal) => void;
   onConnectGoogle: () => void;
   onSyncNow: () => void;
   onOpenSyncSettings: () => void;
+  onOpenAIChat?: (prompt?: string) => void;
 }
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -53,15 +64,19 @@ function durationLabel(start: string, end: string): string {
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   schedule,
+  tasks = [],
+  aiConfig,
   calendarSync,
   isSyncing,
   onOpenWeekPlanner,
   onAddEvent,
   onUpdateEvent,
   onDeleteEvent,
+  onExecuteAction,
   onConnectGoogle,
   onSyncNow,
   onOpenSyncSettings,
+  onOpenAIChat,
 }) => {
   const todayKey = getLocalDateKey();
   const [selectedDate, setSelectedDate] = useState(todayKey);
@@ -75,8 +90,170 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ScheduleEvent | null>(null);
 
+  // Quick AI Assistant in Calendar
+  const [aiInput, setAiInput] = useState('');
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [proposedAction, setProposedAction] = useState<AIActionProposal | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+
+  const handleAskAIInCalendar = async (queryText?: string) => {
+    const textToSend = (queryText || aiInput).trim();
+    if (!textToSend || isAiProcessing) return;
+
+    setIsAiProcessing(true);
+    setProposedAction(null);
+    setAiFeedback(null);
+
+    try {
+      const configToUse = aiConfig || INITIAL_AI_CONFIG;
+
+      const res = await AIOrchestrator.chatWithContext(
+        textToSend,
+        [],
+        { schedule, tasks },
+        configToUse
+      );
+
+      if (res.actions && res.actions.length > 0) {
+        setProposedAction(res.actions[0]);
+        setAiFeedback(res.text);
+      } else {
+        const detectedDate = parseNaturalDate(textToSend);
+        const { startTime: pStart, endTime: pEnd } = parseNaturalTime(textToSend);
+        const cleanTitle = textToSend
+          .replace(/^(add|schedule|plan|move|create)\s+(a\s+)?/i, '')
+          .replace(/\s+(tomorrow|today|on|at|from)\s+.*$/i, '')
+          .trim() || 'Focus Session';
+
+        const fallbackAction: AIActionProposal = {
+          id: `act-${Date.now()}`,
+          type: 'add_schedule',
+          title: cleanTitle,
+          description: `${detectedDate} · ${pStart}–${pEnd}`,
+          details: {
+            title: cleanTitle,
+            date: detectedDate,
+            startTime: pStart,
+            endTime: pEnd,
+            type: 'study',
+            color: '#6366F1',
+          },
+          status: 'pending',
+        };
+        setProposedAction(fallbackAction);
+        setAiFeedback(`I prepared "${cleanTitle}" for ${detectedDate} (${pStart}–${pEnd}). Confirm below to apply.`);
+      }
+      setAiInput('');
+    } catch (err) {
+      console.warn('AI Calendar Assistant error:', err);
+      setAiFeedback('Could not process request. Please try rephrasing.');
+    } finally {
+      setIsAiProcessing(false);
+    }
+  };
+
+  const handleApplyProposedAction = (action: AIActionProposal) => {
+    if (onExecuteAction) {
+      onExecuteAction(action);
+    } else {
+      if (action.type === 'add_schedule') {
+        const d = action.details;
+        onAddEvent({
+          title: d.title || action.title,
+          date: d.date || selectedDate,
+          startTime: d.startTime || '15:00',
+          endTime: d.endTime || '16:30',
+          type: d.type || 'study',
+          color: d.color || '#6366F1',
+          isCompleted: false,
+        });
+      }
+    }
+
+    const targetDate = action.details?.date;
+    if (targetDate && targetDate !== selectedDate) {
+      setSelectedDate(targetDate);
+      const d = new Date(`${targetDate}T12:00:00`);
+      if (d.getMonth() !== month || d.getFullYear() !== year) {
+        const first = new Date(d);
+        first.setDate(1);
+        first.setHours(12, 0, 0, 0);
+        setViewMonth(first);
+      }
+    }
+
+    setProposedAction(null);
+    setAiFeedback(`Applied "${action.title}" to calendar!`);
+    setTimeout(() => setAiFeedback(null), 3500);
+  };
+
+  const handleNudgeEventTime = (event: ScheduleEvent, deltaMinutes: number) => {
+    const [sh, sm] = event.startTime.split(':').map(Number);
+    const [eh, em] = event.endTime.split(':').map(Number);
+    let newStartM = sh * 60 + sm + deltaMinutes;
+    let newEndM = eh * 60 + em + deltaMinutes;
+
+    if (newStartM < 0) newStartM = 0;
+    if (newEndM > 24 * 60 - 1) newEndM = 24 * 60 - 1;
+
+    const startHStr = String(Math.floor(newStartM / 60)).padStart(2, '0');
+    const startMStr = String(newStartM % 60).padStart(2, '0');
+    const endHStr = String(Math.floor(newEndM / 60)).padStart(2, '0');
+    const endMStr = String(newEndM % 60).padStart(2, '0');
+
+    onUpdateEvent({
+      ...event,
+      startTime: `${startHStr}:${startMStr}`,
+      endTime: `${endHStr}:${endMStr}`,
+    });
+  };
+
+  const handleMoveToTomorrow = (event: ScheduleEvent) => {
+    const curr = new Date(`${event.date}T12:00:00`);
+    curr.setDate(curr.getDate() + 1);
+    const nextDate = getLocalDateKey(curr);
+    onUpdateEvent({
+      ...event,
+      date: nextDate,
+    });
+  };
+
+  const handleSuggestOptimalSlot = () => {
+    const dayEvents = schedule
+      .filter((e) => e.date === selectedDate)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+    const candidateSlots = [
+      { start: '10:00', end: '11:30' },
+      { start: '14:00', end: '15:30' },
+      { start: '16:00', end: '17:30' },
+      { start: '19:00', end: '20:30' },
+      { start: '09:00', end: '10:30' },
+      { start: '11:30', end: '13:00' },
+      { start: '15:30', end: '17:00' },
+    ];
+
+    for (const slot of candidateSlots) {
+      const hasOverlap = dayEvents.some((e) => {
+        return (
+          (slot.start >= e.startTime && slot.start < e.endTime) ||
+          (slot.end > e.startTime && slot.end <= e.endTime) ||
+          (slot.start <= e.startTime && slot.end >= e.endTime)
+        );
+      });
+      if (!hasOverlap) {
+        setStartTime(slot.start);
+        setEndTime(slot.end);
+        return;
+      }
+    }
+    setStartTime('15:00');
+    setEndTime('16:30');
+  };
+
   // Event form state
   const [title, setTitle] = useState('');
+  const [eventDate, setEventDate] = useState(selectedDate);
   const [startTime, setStartTime] = useState('10:00');
   const [endTime, setEndTime] = useState('11:30');
   const [type, setType] = useState<ScheduleEventType>('study');
@@ -196,6 +373,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const openAddModal = () => {
     setEditingEvent(null);
     setTitle('');
+    setEventDate(selectedDate);
     setStartTime('10:00');
     setEndTime('11:30');
     setType('study');
@@ -206,6 +384,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const openEditModal = (event: ScheduleEvent) => {
     setEditingEvent(event);
     setTitle(event.title);
+    setEventDate(event.date);
     setStartTime(event.startTime);
     setEndTime(event.endTime);
     setType(event.type);
@@ -216,10 +395,12 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const handleSaveEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
+    const targetDate = eventDate || selectedDate;
     if (editingEvent) {
       onUpdateEvent({
         ...editingEvent,
         title: title.trim(),
+        date: targetDate,
         startTime,
         endTime,
         type,
@@ -231,13 +412,25 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
         title: title.trim(),
         startTime,
         endTime,
-        date: selectedDate,
+        date: targetDate,
         type,
         location: location.trim() || undefined,
         color: SCHEDULE_EVENT_COLORS[type],
         isCompleted: false,
       });
     }
+
+    if (targetDate !== selectedDate) {
+      setSelectedDate(targetDate);
+      const d = new Date(`${targetDate}T12:00:00`);
+      if (d.getMonth() !== month || d.getFullYear() !== year) {
+        const first = new Date(d);
+        first.setDate(1);
+        first.setHours(12, 0, 0, 0);
+        setViewMonth(first);
+      }
+    }
+
     setIsAddModalOpen(false);
     setEditingEvent(null);
   };
@@ -445,6 +638,141 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
         </div>
       )}
 
+      {/* AI Schedule & Task Assistant Bar */}
+      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-indigo-50/90 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 shadow-xs space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200">
+            <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>AI Schedule & Task Assistant</span>
+          </div>
+          <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded-full border border-indigo-200/60 dark:border-indigo-800">
+            Chat to Add & Reschedule
+          </span>
+        </div>
+
+        {/* Input row */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAskAIInCalendar();
+          }}
+          className="flex items-center gap-2"
+        >
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={aiInput}
+              onChange={(e) => setAiInput(e.target.value)}
+              placeholder="e.g. 'Add Math homework tomorrow at 3pm' or 'Move Friday lecture to 4pm'..."
+              className="w-full pl-3 pr-8 py-2 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800/80 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+            />
+            {aiInput && (
+              <button
+                type="button"
+                onClick={() => setAiInput('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={!aiInput.trim() || isAiProcessing}
+            className="py-2 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 shrink-0"
+          >
+            {isAiProcessing ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">Ask AI</span>
+          </button>
+        </form>
+
+        {/* Quick Suggestion Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => handleAskAIInCalendar('Schedule a 2 hour study session tomorrow at 3pm')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+          >
+            ⚡ 2h Study Tomorrow 3pm
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAskAIInCalendar('Add 30 min focus review today at 4pm')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+          >
+            🎯 30m Review Today 4pm
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAskAIInCalendar('Add task finish CS101 assignment due Friday at 11:59pm')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0"
+          >
+            📋 Add Task due Friday
+          </button>
+        </div>
+
+        {/* Action Proposal Response Card inside Calendar */}
+        {proposedAction && (
+          <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 shadow-sm space-y-2 animate-fade-in mt-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+                {proposedAction.type === 'create_task'
+                  ? 'Proposed Task'
+                  : proposedAction.type === 'edit_schedule'
+                  ? 'Proposed Reschedule'
+                  : 'Proposed Calendar Block'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setProposedAction(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-slate-900 dark:text-white">
+                {proposedAction.title}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {proposedAction.description}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handleApplyProposedAction(proposedAction)}
+                className="py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Confirm & Apply</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setProposedAction(null)}
+                className="py-1.5 px-3 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Feedback message */}
+        {aiFeedback && !proposedAction && (
+          <div className="text-xs text-indigo-700 dark:text-indigo-300 font-medium px-1 animate-fade-in">
+            {aiFeedback}
+          </div>
+        )}
+      </div>
+
       {/* Selected-day event list */}
       <div className="space-y-2.5 pt-1">
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold px-1">
@@ -531,13 +859,47 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleNudgeEventTime(event, -30);
+                  }}
+                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Move 30 minutes earlier"
+                >
+                  -30m
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleNudgeEventTime(event, 30);
+                  }}
+                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Move 30 minutes later"
+                >
+                  +30m
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveToTomorrow(event);
+                  }}
+                  className="px-1.5 py-1 text-[10px] font-bold rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 transition-colors opacity-90 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-0.5"
+                  title="Move to tomorrow"
+                >
+                  <Zap className="w-2.5 h-2.5" />
+                  <span>+1d</span>
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     openEditModal(event);
                   }}
-                  className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
+                  className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   title="Edit event"
                   aria-label={`Edit ${event.title}`}
                 >
@@ -548,7 +910,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                     e.stopPropagation();
                     onDeleteEvent(event.id);
                   }}
-                  className="p-2 text-slate-400 hover:text-rose-500 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
+                  className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   title="Remove event"
                   aria-label={`Delete ${event.title}`}
                 >
@@ -596,13 +958,31 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                 />
               </div>
 
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
-                {editingEvent ? 'On ' : 'For '}
-                {new Date(`${editingEvent ? editingEvent.date : selectedDate}T12:00:00`).toLocaleDateString([], {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                })}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-medium focus:outline-none focus:border-indigo-500 font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                  Time Slot
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSuggestOptimalSlot}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 text-[11px] font-bold hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>AI Suggest Open Slot</span>
+                </button>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

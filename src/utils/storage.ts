@@ -11,6 +11,7 @@ import {
   AIProviderConfig,
   AIMemoryItem,
   NotificationItem,
+  NotificationSettings,
   ProgressMetrics,
   CourseResource,
   CourseQuiz,
@@ -36,6 +37,7 @@ const STORAGE_KEYS = {
   AI_CONFIG: 'studyai_ai_config',
   AI_MEMORY: 'studyai_ai_memory',
   NOTIFICATIONS: 'studyai_notifications',
+  NOTIFICATION_SETTINGS: 'studyai_notification_settings',
   METRICS: 'studyai_metrics',
   THEME: 'studyai_theme',
   RESOURCES: 'studyai_course_resources',
@@ -735,6 +737,22 @@ export const INITIAL_NOTIFICATIONS: NotificationItem[] = [
   },
 ];
 
+export const INITIAL_NOTIFICATION_SETTINGS: NotificationSettings = {
+  inAppBanners: true,
+  soundEnabled: true,
+  browserNotifications: false,
+  taskReminders: true,
+  classReminders: true,
+  deadlineAlerts: true,
+  aiSuggestions: true,
+  dailyBriefing: true,
+  weeklySummary: true,
+  advanceNoticeMinutes: 15,
+  quietHoursEnabled: false,
+  quietHoursStart: '22:00',
+  quietHoursEnd: '07:00',
+};
+
 export const INITIAL_METRICS: ProgressMetrics = {
   weeklyGoalPercentage: 68,
   studyTimeFormatted: '28h 45m',
@@ -988,6 +1006,19 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifs));
   },
 
+  getNotificationSettings(): NotificationSettings {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.NOTIFICATION_SETTINGS);
+      if (!data) return INITIAL_NOTIFICATION_SETTINGS;
+      return { ...INITIAL_NOTIFICATION_SETTINGS, ...JSON.parse(data) };
+    } catch {
+      return INITIAL_NOTIFICATION_SETTINGS;
+    }
+  },
+  saveNotificationSettings(settings: NotificationSettings) {
+    localStorage.setItem(STORAGE_KEYS.NOTIFICATION_SETTINGS, JSON.stringify(settings));
+  },
+
   getNotes(): StudyNote[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.NOTES);
@@ -1050,5 +1081,21 @@ export const StudyStorage = {
   },
   saveCalendarOutbox(items: CalendarOutboxItem[]) {
     localStorage.setItem(STORAGE_KEYS.CALENDAR_OUTBOX, JSON.stringify(items));
+  },
+
+  getConversations(): AIConversation[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  },
+  saveConversations(conversations: AIConversation[]) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(conversations));
+    } catch {
+      console.warn('StudyStorage: conversations not persisted (quota).');
+    }
   },
 };

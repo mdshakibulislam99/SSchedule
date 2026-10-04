@@ -1,18 +1,39 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Search, ChevronLeft, ChevronRight, ChevronDown, CheckCircle2, Circle, Trash2, X, Check } from 'lucide-react';
-import { Task, TaskCategory, ScheduleEvent } from '../../types';
-import { getLocalDateKey } from '../../utils/dates';
+import {
+  Plus,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  CheckCircle2,
+  Circle,
+  Trash2,
+  X,
+  Check,
+  Send,
+  Bot,
+  Sparkles,
+  RefreshCw,
+  Clock,
+  Pencil,
+} from 'lucide-react';
+import { Task, TaskCategory, ScheduleEvent, AIProviderConfig, AIActionProposal } from '../../types';
+import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
 import { TaskComposer } from '../tasks/TaskComposer';
+import { AIOrchestrator } from '../../services/aiOrchestrator';
+import { INITIAL_AI_CONFIG } from '../../utils/storage';
 
 interface TasksScreenProps {
   tasks: Task[];
   schedule: ScheduleEvent[];
+  aiConfig?: AIProviderConfig;
   courseCodeFilter?: string;
   onClearCourseFilter?: () => void;
   onSelectTask: (task: Task) => void;
   onToggleTask: (taskId: string) => void;
   onAddTask: (task: Partial<Task>, autoPlan: boolean) => void;
   onDeleteTask?: (taskId: string) => void;
+  onExecuteAction?: (action: AIActionProposal) => void;
   onComposerStateChange?: (isOpen: boolean) => void;
 }
 
@@ -28,12 +49,14 @@ const AREA_CHOICES: { id: 'all' | TaskCategory; label: string }[] = [
 export const TasksScreen: React.FC<TasksScreenProps> = ({
   tasks,
   schedule,
+  aiConfig,
   courseCodeFilter,
   onClearCourseFilter,
   onSelectTask,
   onToggleTask,
   onAddTask,
   onDeleteTask,
+  onExecuteAction,
   onComposerStateChange,
 }) => {
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'overdue' | 'finished'>('all');
@@ -45,6 +68,93 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
   const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
+
+  // Quick AI Task Assistant state
+  const [aiInput, setAiInput] = useState('');
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [proposedAction, setProposedAction] = useState<AIActionProposal | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+
+  const handleAskAIInTasks = async (queryText?: string) => {
+    const textToSend = (queryText || aiInput).trim();
+    if (!textToSend || isAiProcessing) return;
+
+    setIsAiProcessing(true);
+    setProposedAction(null);
+    setAiFeedback(null);
+
+    try {
+      const configToUse = aiConfig || INITIAL_AI_CONFIG;
+
+      const res = await AIOrchestrator.chatWithContext(
+        textToSend,
+        [],
+        { tasks, schedule },
+        configToUse
+      );
+
+      if (res.actions && res.actions.length > 0) {
+        setProposedAction(res.actions[0]);
+        setAiFeedback(res.text);
+      } else {
+        const detectedDate = parseNaturalDate(textToSend);
+        const { startTime: pStart } = parseNaturalTime(textToSend);
+        const cleanTitle = textToSend
+          .replace(/^(add|create|remind me to|schedule)\s+(a\s+)?(task|todo|homework|assignment)?\s*/i, '')
+          .replace(/\s+(tomorrow|today|on|at|due|by)\s+.*$/i, '')
+          .trim() || 'Study Task';
+
+        const fallbackAction: AIActionProposal = {
+          id: `act-${Date.now()}`,
+          type: 'create_task',
+          title: cleanTitle,
+          description: `Due: ${detectedDate}${pStart ? ` · Planned: ${pStart}` : ''} · High Priority`,
+          details: {
+            title: cleanTitle,
+            deadline: detectedDate,
+            scheduledDate: detectedDate,
+            scheduledStartTime: pStart,
+            priority: 'high',
+            estimatedMinutes: 45,
+          },
+          status: 'pending',
+        };
+        setProposedAction(fallbackAction);
+        setAiFeedback(`I prepared "${cleanTitle}" due on ${detectedDate}. Confirm below to add it to your tasks.`);
+      }
+      setAiInput('');
+    } catch (err) {
+      console.warn('AI Tasks Assistant error:', err);
+      setAiFeedback('Could not process request. Please try rephrasing.');
+    } finally {
+      setIsAiProcessing(false);
+    }
+  };
+
+  const handleApplyProposedAction = (action: AIActionProposal) => {
+    if (onExecuteAction) {
+      onExecuteAction(action);
+    } else {
+      if (action.type === 'create_task') {
+        const d = action.details;
+        onAddTask(
+          {
+            title: d.title || action.title,
+            deadline: d.deadline || new Date().toISOString(),
+            scheduledDate: d.scheduledDate,
+            scheduledStartTime: d.scheduledStartTime,
+            priority: d.priority || 'medium',
+            estimatedMinutes: d.estimatedMinutes || 45,
+            courseCode: d.courseCode,
+          },
+          true
+        );
+      }
+    }
+    setProposedAction(null);
+    setAiFeedback(`Task "${action.title}" added successfully!`);
+    setTimeout(() => setAiFeedback(null), 3500);
+  };
 
   const todayKey = getLocalDateKey();
   const isTaskForToday = (task: Task) => {
@@ -235,6 +345,137 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* AI Task Assistant Bar (Chat with AI to add or edit tasks) */}
+      <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-indigo-50/80 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-indigo-950/40 border border-emerald-100 dark:border-emerald-900/60 shadow-xs space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+            <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>AI Task Assistant</span>
+          </div>
+          <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-bold bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800">
+            Chat to Add & Edit Tasks
+          </span>
+        </div>
+
+        {/* Input row */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAskAIInTasks();
+          }}
+          className="flex items-center gap-2"
+        >
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={aiInput}
+              onChange={(e) => setAiInput(e.target.value)}
+              placeholder="e.g. 'Add Math homework due tomorrow at 3pm' or 'Change Assignment 2 priority to high'..."
+              className="w-full pl-3 pr-8 py-2 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200/80 dark:border-emerald-800/80 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+            />
+            {aiInput && (
+              <button
+                type="button"
+                onClick={() => setAiInput('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={!aiInput.trim() || isAiProcessing}
+            className="py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            {isAiProcessing ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">Add with AI</span>
+          </button>
+        </form>
+
+        {/* Quick Suggestion Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => handleAskAIInTasks('Add Math homework due tomorrow at 3pm')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
+          >
+            📋 Math Homework Tomorrow
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAskAIInTasks('Add CS101 lab report due Friday')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
+          >
+            ⚡ CS101 Lab due Friday
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAskAIInTasks('Schedule 45 min exam prep task on Monday')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
+          >
+            🎯 45m Exam Prep Monday
+          </button>
+        </div>
+
+        {/* Action Proposal Response Card */}
+        {proposedAction && (
+          <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 shadow-sm space-y-2 animate-fade-in mt-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                {proposedAction.type === 'edit_task' ? 'Proposed Task Update' : 'Proposed Task'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setProposedAction(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-slate-900 dark:text-white">
+                {proposedAction.title}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {proposedAction.description}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handleApplyProposedAction(proposedAction)}
+                className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>{proposedAction.type === 'edit_task' ? 'Apply Update' : 'Confirm & Add Task'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setProposedAction(null)}
+                className="py-1.5 px-3 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Feedback message */}
+        {aiFeedback && !proposedAction && (
+          <div className="text-xs text-emerald-700 dark:text-emerald-300 font-medium px-1 animate-fade-in">
+            {aiFeedback}
+          </div>
+        )}
       </div>
 
       {/* VIEW: FINISHED TAB SELECTED */}

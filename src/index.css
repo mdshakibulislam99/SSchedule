@@ -219,6 +219,19 @@
   animation: slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes slide-right {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-right {
+  animation: slide-right 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }

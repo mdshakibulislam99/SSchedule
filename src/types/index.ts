@@ -53,6 +53,19 @@ export interface Course {
   createdAt?: string;
 }
 
+export interface AIGeneratedCourseResult {
+  code: string;
+  name: string;
+  color: string;
+  coverEmoji: string;
+  professor?: string;
+  description?: string;
+  objectives: string[];
+  modules: CourseModule[];
+  initialTasks?: Array<{ title: string; priority: 'low' | 'medium' | 'high'; estimatedMinutes: number }>;
+  aiSummary: string;
+}
+
 export type CourseResourceType = 'pdf' | 'docx' | 'text' | 'link' | 'slide' | 'video';
 
 export interface CourseResourceReading {
@@ -326,7 +339,17 @@ export interface AIMessage {
 
 export interface AIActionProposal {
   id: string;
-  type: 'add_schedule' | 'create_task' | 'create_study_plan' | 'reschedule_event' | 'create_goal' | 'save_note';
+  type:
+    | 'add_schedule'
+    | 'edit_schedule'
+    | 'create_task'
+    | 'edit_task'
+    | 'delete_task'
+    | 'delete_schedule'
+    | 'create_study_plan'
+    | 'reschedule_event'
+    | 'create_goal'
+    | 'save_note';
   title: string;
   description: string;
   details: Record<string, any>;
@@ -381,6 +404,27 @@ export interface NotificationItem {
   read: boolean;
   type: 'reminder' | 'deadline' | 'insight' | 'reschedule';
   actionLabel?: string;
+}
+
+export interface NotificationSettings {
+  // Channels & Sound
+  inAppBanners: boolean;
+  soundEnabled: boolean;
+  browserNotifications: boolean;
+
+  // Categories
+  taskReminders: boolean;
+  classReminders: boolean;
+  deadlineAlerts: boolean;
+  aiSuggestions: boolean;
+  dailyBriefing: boolean;
+  weeklySummary: boolean;
+
+  // Timing & Quiet Hours
+  advanceNoticeMinutes: number; // e.g. 5, 10, 15, 30
+  quietHoursEnabled: boolean;
+  quietHoursStart: string; // e.g. "22:00"
+  quietHoursEnd: string; // e.g. "07:00"
 }
 
 export interface ProgressMetrics {

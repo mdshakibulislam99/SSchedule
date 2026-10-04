@@ -14,12 +14,13 @@ import {
   LogOut,
   RotateCcw,
 } from 'lucide-react';
-import { UserProfile, AIProviderConfig, GoogleCalendarSyncState } from '../../types';
+import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, NotificationSettings } from '../../types';
 
 interface SettingsScreenProps {
   user: UserProfile;
   config: AIProviderConfig;
   calendarSync: GoogleCalendarSyncState;
+  notificationSettings?: NotificationSettings;
   onBack: () => void;
   onOpenAIProvider: () => void;
   onOpenNotifications: () => void;
@@ -35,6 +36,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   user,
   config,
   calendarSync,
+  notificationSettings,
   onBack,
   onOpenAIProvider,
   onOpenNotifications,
@@ -126,18 +128,31 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           onClick={onOpenNotifications}
           className="w-full p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-sm hover:border-slate-300 text-left transition-all active:scale-[0.99]"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
               <Bell className="w-5 h-5" />
             </div>
-            <div>
-              <div className="text-sm font-bold text-slate-900 dark:text-white">Notifications</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Task reminders, class alerts, daily recommendations
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900 dark:text-white">Notification Settings</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                {notificationSettings
+                  ? `${notificationSettings.soundEnabled ? 'Audio Chime' : 'Silent'} · ${notificationSettings.advanceNoticeMinutes}m advance notice · ${notificationSettings.taskReminders ? 'Active' : 'Muted'}`
+                  : 'Task reminders, class alerts, quiet hours & audio chimes'}
               </div>
             </div>
           </div>
-          <ChevronRight className="w-4 h-4 text-slate-400" />
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                notificationSettings?.taskReminders || notificationSettings?.deadlineAlerts
+                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {notificationSettings?.soundEnabled ? 'Chime On' : 'Active'}
+            </span>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </div>
         </button>
 
         {/* Google Calendar Sync */}

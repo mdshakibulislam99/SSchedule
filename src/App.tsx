@@ -47,9 +47,9 @@ import { AIProviderScreen } from './components/screens/AIProviderScreen';
 import { GoogleCalendarSyncScreen } from './components/screens/GoogleCalendarSyncScreen';
 import { ProfileScreen } from './components/screens/ProfileScreen';
 import { NotificationsScreen } from './components/screens/NotificationsScreen';
+import { NotificationSettingsScreen } from './components/screens/NotificationSettingsScreen';
 import { MoreScreen } from './components/screens/MoreScreen';
 import { AIMemoryModal } from './components/screens/AIMemoryModal';
-import { LockscreenNotificationModal } from './components/screens/LockscreenNotificationModal';
 import { AISetupPrompt } from './components/mobile/AISetupPrompt';
 
 import {
@@ -63,9 +63,11 @@ import {
   AIProviderConfig,
   AIMemoryItem,
   NotificationItem,
+  NotificationSettings,
   ProgressMetrics,
   AIActionProposal,
   Course,
+  CourseModule,
   CourseResource,
   CourseResourceReading,
   ResourceAnnotation,
@@ -110,6 +112,9 @@ export default function App() {
   const [aiConfig, setAIConfig] = useState<AIProviderConfig>(() => StudyStorage.getAIConfig());
   const [aiMemory, setAIMemory] = useState<AIMemoryItem[]>(() => StudyStorage.getAIMemory());
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => StudyStorage.getNotifications());
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() =>
+    StudyStorage.getNotificationSettings()
+  );
   const [metrics, setMetrics] = useState<ProgressMetrics>(() => StudyStorage.getMetrics());
   const [calendarSync, setCalendarSync] = useState<GoogleCalendarSyncState>(() => StudyStorage.getCalendarSync());
 
@@ -147,6 +152,7 @@ export default function App() {
   const [activeSubScreen, setActiveSubScreenRaw] = useState<string | null>(null);
   const [subScreenStack, setSubScreenStack] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(tasks[0] || null);
+  const [chatAttachedTask, setChatAttachedTask] = useState<Task | null>(null);
   const [taskCourseFilter, setTaskCourseFilter] = useState<string | undefined>();
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
@@ -187,7 +193,6 @@ export default function App() {
   const [isWeekPlannerOpen, setIsWeekPlannerOpen] = useState(false);
   const [isAIMemoryOpen, setIsAIMemoryOpen] = useState(false);
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
-  const [isLockscreenOpen, setIsLockscreenOpen] = useState(false);
   const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!user.isOnboarded);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -407,12 +412,70 @@ export default function App() {
     StudyStorage.saveNotifications(notifications);
   }, [notifications]);
 
+  useEffect(() => {
+    StudyStorage.saveNotificationSettings(notificationSettings);
+  }, [notificationSettings]);
+
+  const isWithinQuietHours = (settings: NotificationSettings): boolean => {
+    if (!settings.quietHoursEnabled) return false;
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const [startH, startM] = (settings.quietHoursStart || '22:00').split(':').map(Number);
+    const [endH, endM] = (settings.quietHoursEnd || '07:00').split(':').map(Number);
+    const startMinutes = (startH || 0) * 60 + (startM || 0);
+    const endMinutes = (endH || 0) * 60 + (endM || 0);
+
+    if (startMinutes < endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    } else {
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+    }
+  };
+
+  const handleSendTestNotification = () => {
+    const isQuiet = isWithinQuietHours(notificationSettings);
+    const newNotif: NotificationItem = {
+      id: `test-notif-${Date.now()}`,
+      title: '🔔 Notification Settings Test',
+      message: `Audio chimes: ${notificationSettings.soundEnabled ? 'Enabled' : 'Disabled'} · Notice: ${notificationSettings.advanceNoticeMinutes} min · Quiet hours: ${notificationSettings.quietHoursEnabled ? `${notificationSettings.quietHoursStart}–${notificationSettings.quietHoursEnd}` : 'Off'}`,
+      timestamp: 'Just now',
+      read: false,
+      type: 'reminder',
+      actionLabel: 'Settings Verified',
+    };
+
+    setNotifications((prev) => [newNotif, ...prev]);
+
+    if (notificationSettings.soundEnabled && !isQuiet) {
+      playChime('reminder');
+    }
+
+    if (
+      notificationSettings.browserNotifications &&
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'granted' &&
+      !isQuiet
+    ) {
+      try {
+        new Notification(newNotif.title, {
+          body: newNotif.message,
+        });
+      } catch (e) {
+        console.warn('Browser notification error:', e);
+      }
+    }
+  };
+
   // Surface planned task reminders in-app once per task and calendar day.
   useEffect(() => {
     const checkTaskReminders = () => {
+      if (!notificationSettings.taskReminders) return;
+
       const now = new Date();
       const todayKey = getLocalDateKey(now);
       const todayNumber = new Date(`${todayKey}T12:00:00`).getDay();
+      const isQuiet = isWithinQuietHours(notificationSettings);
 
       tasks.forEach((task) => {
         if (task.completed || !task.reminder?.enabled || !task.scheduledDate || !task.scheduledStartTime) return;
@@ -426,12 +489,16 @@ export default function App() {
         if (!startsToday) return;
 
         const scheduled = new Date(`${todayKey}T${task.scheduledStartTime}:00`);
-        const reminderAt = scheduled.getTime() - task.reminder.minutesBefore * 60 * 1000;
+        const leadTime = task.reminder.minutesBefore || notificationSettings.advanceNoticeMinutes || 15;
+        const reminderAt = scheduled.getTime() - leadTime * 60 * 1000;
         if (now.getTime() < reminderAt || now.getTime() > scheduled.getTime() + 60 * 1000) return;
 
         const notificationId = `task-reminder-${task.id}-${todayKey}`;
+        let wasAdded = false;
+
         setNotifications((prev) => {
           if (prev.some((notification) => notification.id === notificationId)) return prev;
+          wasAdded = true;
           return [
             {
               id: notificationId,
@@ -446,10 +513,22 @@ export default function App() {
           ];
         });
 
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(`StudyAI reminder: ${task.title}`, {
-            body: `Planned for ${task.scheduledStartTime}.`,
-          });
+        if (wasAdded) {
+          if (notificationSettings.soundEnabled && !isQuiet) {
+            playChime('reminder');
+          }
+
+          if (
+            notificationSettings.browserNotifications &&
+            typeof window !== 'undefined' &&
+            'Notification' in window &&
+            Notification.permission === 'granted' &&
+            !isQuiet
+          ) {
+            new Notification(`StudyAI reminder: ${task.title}`, {
+              body: `Planned for ${task.scheduledStartTime}.`,
+            });
+          }
         }
       });
     };
@@ -457,7 +536,7 @@ export default function App() {
     checkTaskReminders();
     const intervalId = window.setInterval(checkTaskReminders, 60000);
     return () => window.clearInterval(intervalId);
-  }, [tasks]);
+  }, [tasks, notificationSettings]);
 
   useEffect(() => {
     StudyStorage.saveMetrics(metrics);
@@ -518,20 +597,57 @@ export default function App() {
   };
 
   // Courses system actions
-  const handleCreateCourse = (data: { name: string; code: string; color: string }) => {
+  const handleCreateCourse = (data: {
+    name: string;
+    code: string;
+    color: string;
+    professor?: string;
+    description?: string;
+    coverEmoji?: string;
+    objectives?: string[];
+    modules?: CourseModule[];
+    initialTasks?: Array<{ title: string; priority?: 'low' | 'medium' | 'high'; estimatedMinutes?: number }>;
+  }) => {
+    const courseId = `course-${Date.now()}`;
     const newCourse: Course = {
-      id: `course-${Date.now()}`,
+      id: courseId,
       code: data.code,
       name: data.name,
       color: data.color,
-      objectives: [],
-      modules: [],
+      professor: data.professor,
+      description: data.description,
+      coverEmoji: data.coverEmoji || '📘',
+      objectives: data.objectives || [],
+      modules: data.modules || [],
       materialsFileIds: [],
       resourceIds: [],
       studyPlan: [],
       createdAt: new Date().toISOString(),
     };
     setCourses((prev) => [...prev, newCourse]);
+
+    if (data.initialTasks && data.initialTasks.length > 0) {
+      const nowIso = new Date().toISOString();
+      const createdTasks: Task[] = data.initialTasks.map((t, idx) => ({
+        id: `task-${Date.now()}-${idx}`,
+        title: t.title,
+        courseCode: data.code,
+        courseColor: data.color || '#6366F1',
+        type: 'assignment',
+        completed: false,
+        priority: t.priority || 'medium',
+        deadline: getLocalDateKey(new Date(Date.now() + 86400000 * (idx + 2))),
+        category: 'academic',
+        estimatedMinutes: t.estimatedMinutes || 45,
+        progress: 0,
+        subtasks: [],
+        relatedFileIds: [],
+        relatedResearchIds: [],
+        createdAt: nowIso,
+      }));
+      setTasks((prev) => [...prev, ...createdTasks]);
+    }
+
     playChime('success');
   };
 
@@ -905,6 +1021,126 @@ export default function App() {
         },
         ...prev,
       ]);
+      showToast(`Task "${newTask.title}" created.`);
+    } else if (action.type === 'edit_schedule') {
+      const details = action.details || {};
+      const targetId = details.targetEventId;
+      const targetTitle = (details.targetEventTitle || action.title || '').toLowerCase();
+
+      let targetEvent = schedule.find(
+        (e) => (targetId && e.id === targetId) || (targetTitle && e.title.toLowerCase().includes(targetTitle))
+      );
+
+      if (!targetEvent && schedule.length > 0) {
+        targetEvent = schedule[0];
+      }
+
+      if (targetEvent) {
+        const updatedEvent: ScheduleEvent = {
+          ...targetEvent,
+          title: details.newTitle || details.title || targetEvent.title,
+          date: details.date || targetEvent.date,
+          startTime: details.startTime || targetEvent.startTime,
+          endTime: details.endTime || targetEvent.endTime,
+          updatedAt: new Date().toISOString(),
+        };
+        updateScheduleEvent(updatedEvent);
+
+        setNotifications((prev) => [
+          {
+            id: `notif-${Date.now()}`,
+            title: 'Schedule Updated by StudyAI',
+            message: `Moved "${updatedEvent.title}" to ${updatedEvent.date} (${updatedEvent.startTime}–${updatedEvent.endTime}).`,
+            timestamp: 'Just now',
+            read: false,
+            type: 'reschedule',
+          },
+          ...prev,
+        ]);
+        showToast(`Updated "${updatedEvent.title}" on ${updatedEvent.date}`);
+      }
+    } else if (action.type === 'edit_task') {
+      const details = action.details || {};
+      const targetId = details.targetTaskId;
+      const targetTitle = (details.targetTaskTitle || action.title || '').toLowerCase();
+
+      const targetTask = tasks.find(
+        (t) => (targetId && t.id === targetId) || (targetTitle && t.title.toLowerCase().includes(targetTitle))
+      );
+
+      if (targetTask) {
+        const updatedTask: Task = {
+          ...targetTask,
+          title: details.newTitle || details.title || targetTask.title,
+          deadline: details.deadline
+            ? details.deadline.includes('T')
+              ? details.deadline
+              : `${details.deadline}T23:59:59Z`
+            : targetTask.deadline,
+          scheduledDate: details.scheduledDate !== undefined ? details.scheduledDate : targetTask.scheduledDate,
+          scheduledStartTime:
+            details.scheduledStartTime !== undefined ? details.scheduledStartTime : targetTask.scheduledStartTime,
+          priority: details.priority || targetTask.priority,
+          courseCode: details.courseCode || targetTask.courseCode,
+        };
+
+        setTasks((prev) => prev.map((t) => (t.id === targetTask.id ? updatedTask : t)));
+
+        // If scheduled time was changed, also update corresponding schedule event if one exists
+        if (updatedTask.scheduledDate && updatedTask.scheduledStartTime) {
+          const matchSched = schedule.find(
+            (s) => s.title.toLowerCase().includes(targetTask.title.toLowerCase())
+          );
+          if (matchSched) {
+            updateScheduleEvent({
+              ...matchSched,
+              title: `${updatedTask.courseCode ? `${updatedTask.courseCode} · ` : ''}${updatedTask.title}`,
+              date: updatedTask.scheduledDate,
+              startTime: updatedTask.scheduledStartTime,
+              endTime: getEndTime(updatedTask.scheduledStartTime, updatedTask.estimatedMinutes),
+            });
+          }
+        }
+
+        setNotifications((prev) => [
+          {
+            id: `notif-${Date.now()}`,
+            title: 'Task Updated by StudyAI',
+            message: `Updated "${updatedTask.title}" (${updatedTask.priority.toUpperCase()} priority).`,
+            timestamp: 'Just now',
+            read: false,
+            type: 'reminder',
+          },
+          ...prev,
+        ]);
+        showToast(`Task "${updatedTask.title}" updated.`);
+      }
+    } else if (action.type === 'delete_task') {
+      const details = action.details || {};
+      const targetId = details.targetTaskId;
+      const targetTitle = (details.targetTaskTitle || action.title || '').toLowerCase();
+
+      const targetTask = tasks.find(
+        (t) => (targetId && t.id === targetId) || (targetTitle && t.title.toLowerCase().includes(targetTitle))
+      );
+
+      if (targetTask) {
+        handleDeleteTask(targetTask.id);
+        showToast(`Task "${targetTask.title}" removed.`);
+      }
+    } else if (action.type === 'delete_schedule') {
+      const details = action.details || {};
+      const targetId = details.targetEventId;
+      const targetTitle = (details.targetEventTitle || action.title || '').toLowerCase();
+
+      const targetEvent = schedule.find(
+        (e) => (targetId && e.id === targetId) || (targetTitle && e.title.toLowerCase().includes(targetTitle))
+      );
+
+      if (targetEvent) {
+        deleteScheduleEvent(targetEvent.id);
+        showToast(`Removed "${targetEvent.title}" from calendar.`);
+      }
     }
   };
 
@@ -1077,6 +1313,7 @@ export default function App() {
           courses={courses}
           tasks={tasks}
           resources={resources}
+          aiConfig={aiConfig}
           onOpenCourse={openCourseById}
           onCreateCourse={handleCreateCourse}
           onDeleteCourse={handleDeleteCourse}
@@ -1202,6 +1439,7 @@ export default function App() {
           onAskAIAboutTask={(task) => {
             requireAIProvider(() => {
               setSelectedTask(task);
+              setChatAttachedTask(task);
               setCurrentTab('ai');
               setActiveSubScreen(null);
             });
@@ -1222,6 +1460,7 @@ export default function App() {
           onAskAI={(task) => {
             requireAIProvider(() => {
               setSelectedTask(task);
+              setChatAttachedTask(task);
               setCurrentTab('ai');
               setActiveSubScreen(null);
             });
@@ -1272,6 +1511,7 @@ export default function App() {
           onAskAIHelp={(task) => {
             requireAIProvider(() => {
               setSelectedTask(task);
+              setChatAttachedTask(task);
               setCurrentTab('ai');
               setActiveSubScreen(null);
             });
@@ -1407,15 +1647,27 @@ export default function App() {
           user={user}
           config={aiConfig}
           calendarSync={calendarSync}
+          notificationSettings={notificationSettings}
           onBack={goBackSubScreen}
           onOpenAIProvider={() => setActiveSubScreen('ai_provider')}
-          onOpenNotifications={() => setActiveSubScreen('notifications')}
+          onOpenNotifications={() => setActiveSubScreen('notification_settings')}
           onOpenProfile={() => setActiveSubScreen('profile')}
           onOpenAIMemory={() => setIsAIMemoryOpen(true)}
           onOpenCalendarSync={() => setActiveSubScreen('calendar_sync')}
           onToggleTheme={() => setIsDark(!isDark)}
           isDark={isDark}
           onResetData={handleResetData}
+        />
+      );
+    }
+
+    if (activeSubScreen === 'notification_settings') {
+      return (
+        <NotificationSettingsScreen
+          settings={notificationSettings}
+          onUpdateSettings={setNotificationSettings}
+          onSendTestNotification={handleSendTestNotification}
+          onBack={goBackSubScreen}
         />
       );
     }
@@ -1465,7 +1717,15 @@ export default function App() {
         <NotificationsScreen
           notifications={notifications}
           onBack={goBackSubScreen}
-          onSimulateLockscreen={() => setIsLockscreenOpen(true)}
+          onUpdateNotifications={setNotifications}
+          onOpenSettings={() => setActiveSubScreen('notification_settings')}
+          onSelectTaskById={(taskId) => {
+            const found = tasks.find((t) => t.id === taskId);
+            if (found) {
+              setSelectedTask(found);
+              setActiveSubScreen('task_detail');
+            }
+          }}
         />
       );
     }
@@ -1509,6 +1769,7 @@ export default function App() {
             courses={courses}
             tasks={tasks}
             resources={resources}
+            aiConfig={aiConfig}
             onOpenCourse={openCourseById}
             onCreateCourse={handleCreateCourse}
             onDeleteCourse={handleDeleteCourse}
@@ -1520,6 +1781,7 @@ export default function App() {
           <TasksScreen
             tasks={tasks}
             schedule={schedule}
+            aiConfig={aiConfig}
             courseCodeFilter={taskCourseFilter}
             onClearCourseFilter={() => setTaskCourseFilter(undefined)}
             onSelectTask={(task) => {
@@ -1529,6 +1791,7 @@ export default function App() {
             onToggleTask={handleToggleTask}
             onAddTask={handleCreateTask}
             onDeleteTask={handleDeleteTask}
+            onExecuteAction={handleExecuteAction}
             onComposerStateChange={setIsTaskComposerOpen}
           />
         );
@@ -1536,7 +1799,7 @@ export default function App() {
       case 'ai':
         return (
           <AIChatScreen
-            contextTask={selectedTask}
+            contextTask={chatAttachedTask}
             contextFile={selectedFileForChat}
             courses={courses}
             resources={resources}
@@ -1552,11 +1815,12 @@ export default function App() {
               setCurrentTab('courses');
             }}
             onClearContext={() => {
-              setSelectedTask(null);
+              setChatAttachedTask(null);
               setSelectedFileForChat(null);
             }}
             onOpenVoiceModal={() => requireAIProvider(() => setIsVoiceModalOpen(true))}
             onExecuteAction={handleExecuteAction}
+            onUploadFile={handleUploadFile}
             config={aiConfig}
             allTasks={tasks}
             schedule={schedule}
@@ -1570,6 +1834,8 @@ export default function App() {
         return (
           <CalendarScreen
             schedule={schedule}
+            tasks={tasks}
+            aiConfig={aiConfig}
             calendarSync={calendarSync}
             isSyncing={gcal.isSyncing}
             onOpenWeekPlanner={() => requireAIProvider(() => setIsWeekPlannerOpen(true))}
@@ -1579,9 +1845,11 @@ export default function App() {
             }}
             onUpdateEvent={updateScheduleEvent}
             onDeleteEvent={deleteScheduleEvent}
+            onExecuteAction={handleExecuteAction}
             onConnectGoogle={() => gcal.connect()}
             onSyncNow={() => gcal.syncNow()}
             onOpenSyncSettings={() => setActiveSubScreen('calendar_sync')}
+            onOpenAIChat={(q) => requireAIProvider(() => setCurrentTab('ai'))}
           />
         );
 
@@ -1729,14 +1997,6 @@ export default function App() {
             playChime('success');
           }}
           onDeleteMemory={(id) => setAIMemory((prev) => prev.filter((m) => m.id !== id))}
-        />
-
-        <LockscreenNotificationModal
-          isOpen={isLockscreenOpen}
-          onClose={() => setIsLockscreenOpen(false)}
-          onOpenAppToTask={() => {
-            setActiveSubScreen('what_to_do_now');
-          }}
         />
       </div>
     </div>
