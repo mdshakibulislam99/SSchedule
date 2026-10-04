@@ -155,7 +155,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         setBackupSuccess('Backup restored successfully! Reloading workspace...');
         setTimeout(() => window.location.reload(), 1200);
       } else {
-        alert('Invalid backup file. Please select a valid ChronoPulse backup JSON file.');
+        alert('Invalid backup file. Please select a valid SShedule backup JSON file.');
       }
     };
     reader.readAsText(file);

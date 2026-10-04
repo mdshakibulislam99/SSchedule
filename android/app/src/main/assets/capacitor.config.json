@@ -1,6 +1,6 @@
 {
 	"appId": "com.chronopulse.ai",
-	"appName": "ChronoPulse AI",
+	"appName": "SShedule",
 	"webDir": "dist",
 	"android": {
 		"backgroundColor": "#4F46E5"

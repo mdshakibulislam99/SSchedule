@@ -1,5 +1,5 @@
 /**
- * ChronoPulse AI - App Version and Semver Utility
+ * SShedule - App Version and Semver Utility
  */
 
 export const CURRENT_APP_VERSION = '1.0.0';

@@ -68,7 +68,7 @@ let appVersionConfig: AppVersionConfigPayload = {
   gracePeriodDays: Number(process.env.APP_UPDATE_GRACE_DAYS) || 7,
   downloadUrl: process.env.APP_DOWNLOAD_URL || 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
   title: 'Update Required',
-  message: 'A critical update is required to continue using ChronoPulse AI. Please update your app to access your study schedule and AI features.',
+  message: 'A critical update is required to continue using SShedule. Please update your app to access your study schedule and AI features.',
   releaseNotes: [
     'Smart Schedule & Task Optimizer improvements',
     'Enhanced multi-model AI responses & study tutor',

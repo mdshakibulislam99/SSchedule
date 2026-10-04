@@ -65,7 +65,7 @@ export const AppUpdateService = {
         minRequiredVersion: currentVersion,
         latestVersion: currentVersion,
         downloadUrl: 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
-        title: 'ChronoPulse AI Up to Date',
+        title: 'SShedule Up to Date',
         message: 'You are running the latest version.',
         releaseNotes: [],
       };
@@ -110,7 +110,7 @@ export const AppUpdateService = {
 
     // --- Grace Period Calculation ---
     // Key by the target version so every new version release gets its own fresh 7-day window
-    const firstDetectedKey = `chronopulse_update_first_detected_${latest}`;
+    const firstDetectedKey = `sshedule_update_first_detected_${latest}`;
     let firstDetectedAt = Date.now();
 
     if (typeof window !== 'undefined') {
@@ -160,7 +160,7 @@ export const AppUpdateService = {
         ? `Update Available (${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} left)`
         : config.title || 'New Update Available',
       message: isHardBlocked
-        ? `Your 7-day update grace period has ended. ChronoPulse AI v${latest} is required to continue using the app.`
+        ? `Your 7-day update grace period has ended. SShedule v${latest} is required to continue using the app.`
         : isGracePeriodActive
         ? `A new version (v${latest}) is available. You have ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} remaining to update before this version stops working.`
         : config.message || 'A new version with performance improvements is available.',

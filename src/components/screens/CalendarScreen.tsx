@@ -72,10 +72,10 @@ function exportScheduleToICS(events: ScheduleEvent[]) {
   const icsLines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//ChronoPulse AI//EN',
+    'PRODID:-//SShedule//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:ChronoPulse Schedule',
+    'X-WR-CALNAME:SShedule Schedule',
   ];
 
   events.forEach((ev) => {

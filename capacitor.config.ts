@@ -4,7 +4,7 @@ const config: CapacitorConfig = {
   // Reverse-DNS application id. Must stay stable across releases: changing it
   // makes Android treat the new build as a different app (no in-place update).
   appId: 'com.chronopulse.ai',
-  appName: 'ChronoPulse AI',
+  appName: 'SShedule',
   // Vite outputs the production bundle here, and Capacitor copies it into
   // android/app/src/main/assets/public during `cap sync`.
   webDir: 'dist',
