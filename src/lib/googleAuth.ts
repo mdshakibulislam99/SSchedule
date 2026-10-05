@@ -16,6 +16,29 @@ const GOOGLE_WEB_CLIENT_ID = FIREBASE_CONFIG.oAuthClientId;
 
 let initPromise: Promise<void> | null = null;
 
+// Generous enough for a slow connection, but bounded: without it a blocked
+// AuthorizationClient leaves the UI spinning indefinitely with no error.
+const NATIVE_LOGIN_TIMEOUT_MS = 45_000;
+
+/**
+ * Reject with `message` if `promise` has not settled within `ms`.
+ *
+ * The native Google plugin can leave its Capacitor promise permanently pending
+ * (never resolving and never rejecting), so a plain `await` would hang the
+ * caller forever. A timer is the only way out.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 /**
  * Initialize the native Google Sign-In plugin exactly once per app launch.
  *
@@ -80,10 +103,23 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
     // without modifying the main activity" unless MainActivity implements
     // ModifiedMainActivityForSocialLoginPlugin. Those default scopes are exactly
     // what Firebase needs, so the extra option bought us nothing.
-    const login = await SocialLogin.login({
-      provider: 'google',
-      options: {},
-    });
+    //
+    // The timeout is load-bearing. After the account picker returns a valid ID
+    // token, the plugin blocks on GoogleClient's AuthorizationClient using a
+    // bare future.get() with no deadline (GoogleProvider.java:724 — unlike its
+    // own refresh() path, which uses a 60s bound at line 1386). That call needs
+    // network access, so on a blocked/filtered connection it never resolves and
+    // never fails: the Capacitor promise stays pending forever and the button
+    // spins with no error. We only need the ID token, so bounding the wait
+    // turns an indefinite hang into a retryable error.
+    const login = await withTimeout(
+      SocialLogin.login({
+        provider: 'google',
+        options: {},
+      }),
+      NATIVE_LOGIN_TIMEOUT_MS,
+      'Google took too long to respond.'
+    );
 
     // The plugin returns a union: online mode yields tokens, offline mode
     // yields only a server auth code (which is useless for Firebase Auth).
