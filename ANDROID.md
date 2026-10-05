@@ -83,7 +83,8 @@ npm run cap:sync
 The app includes an automated version check and non-dismissible force-update modal:
 
 1. **How it works**:
-   - On launch, the app compares its local version (`CURRENT_APP_VERSION = "1.0.0"`) against the remote backend endpoint `/api/app-version`.
+   - On launch, the app compares its local version (`CURRENT_APP_VERSION` in
+     `src/utils/version.ts`) against the remote backend endpoint `/api/app-version`.
    - If the installed version is lower than `minRequiredVersion`, or if `forceUpdate: true` and the version is below `latestVersion`, the app displays a full-screen, non-dismissible **"Update Required"** modal.
    - The Android hardware back button is intercepted so users cannot back out or bypass the modal without updating.
    - Clicking **"Update Now"** opens the download/store link directly (`APP_DOWNLOAD_URL`).

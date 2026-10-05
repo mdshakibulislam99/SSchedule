@@ -4,7 +4,7 @@
 
 import { AppVersionConfig, AppUpdateCheckResult } from '../types';
 import { apiUrl } from '../lib/api';
-import { getActiveAppVersion, isVersionOlderThan } from '../utils/version';
+import { CURRENT_APP_VERSION, getActiveAppVersion, isVersionOlderThan } from '../utils/version';
 
 const CACHED_UPDATE_CHECK_KEY = 'chronopulse_last_update_check';
 const SIMULATED_GRACE_EXPIRED_KEY = 'chronopulse_simulated_grace_expired';
@@ -76,8 +76,10 @@ export const AppUpdateService = {
    * Evaluates installed version against remote policy and calculates 7-day grace period
    */
   evaluateVersion(currentVersion: string, config: AppVersionConfig): AppUpdateCheckResult {
-    const minRequired = config.minRequiredVersion || '1.0.0';
-    const latest = config.latestVersion || '1.0.0';
+    // Fall back to the running build's own version, not a hardcoded string, so
+    // these defaults never drift out of sync after a release bump.
+    const minRequired = config.minRequiredVersion || CURRENT_APP_VERSION;
+    const latest = config.latestVersion || CURRENT_APP_VERSION;
     const gracePeriodDays = typeof config.gracePeriodDays === 'number' && config.gracePeriodDays >= 0 ? config.gracePeriodDays : 7;
 
     // Check version discrepancies

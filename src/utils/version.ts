@@ -2,8 +2,8 @@
  * SShedule - App Version and Semver Utility
  */
 
-export const CURRENT_APP_VERSION = '1.0.0';
-export const CURRENT_BUILD_NUMBER = 1;
+export const CURRENT_APP_VERSION = '1.1.0';
+export const CURRENT_BUILD_NUMBER = 2;
 
 /**
  * Compare two semver strings (e.g., '1.0.0' vs '1.0.1')

@@ -120,8 +120,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const handleToggleServerForcePolicy = async (force: boolean) => {
     setIsCheckingUpdate(true);
     await AppUpdateService.updateRemotePolicy({
-      minRequiredVersion: force ? '2.0.0' : '1.0.0',
-      latestVersion: force ? '2.0.0' : '1.0.0',
+      // Toggling the sandbox switch off must clear the simulated requirement,
+      // otherwise the server keeps force-prompting for a version that no
+      // longer exists. Use the real current version as the baseline.
+      minRequiredVersion: force ? '2.0.0' : CURRENT_APP_VERSION,
+      latestVersion: force ? '2.0.0' : CURRENT_APP_VERSION,
       forceUpdate: force,
       gracePeriodDays: 7,
     });
@@ -395,7 +398,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   className="py-2 px-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 font-medium text-[11px] flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <Check className="w-3 h-3" />
-                  <span>Reset to v1.0.0</span>
+                  <span>Reset to v{CURRENT_APP_VERSION}</span>
                 </button>
               </div>
 
