@@ -47,8 +47,11 @@ export async function initNativeApp(): Promise<void> {
   try {
     await StatusBar.setStyle({ style: Style.Dark });
     if (Capacitor.getPlatform() === 'android') {
-      await StatusBar.setBackgroundColor({ color: '#4F46E5' });
-      await StatusBar.setOverlaysWebView({ overlay: false });
+      // targetSdk 35+ (Android 15) forces edge-to-edge: the system bars turn
+      // transparent and the window is laid out behind them. `overlay: false`
+      // re-adds a solid band on top, which is what produced the black gaps at
+      // the top and bottom of the app. Let the WebView own the whole window.
+      await StatusBar.setOverlaysWebView({ overlay: true });
     }
   } catch {
     // The status bar is cosmetic — never let it block app startup.
@@ -84,9 +87,10 @@ export async function updateNativeTheme(isDark: boolean): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try {
     await StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light });
-    if (Capacitor.getPlatform() === 'android') {
-      await StatusBar.setBackgroundColor({ color: isDark ? '#0f172a' : '#ffffff' });
-    }
+    // Deliberately no setBackgroundColor() here. On targetSdk 35+ the window is
+    // edge-to-edge, so the status bar is transparent and the app background
+    // shows through. Tinting the bar would put a coloured band back at the top
+    // instead of letting the app run edge to edge.
   } catch {
     // Non-blocking status bar update
   }
