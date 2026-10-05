@@ -18,10 +18,8 @@ import { UserProfile } from '../../types';
 import { registerBackHandler } from '../../lib/native';
 import {
   signInWithGoogle,
-  signInOrRegisterWithGoogleEmail,
   createAccountWithEmail,
   signInWithEmail,
-  getCurrentAuthDomain,
 } from '../../lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 

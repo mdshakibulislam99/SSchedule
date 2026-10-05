@@ -64,7 +64,7 @@ export const AppUpdateService = {
         currentVersion,
         minRequiredVersion: currentVersion,
         latestVersion: currentVersion,
-        downloadUrl: 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
+        downloadUrl: 'https://play.google.com/store/apps/details?id=com.sschedule.app',
         title: 'SShedule Up to Date',
         message: 'You are running the latest version.',
         releaseNotes: [],
@@ -101,7 +101,7 @@ export const AppUpdateService = {
         currentVersion,
         minRequiredVersion: minRequired,
         latestVersion: latest,
-        downloadUrl: config.downloadUrl || 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
+        downloadUrl: config.downloadUrl || 'https://play.google.com/store/apps/details?id=com.sschedule.app',
         title: 'App Up to Date',
         message: 'You are running the latest version.',
         releaseNotes: config.releaseNotes || [],
@@ -153,7 +153,7 @@ export const AppUpdateService = {
       currentVersion,
       minRequiredVersion: minRequired,
       latestVersion: latest,
-      downloadUrl: config.downloadUrl || 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
+      downloadUrl: config.downloadUrl || 'https://play.google.com/store/apps/details?id=com.sschedule.app',
       title: isHardBlocked
         ? 'Update Required — Grace Period Expired'
         : isGracePeriodActive

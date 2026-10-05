@@ -10,10 +10,10 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.chronopulse.ai"
+    namespace = "com.sschedule.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.chronopulse.ai"
+        applicationId "com.sschedule.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

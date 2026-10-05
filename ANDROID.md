@@ -4,7 +4,7 @@ ChronoPulse AI ships as a native Android app via [Capacitor](https://capacitorjs
 The React/Vite web bundle is copied into the APK and served to the WebView from
 `https://localhost`, so the whole app works offline apart from the AI features.
 
-- **Application ID:** `com.chronopulse.ai`
+- **Application ID:** `com.sschedule.app`
 - **Display name:** ChronoPulse AI
 - **minSdk 24** (Android 7.0) · **target/compileSdk 36** (Android 16)
 
@@ -94,7 +94,7 @@ The app includes an automated version check and non-dismissible force-update mod
      LATEST_APP_VERSION=1.1.0
      MIN_REQUIRED_APP_VERSION=1.1.0
      FORCE_APP_UPDATE=true
-     APP_DOWNLOAD_URL=https://play.google.com/store/apps/details?id=com.chronopulse.ai
+     APP_DOWNLOAD_URL=https://play.google.com/store/apps/details?id=com.sschedule.app
      ```
    - Or send an HTTP POST request to your API:
      ```bash
@@ -118,7 +118,11 @@ These are platform constraints of the embedded WebView, not build problems:
 - **Web push notifications do not exist in a WebView.** In-app toasts and the
   reminder chime still fire while the app is open. Real background reminders
   need `@capacitor/local-notifications`.
-- **Google Identity Services (GSI) is blocked** in embedded WebViews, so the
-  Google Calendar sync / Google sign-in flow cannot complete. Firebase
+- **Google's web OAuth popup is blocked** in embedded WebViews. Google
+  sign-in therefore uses the **native** SDK
+  (`@capgo/capacitor-social-login`) rather than `signInWithPopup`; see
+  `src/lib/googleAuth.ts`. The web popup path still serves the browser build.
+  Native sign-in needs `android/app/google-services.json` and the release +
+  debug SHA-1 fingerprints registered on the Firebase Android app. Firebase
   email/password auth is unaffected.
 - **Puter.js** is loaded from a CDN, so it needs network access on first use.

@@ -55,17 +55,47 @@ export function loadGis(): Promise<void> {
   if (gisPromise) return gisPromise;
 
   gisPromise = new Promise<void>((resolve, reject) => {
+    // A previously inserted tag may have already fired load/error, in which case
+    // re-binding onload would never settle and the caller would hang forever.
+    // Probe the existing tag before deciding whether to reuse it.
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${GIS_SRC}"]`);
+    if (existing && existing.dataset.gisState === 'ready') {
+      resolve();
+      return;
+    }
+
     const script = existing || document.createElement('script');
     script.src = GIS_SRC;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
+    script.onload = () => {
+      script.dataset.gisState = 'ready';
+      resolve();
+    };
     script.onerror = () => {
+      script.dataset.gisState = 'error';
       gisPromise = null;
       reject(new GoogleAuthError('gis_load_failed', 'Could not load Google Identity Services'));
     };
     if (!existing) document.head.appendChild(script);
+
+    // index.html ships a static <script src=...gsi/client> tag, so the load
+    // event may already have fired before we got here and onload would never
+    // run again. Poll for the global so the promise always settles.
+    if (existing) {
+      const started = Date.now();
+      const poll = window.setInterval(() => {
+        if (window.google?.accounts?.oauth2) {
+          window.clearInterval(poll);
+          script.dataset.gisState = 'ready';
+          resolve();
+        } else if (Date.now() - started > 10_000) {
+          window.clearInterval(poll);
+          gisPromise = null;
+          reject(new GoogleAuthError('gis_load_timeout', 'Google Identity Services did not load in time.'));
+        }
+      }, 100);
+    }
   });
   return gisPromise;
 }

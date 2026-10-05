@@ -20,6 +20,10 @@ android/.idea/
 *.jks
 keystore.properties
 
+# Firebase Android config. Project identifiers only, but it is per-app and
+# should stay local so each build/CI uses its own copy.
+android/app/google-services.json
+
 # Agent / editor tooling
 .commandcode/
 

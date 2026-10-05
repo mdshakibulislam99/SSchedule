@@ -1,4 +1,4 @@
-package com.chronopulse.ai;
+package com.sschedule.app;
 
 import com.getcapacitor.BridgeActivity;
 

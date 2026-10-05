@@ -12,7 +12,6 @@ import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
 import { VoiceAIModal } from './components/mobile/VoiceAIModal';
 import {
   signInWithGoogle,
-  signInOrRegisterWithGoogleEmail,
   completeGoogleRedirect,
   signOutUser,
   onAuthChange,

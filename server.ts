@@ -66,7 +66,7 @@ let appVersionConfig: AppVersionConfigPayload = {
   minRequiredVersion: process.env.MIN_REQUIRED_APP_VERSION || '1.0.0',
   forceUpdate: process.env.FORCE_APP_UPDATE === 'true',
   gracePeriodDays: Number(process.env.APP_UPDATE_GRACE_DAYS) || 7,
-  downloadUrl: process.env.APP_DOWNLOAD_URL || 'https://play.google.com/store/apps/details?id=com.chronopulse.ai',
+  downloadUrl: process.env.APP_DOWNLOAD_URL || 'https://play.google.com/store/apps/details?id=com.sschedule.app',
   title: 'Update Required',
   message: 'A critical update is required to continue using SShedule. Please update your app to access your study schedule and AI features.',
   releaseNotes: [

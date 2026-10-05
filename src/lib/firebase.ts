@@ -2,9 +2,6 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  signInWithCredential,
   getRedirectResult,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -30,7 +27,6 @@ import {
 } from 'firebase/firestore';
 import firebaseConfigFile from '../../firebase-applet-config.json';
 import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState } from '../types';
-import { loadGis } from './googleCalendar';
 
 // The verified Firebase project configuration provided by the user
 export const FIREBASE_CONFIG = {
@@ -96,160 +92,29 @@ async function testConnection() {
 }
 testConnection();
 
-// Popup failures that a token client or redirect can recover from.
-const POPUP_FALLBACK_CODES = [
-  'auth/popup-blocked',
-  'auth/cancelled-popup-request',
-  'auth/operation-not-supported-in-this-environment',
-  'auth/internal-error',
-  'auth/unauthorized-domain',
-];
-
 // Sign in with Google (Authentic Google Sign-In with Account Chooser)
+//
+// Delegates to `googleAuth.ts`, which picks the right strategy per platform:
+//   - native (Android/iOS): Google's native SDK, because OAuth consent is
+//     blocked inside an embedded WebView.
+//   - web: popup -> GIS token client -> full-page redirect.
 export async function signInWithGoogle(): Promise<FirebaseUser> {
-  // 1. Attempt standard Firebase popup with account selector and calendar scopes
-  try {
-    googleProvider.setCustomParameters({ prompt: 'select_account' });
-    const result = await signInWithPopup(auth, googleProvider);
-    
-    // Store access token for Google Calendar synchronization if returned
-    try {
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken && typeof window !== 'undefined') {
-        localStorage.setItem('chrono_gcal_token', JSON.stringify({
-          token: credential.accessToken,
-          expiresAt: Date.now() + 3500 * 1000,
-        }));
-      }
-    } catch (tokenErr) {
-      console.warn('Could not cache Google access token:', tokenErr);
-    }
-
-    return result.user;
-  } catch (popupErr: any) {
-    const code = String(popupErr?.code || '');
-    console.warn('Firebase signInWithPopup failed:', code, popupErr);
-
-    // If popup was explicitly closed by the user, abort without signing in
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      throw new Error('Google Sign-In was cancelled.');
-    }
-
-    // 2. Fallback: Google Identity Services (GIS) OAuth Token Client with real Google Account Selector
-    try {
-      await loadGis();
-      const oauthClientId = FIREBASE_CONFIG.oAuthClientId;
-
-      if (typeof window !== 'undefined' && window.google?.accounts?.oauth2 && oauthClientId) {
-        const tokenResult = await new Promise<{ accessToken: string }>((resolve, reject) => {
-          try {
-            const client = window.google.accounts.oauth2.initTokenClient({
-              client_id: oauthClientId,
-              scope: 'openid email profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar',
-              callback: (resp: any) => {
-                if (resp?.access_token) {
-                  resolve({ accessToken: resp.access_token });
-                } else if (resp?.error === 'access_denied') {
-                  reject(new Error('Google Sign-In was cancelled.'));
-                } else {
-                  reject(new Error(resp?.error_description || resp?.error || 'Google Sign-In failed'));
-                }
-              },
-              error_callback: (err: any) => {
-                if (err?.type === 'popup_closed') {
-                  reject(new Error('Google Sign-In was cancelled.'));
-                } else {
-                  reject(new Error(err?.message || 'Google account selector failed to open.'));
-                }
-              },
-            });
-
-            // Prompts user with Google's real account picker
-            client.requestAccessToken({ prompt: 'select_account' });
-          } catch (initErr) {
-            reject(initErr);
-          }
-        });
-
-        if (tokenResult?.accessToken) {
-          // Cache real access token for calendar integration
-          try {
-            localStorage.setItem('chrono_gcal_token', JSON.stringify({
-              token: tokenResult.accessToken,
-              expiresAt: Date.now() + 3500 * 1000,
-            }));
-          } catch {}
-
-          // Fetch verified user information directly from Google's UserInfo API
-          const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-            headers: { Authorization: `Bearer ${tokenResult.accessToken}` },
-          });
-
-          if (!userInfoRes.ok) {
-            throw new Error('Could not retrieve Google profile details.');
-          }
-
-          const userInfo = await userInfoRes.json();
-          if (!userInfo?.email) {
-            throw new Error('No email associated with selected Google account.');
-          }
-
-          // Try signing into Firebase Auth with Google OAuth credential
-          try {
-            const credential = GoogleAuthProvider.credential(null, tokenResult.accessToken);
-            const cred = await signInWithCredential(auth, credential);
-            return cred.user;
-          } catch (credErr) {
-            console.warn('signInWithCredential with accessToken failed, syncing with verified Google email:', credErr);
-            // Link verified account with Firebase Auth using the Google-provided email & name
-            const fUser = await signInOrRegisterWithGoogleEmail(userInfo.email, userInfo.name);
-            return fUser;
-          }
-        }
-      }
-    } catch (gisErr: any) {
-      console.warn('GIS Token Client failed:', gisErr);
-      throw gisErr;
-    }
-
-    throw popupErr;
-  }
+  const { signInWithGooglePlatform } = await import('./googleAuth');
+  return signInWithGooglePlatform();
 }
 
 /**
- * Deterministic helper to register/sign-in with a Google email address into Firebase Auth
- * when third-party browser cookies, domain authorization restrictions, or iframe sandboxing
- * prevents interactive popups from completing.
+ * @deprecated Removed for security reasons.
+ *
+ * This helper signed a user in by deriving a *guessable, deterministic*
+ * password from their email address ('SSchedGoogle2026!' + first 8 chars of the
+ * local part) and creating/signing into an email+password account.
+ *
+ * That is a full account-takeover hole: anyone who knows an email address
+ * could reproduce the password and sign in as that user, entirely bypassing
+ * Google's identity verification. Google sign-in must only ever be trusted
+ * through a Google-signed ID token (see `signInWithGoogle`).
  */
-export async function signInOrRegisterWithGoogleEmail(
-  email: string,
-  displayName?: string,
-): Promise<FirebaseUser> {
-  const cleanEmail = email.trim().toLowerCase();
-  const secureKey = 'SSchedGoogle2026!' + cleanEmail.split('@')[0].slice(0, 8);
-
-  try {
-    const cred = await signInWithEmailAndPassword(auth, cleanEmail, secureKey);
-    if (displayName && (!cred.user.displayName || cred.user.displayName !== displayName)) {
-      try {
-        await updateProfile(cred.user, { displayName });
-      } catch {}
-    }
-    return cred.user;
-  } catch (err: any) {
-    const code = String(err?.code || '');
-    if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, secureKey);
-      if (displayName) {
-        try {
-          await updateProfile(cred.user, { displayName });
-        } catch {}
-      }
-      return cred.user;
-    }
-    throw err;
-  }
-}
 
 // 1-Click student demo authentication helper
 export async function signInWithStudentDemo(): Promise<FirebaseUser> {
