@@ -18,8 +18,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Bump versionCode on every release. Android rejects an upload whose
         // code is not higher than a previously published one.
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 3
+        versionName "1.2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

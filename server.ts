@@ -65,7 +65,7 @@ let appVersionConfig: AppVersionConfigPayload = {
   // Advertise the newest release here so the in-app updater can offer it.
   // minRequiredVersion stays low unless a release is genuinely mandatory,
   // which avoids force-prompting users who are happily on an older build.
-  latestVersion: process.env.LATEST_APP_VERSION || '1.1.0',
+  latestVersion: process.env.LATEST_APP_VERSION || '1.2.0',
   minRequiredVersion: process.env.MIN_REQUIRED_APP_VERSION || '1.0.0',
   forceUpdate: process.env.FORCE_APP_UPDATE === 'true',
   gracePeriodDays: Number(process.env.APP_UPDATE_GRACE_DAYS) || 7,

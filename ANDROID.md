@@ -92,8 +92,8 @@ The app includes an automated version check and non-dismissible force-update mod
 2. **Triggering a mandatory update when releasing a new version**:
    - You can update environment variables on your server:
      ```env
-     LATEST_APP_VERSION=1.1.0
-     MIN_REQUIRED_APP_VERSION=1.1.0
+     LATEST_APP_VERSION=1.2.0
+     MIN_REQUIRED_APP_VERSION=1.2.0
      FORCE_APP_UPDATE=true
      APP_DOWNLOAD_URL=https://play.google.com/store/apps/details?id=com.sschedule.app
      ```
@@ -102,8 +102,8 @@ The app includes an automated version check and non-dismissible force-update mod
      curl -X POST https://your-api.example.com/api/app-version \
        -H "Content-Type: application/json" \
        -d '{
-         "latestVersion": "1.1.0",
-         "minRequiredVersion": "1.1.0",
+         "latestVersion": "1.2.0",
+         "minRequiredVersion": "1.2.0",
          "forceUpdate": true,
          "title": "Update Required",
          "message": "A critical update is required to continue using ChronoPulse AI.",
@@ -126,4 +126,12 @@ These are platform constraints of the embedded WebView, not build problems:
   Native sign-in needs `android/app/google-services.json` and the release +
   debug SHA-1 fingerprints registered on the Firebase Android app. Firebase
   email/password auth is unaffected.
+- **Do not pass `scopes` to the native `SocialLogin.login()` Google call.** The
+  Android plugin always requests `userinfo.email`, `userinfo.profile`, and
+  `openid` on its own, but if a `scopes` array is present it rejects with
+  *"You CANNOT use scopes without modifying the main activity"* unless
+  `MainActivity` implements `ModifiedMainActivityForSocialLoginPlugin`. Those
+  default scopes are all Firebase needs, so `src/lib/googleAuth.ts` passes an
+  empty `options: {}`. Only add real scopes if you first implement that marker
+  interface in `android/app/src/main/java/com/sschedule/app/MainActivity.java`.
 - **Puter.js** is loaded from a CDN, so it needs network access on first use.

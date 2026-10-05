@@ -74,11 +74,15 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
   let idToken: string | null = null;
 
   try {
+    // NOTE: do NOT pass `scopes` here. The Android plugin unconditionally
+    // requests userinfo.email / userinfo.profile / openid, and passing a custom
+    // `scopes` array makes it reject the call with "You CANNOT use scopes
+    // without modifying the main activity" unless MainActivity implements
+    // ModifiedMainActivityForSocialLoginPlugin. Those default scopes are exactly
+    // what Firebase needs, so the extra option bought us nothing.
     const login = await SocialLogin.login({
       provider: 'google',
-      options: {
-        scopes: ['email', 'profile'],
-      },
+      options: {},
     });
 
     // The plugin returns a union: online mode yields tokens, offline mode
@@ -92,9 +96,12 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
       throw new Error('Google Sign-In was cancelled.');
     }
     console.warn('Native Google login failed:', err);
+    // Surface the plugin's actual message. It distinguishes the real causes
+    // (OAuth client / SHA-1 misconfiguration vs. no Google account on the
+    // device), and a generic "not available" string hid all of that.
+    const detail = String(err?.message || '').trim();
     throw new Error(
-      'Google Sign-In is not available on this device. Please make sure the app is installed from the ' +
-        'same build you tested, then try again.'
+      detail || 'Google Sign-In failed on this device. Please try again.'
     );
   }
 
