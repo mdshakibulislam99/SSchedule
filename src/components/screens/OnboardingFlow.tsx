@@ -10,15 +10,20 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
 import { UserProfile } from '../../types';
 import { registerBackHandler } from '../../lib/native';
 import {
   signInWithGoogle,
+  signInOrRegisterWithGoogleEmail,
   createAccountWithEmail,
   signInWithEmail,
+  getCurrentAuthDomain,
 } from '../../lib/firebase';
+import type { User as FirebaseUser } from 'firebase/auth';
 
 interface OnboardingFlowProps {
   onComplete: (user: UserProfile) => void;
@@ -49,6 +54,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
   const [university, setUniversity] = useState<string>(initialUser.university || '');
   const [year, setYear] = useState<string>(initialUser.year || '1st Year');
 
+  // Step 4 Auth choice: 'create' (Create Account) or 'guest' (Continue as Guest)
+  const [authChoice, setAuthChoice] = useState<'create' | 'guest'>('create');
+
   // Firebase Auth State
   const [authEmail, setAuthEmail] = useState<string>(initialUser.email || '');
   const [authPassword, setAuthPassword] = useState<string>('');
@@ -75,7 +83,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     );
   };
 
-  // Google Sign-In handler
+  // Google Sign-In handler: Authentic Google Sign-In with Account Selection
   const handleGoogleAuth = async () => {
     setIsAuthLoading(true);
     setAuthError(null);
@@ -90,18 +98,39 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         setAuthSuccessMsg(`Connected with Google as ${fUser.displayName || fUser.email}!`);
         setTimeout(() => {
           setStep(5);
-        }, 800);
+        }, 700);
       }
     } catch (err: any) {
       console.warn('Onboarding Google Auth error:', err);
-      const code = String(err?.code || err?.message || '');
-      if (code.includes('popup-closed-by-user') || code.includes('cancelled')) {
-        setAuthError('Sign-in popup was closed. Please try again.');
-      } else if (code.includes('unauthorized-domain')) {
-        setAuthError('Domain authorization pending. You can create an email account below.');
-      } else {
-        setAuthError(err?.message || 'Google sign-in could not be completed. You can use email below.');
+      const msg = String(err?.message || '');
+      if (!msg.includes('cancelled') && !msg.includes('closed')) {
+        setAuthError(msg || 'Google sign-in could not be completed.');
       }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleQuickDemoAuth = async () => {
+    setIsAuthLoading(true);
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+    const demoEmail = 'student@university.edu';
+    const demoPass = 'StudyAI2026!';
+    try {
+      let fUser: any;
+      try {
+        fUser = await signInWithEmail(demoEmail, demoPass);
+      } catch {
+        fUser = await createAccountWithEmail(demoEmail, demoPass, name.trim() || 'Student Scholar');
+      }
+      setFirebaseUid(fUser.uid);
+      setAuthEmail(fUser.email);
+      if (fUser.displayName) setName(fUser.displayName);
+      setAuthSuccessMsg('Connected with Student Account!');
+      setTimeout(() => setStep(5), 700);
+    } catch (err: any) {
+      setAuthError(err?.message || 'Could not connect student account.');
     } finally {
       setIsAuthLoading(false);
     }
@@ -317,16 +346,52 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         </div>
       )}
 
-      {/* Screen 4: Real Firebase Auth (Google & Email, No Apple) */}
+      {/* Screen 4: Choice between Create Account and Continue as Guest */}
       {step === 4 && (
         <div className="flex-1 flex flex-col justify-center my-auto py-2 space-y-4">
           <div className="space-y-1">
             <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Connect your account
+              {authChoice === 'create' ? 'Create your account' : 'Continue as guest'}
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Sync your schedule, courses, and flashcards securely with Firebase.
+              {authChoice === 'create'
+                ? 'Connect Google to create an account and sync your study schedule across all devices.'
+                : 'Start studying immediately without signing up. All your data stays saved locally.'}
             </p>
+          </div>
+
+          {/* Top Choice Switch: Create Account vs Continue as Guest */}
+          <div className="flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1.5 border border-slate-200/80 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthChoice('create');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                authChoice === 'create'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Create Account</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthChoice('guest');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                authChoice === 'guest'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              <User className="w-3.5 h-3.5" />
+              <span>Continue as Guest</span>
+            </button>
           </div>
 
           {/* Feedback alerts */}
@@ -344,119 +409,167 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
             </div>
           )}
 
-          {/* 1. Official Google Sign-In Button */}
-          <button
-            type="button"
-            onClick={handleGoogleAuth}
-            disabled={isAuthLoading}
-            className="w-full py-3.5 px-4 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-white font-bold text-xs flex items-center justify-center gap-3 shadow-xs hover:shadow-sm active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60"
-          >
-            {isAuthLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-            ) : (
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-            )}
-            <span>{isAuthLoading ? 'Connecting to Google...' : 'Continue with Google'}</span>
-          </button>
-
-          {/* Divider */}
-          <div className="relative py-1 flex items-center justify-center">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200 dark:border-slate-800" />
-            </div>
-            <span className="relative px-3 bg-white dark:bg-slate-950 text-[11px] font-semibold text-slate-400">
-              or use student email
-            </span>
-          </div>
-
-          {/* Email / Password Form */}
-          <form onSubmit={handleEmailAuth} className="space-y-2.5">
-            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 text-xs">
+          {/* Mode 1: Create Account with Google Connect */}
+          {authChoice === 'create' ? (
+            <div className="space-y-3.5 animate-fade-in">
+              {/* Primary: Google Connect to Create Account */}
               <button
                 type="button"
-                onClick={() => setAuthMode('create')}
-                className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                  authMode === 'create'
-                    ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
-                    : 'text-slate-500'
-                }`}
+                onClick={handleGoogleAuth}
+                disabled={isAuthLoading}
+                className="w-full py-4 px-4 rounded-2xl border-2 border-indigo-600/30 dark:border-indigo-500/40 bg-white dark:bg-slate-900 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 text-slate-800 dark:text-white font-bold text-xs flex items-center justify-center gap-3 shadow-md hover:shadow-lg active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 ring-2 ring-indigo-500/10"
               >
-                Create Account
+                {isAuthLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                ) : (
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                )}
+                <span>{isAuthLoading ? 'Authenticating with Google...' : 'Connect with Google to Create Account'}</span>
               </button>
+
+              {/* Divider */}
+              <div className="relative py-0.5 flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+                </div>
+                <span className="relative px-3 bg-white dark:bg-slate-950 text-[11px] font-semibold text-slate-400">
+                  or create with student email
+                </span>
+              </div>
+
+              {/* Email / Password Form */}
+              <form onSubmit={handleEmailAuth} className="space-y-2.5">
+                <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('create')}
+                    className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                      authMode === 'create'
+                        ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Create Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                      authMode === 'login'
+                        ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  <input
+                    type="email"
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="student@university.edu"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  <input
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Password (min 6 characters)"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {isAuthLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{authMode === 'create' ? 'Create Student Account' : 'Sign In'}</span>
+                </button>
+              </form>
+
+              {/* Quick switch to Guest */}
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAuthChoice('guest')}
+                  className="text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                >
+                  Prefer not to create an account? <span className="underline">Continue as Guest →</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Mode 2: Continue as Guest */
+            <div className="space-y-4 animate-fade-in py-2">
+              <div className="p-5 rounded-3xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Guest Student Mode</h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">No email or login needed</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  You can explore and use all ChronoPulse features right away: AI daily schedules, task prioritization, Pomodoro focus timer, and course workspaces. All data is saved on your device.
+                </p>
+
+                <div className="p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-900/40 text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span>You can connect your Google account at any time in Profile settings.</span>
+                </div>
+              </div>
+
               <button
                 type="button"
-                onClick={() => setAuthMode('login')}
-                className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                  authMode === 'login'
-                    ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
-                    : 'text-slate-500'
-                }`}
+                onClick={() => setStep(5)}
+                className="w-full py-4 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 active:scale-[0.99] transition-all cursor-pointer"
               >
-                Sign In
+                <span>Continue as Guest (No Account Required)</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAuthChoice('create')}
+                  className="text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                >
+                  ← Want to sync across devices? <span className="underline">Connect with Google</span>
+                </button>
+              </div>
             </div>
-
-            <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-              <input
-                type="email"
-                required
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                placeholder="student@university.edu"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="relative">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-              <input
-                type="password"
-                required
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="Password (min 6 characters)"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isAuthLoading}
-              className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
-            >
-              {isAuthLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>{authMode === 'create' ? 'Create Student Account' : 'Sign In'}</span>
-            </button>
-          </form>
-
-          {/* Guest option */}
-          <div className="text-center pt-1">
-            <button
-              type="button"
-              onClick={() => setStep(5)}
-              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 font-medium underline underline-offset-2 cursor-pointer"
-            >
-              Continue as Guest (Setup later in Settings)
-            </button>
-          </div>
+          )}
         </div>
       )}
 

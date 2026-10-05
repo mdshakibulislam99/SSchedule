@@ -12,6 +12,7 @@ import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
 import { VoiceAIModal } from './components/mobile/VoiceAIModal';
 import {
   signInWithGoogle,
+  signInOrRegisterWithGoogleEmail,
   completeGoogleRedirect,
   signOutUser,
   onAuthChange,
@@ -310,9 +311,14 @@ export default function App() {
     const handleOpenAISetup = () => {
       setIsAISetupPromptOpen(true);
     };
+    const handleOpenAuth = () => {
+      void handleGoogleSignIn();
+    };
     window.addEventListener('studyai:open-ai-setup', handleOpenAISetup);
+    window.addEventListener('studyai:open-firebase-auth', handleOpenAuth);
     return () => {
       window.removeEventListener('studyai:open-ai-setup', handleOpenAISetup);
+      window.removeEventListener('studyai:open-firebase-auth', handleOpenAuth);
     };
   }, []);
 
@@ -445,16 +451,20 @@ export default function App() {
   }, [user, firebaseUser]);
 
   const handleGoogleSignIn = async () => {
+    setIsFirebaseSyncing(true);
     try {
       const fUser = await signInWithGoogle();
       if (fUser) {
-        playChime('success');
+        showToast(`Signed in with Google as ${fUser.displayName || fUser.email}`);
       }
     } catch (err: any) {
-      const code = String(err?.code || err?.message || 'unknown');
-      if (!code.includes('popup-closed-by-user')) {
-        showToast(`Google Sign-In failed (${code}).`);
+      console.warn('Google sign-in error:', err);
+      const msg = String(err?.message || '');
+      if (!msg.includes('cancelled') && !msg.includes('popup-closed-by-user')) {
+        showToast(err?.message || 'Google sign-in could not be completed.');
       }
+    } finally {
+      setIsFirebaseSyncing(false);
     }
   };
 
@@ -1967,6 +1977,7 @@ export default function App() {
           onSignInWithGoogle={handleGoogleSignIn}
           onSignOut={handleSignOut}
           isFirebaseSynced={Boolean(firebaseUser)}
+          isFirebaseSyncing={isFirebaseSyncing}
         />
       );
     }
