@@ -343,16 +343,50 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         </div>
       )}
 
-      {/* Screen 4: Create your account (Google or student email) */}
+      {/* Screen 4: Create account / Log in (Google or email) */}
       {step === 4 && (
         <div className="flex-1 flex flex-col justify-center my-auto py-2 space-y-4">
           <div className="space-y-1">
             <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Create your account
+              {authMode === 'create' ? 'Create your account' : 'Welcome back'}
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Sign up to sync your schedule, tasks and courses across all your devices.
+              {authMode === 'create'
+                ? 'Sign up to sync your schedule, tasks and courses across all your devices.'
+                : 'Log in to pick up right where you left off.'}
             </p>
+          </div>
+
+          {/* Mode switch: Create account vs Log in */}
+          <div className="flex rounded-2xl bg-slate-100 dark:bg-slate-900 p-1.5 border border-slate-200/80 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('create');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                authMode === 'create'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Create account
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('login');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                authMode === 'login'
+                  ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Log in
+            </button>
           </div>
 
           {/* Feedback alerts */}
@@ -371,7 +405,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
           )}
 
           <div className="space-y-3.5 animate-fade-in">
-            {/* Primary: Google Connect to Create Account */}
+            {/* Google: the fastest route in either mode */}
             <button
               type="button"
               onClick={handleGoogleAuth}
@@ -400,37 +434,27 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                   />
                 </svg>
               )}
-              <span>{isAuthLoading ? 'Connecting to Google...' : 'Continue with Google'}</span>
+              <span>
+                {isAuthLoading
+                  ? 'Connecting to Google...'
+                  : authMode === 'create'
+                  ? 'Sign up with Google'
+                  : 'Continue with Google'}
+              </span>
             </button>
 
+            {/* Divider */}
+            <div className="relative py-0.5 flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+              </div>
+              <span className="relative px-3 bg-white dark:bg-slate-950 text-[11px] font-semibold text-slate-400">
+                or use your email
+              </span>
+            </div>
 
             {/* Email / Password Form */}
             <form onSubmit={handleEmailAuth} className="space-y-2.5">
-              <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('create')}
-                  className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                    authMode === 'create'
-                      ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  Sign up
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('login')}
-                  className={`flex-1 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                    authMode === 'login'
-                      ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-2xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  Sign in
-                </button>
-              </div>
-
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                 <input
@@ -439,6 +463,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
                   placeholder="student@university.edu"
+                  autoComplete="email"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -451,6 +476,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   placeholder="Password (min 6 characters)"
+                  autoComplete={authMode === 'create' ? 'new-password' : 'current-password'}
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-medium focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -461,23 +487,12 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                 className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {isAuthLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{authMode === 'create' ? 'Create account' : 'Sign in'}</span>
+                <span>{authMode === 'create' ? 'Create account' : 'Log in'}</span>
               </button>
             </form>
           </div>
         </div>
       )}
-
-            {/* Divider */}
-            <div className="relative py-0.5 flex items-center justify-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200 dark:border-slate-800" />
-              </div>
-              <span className="relative px-3 bg-white dark:bg-slate-950 text-[11px] font-semibold text-slate-400">
-                or use your email
-              </span>
-            </div>
-
       {/* Screen 5: Profile Setup */}
       {step === 5 && (
         <div className="flex-1 flex flex-col justify-center my-auto py-4 space-y-5">
