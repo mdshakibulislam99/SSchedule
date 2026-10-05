@@ -1,6 +1,29 @@
 // Audio synthesizer using Web Audio API for zero-dependency chimes
 
 let audioCtx: AudioContext | null = null;
+let audioUnlockAttached = false;
+
+/**
+ * Browsers keep the AudioContext suspended until the user has interacted with
+ * the page. Resume it inside the first real gesture so reminder chimes are
+ * audible even when the alert fires long after the app was opened.
+ */
+function attachAudioUnlock(): void {
+  if (audioUnlockAttached || typeof window === 'undefined') return;
+  audioUnlockAttached = true;
+  const unlock = () => {
+    try {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        void audioCtx.resume().catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock);
+  window.addEventListener('touchstart', unlock, { passive: true });
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -8,10 +31,13 @@ function getAudioContext(): AudioContext | null {
     const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (AudioContextClass) {
       audioCtx = new AudioContextClass();
+      attachAudioUnlock();
     }
   }
   if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    audioCtx.resume().catch(() => {
+      // Will be resumed on the next user gesture (see attachAudioUnlock).
+    });
   }
   return audioCtx;
 }

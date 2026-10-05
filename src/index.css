@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Tailwind v4 defaults the `dark:` variant to `prefers-color-scheme`.
+   This app toggles the `.dark` class on <html>, so register a class-based
+   variant — without this, the dark/light toggle button changes state but
+   no `dark:*` styles actually apply. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

@@ -1087,6 +1087,20 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(metrics));
   },
 
+  getTheme(): 'light' | 'dark' | null {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.THEME);
+      if (!data) return null;
+      const parsed = JSON.parse(data);
+      return parsed === 'light' || parsed === 'dark' ? parsed : null;
+    } catch {
+      return null;
+    }
+  },
+  saveTheme(theme: 'light' | 'dark') {
+    localStorage.setItem(STORAGE_KEYS.THEME, JSON.stringify(theme));
+  },
+
   /**
    * Load rich demo data into localStorage (useful for development & testing)
    */

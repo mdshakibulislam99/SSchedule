@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { NotificationSettings } from '../../types';
 import { playChime } from '../../utils/audio';
+import { isNativeApp } from '../../lib/native';
+import { checkNativePermission, ensureNativePermission } from '../../services/scheduledNotifications';
 
 interface NotificationSettingsScreenProps {
   settings: NotificationSettings;
@@ -38,6 +40,13 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
   const [browserPermission, setBrowserPermission] = useState<string>('default');
 
   useEffect(() => {
+    if (isNativeApp()) {
+      // On Android/iOS the real gate is the OS permission, not the web one.
+      void checkNativePermission().then((status) => {
+        if (status !== 'unknown') setBrowserPermission(status);
+      });
+      return;
+    }
     if (typeof window !== 'undefined' && 'Notification' in window) {
       setBrowserPermission(Notification.permission);
     }
@@ -65,6 +74,15 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
   };
 
   const handleRequestBrowserPermission = async () => {
+    if (isNativeApp()) {
+      // Native: request the OS-level (POST_NOTIFICATIONS / UNUserNotificationCenter)
+      // permission — this is what allows alerts while the app is closed.
+      const result = await ensureNativePermission();
+      setBrowserPermission(result);
+      onUpdateSettings((prev) => ({ ...prev, browserNotifications: result === 'granted' }));
+      return;
+    }
+
     if (typeof window === 'undefined' || !('Notification' in window)) {
       alert('Browser notifications are not supported in this environment.');
       return;

@@ -26,7 +26,7 @@ import {
   syncGoogleCalendarStateToFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
-import { registerBackHandler } from './lib/native';
+import { registerBackHandler, isNativeApp } from './lib/native';
 import { offlineSyncService } from './services/offlineSyncService';
 import { useOfflineSync } from './hooks/useOfflineSync';
 import { OfflineSyncBadge } from './components/OfflineSyncBadge';
@@ -90,6 +90,13 @@ import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
 import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
 import { AppUpdateService } from './services/appUpdateService';
+import { showSystemNotification } from './services/notify';
+import {
+  syncScheduledNotifications,
+  ensureNativePermission,
+  showNativeNotificationNow,
+} from './services/scheduledNotifications';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 function getEndTime(startTime: string, durationMinutes: number): string {
   const [hours, minutes] = startTime.split(':').map(Number);
@@ -99,8 +106,10 @@ function getEndTime(startTime: string, durationMinutes: number): string {
 }
 
 export default function App() {
-  // Theme state
+  // Theme state — persisted choice wins, otherwise follow the OS preference.
   const [isDark, setIsDark] = useState<boolean>(() => {
+    const saved = StudyStorage.getTheme();
+    if (saved !== null) return saved === 'dark';
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
@@ -545,110 +554,238 @@ export default function App() {
 
     setNotifications((prev) => [newNotif, ...prev]);
 
+    if (notificationSettings.inAppBanners) {
+      showToast(`${newNotif.title} — details in your bell icon.`);
+    }
+
     if (notificationSettings.soundEnabled && !isQuiet) {
       playChime('reminder');
     }
 
-    if (
-      notificationSettings.browserNotifications &&
-      typeof window !== 'undefined' &&
-      'Notification' in window &&
-      Notification.permission === 'granted' &&
-      !isQuiet
-    ) {
-      try {
-        new Notification(newNotif.title, {
-          body: newNotif.message,
-        });
-      } catch (e) {
-        console.warn('Browser notification error:', e);
+    if (notificationSettings.browserNotifications && !isQuiet) {
+      if (isNativeApp()) {
+        // Native: show through the OS so the test behaves like a real alert.
+        void showNativeNotificationNow(newNotif.title, newNotif.message);
+      } else {
+        // Web: service-worker path — `new Notification()` throws on mobile.
+        void showSystemNotification(newNotif.title, { body: newNotif.message, tag: newNotif.id });
       }
     }
   };
 
-  // Surface planned task reminders in-app once per task and calendar day.
+  // Surface planned task reminders and deadline alerts in-app and through the
+  // system notification channel. The check runs on an interval, whenever the
+  // app/tab returns to the foreground, and dedupes against the persisted
+  // notification list so each alert fires once per task and calendar day.
   useEffect(() => {
-    const checkTaskReminders = () => {
-      if (!notificationSettings.taskReminders) return;
+    // Fire reminders up to 15 minutes after the planned start so an app that
+    // was briefly backgrounded still catches the window when the user returns.
+    const REMINDER_GRACE_MS = 15 * 60 * 1000;
+    const DEADLINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+    const deliver = (notification: NotificationItem, chime: 'reminder' | 'urgent', toast: string) => {
+      // Dedupe against the persisted list (survives reloads) so an alert never
+      // fires twice for the same task and calendar day.
+      if (notifications.some((existing) => existing.id === notification.id)) return;
+      setNotifications((prev) =>
+        prev.some((existing) => existing.id === notification.id) ? prev : [notification, ...prev]
+      );
+
+      const isQuiet = isWithinQuietHours(notificationSettings);
+      // On native the OS-level scheduled notification already provides the
+      // banner + sound while the app is open — don't alert twice. (Quiet hours
+      // and disabled system notifications mean the OS never schedules one.)
+      const osHandlesAlert = isNativeApp() && notificationSettings.browserNotifications;
+      if (notificationSettings.soundEnabled && !isQuiet && !osHandlesAlert) {
+        playChime(chime);
+      }
+      if (notificationSettings.inAppBanners) {
+        showToast(toast);
+      }
+      if (!isNativeApp() && notificationSettings.browserNotifications && !isQuiet) {
+        // Service-worker path — `new Notification()` throws on mobile browsers.
+        void showSystemNotification(notification.title, {
+          body: notification.message,
+          tag: notification.id,
+        });
+      }
+    };
+
+    const checkTaskReminders = () => {
       const now = new Date();
       const todayKey = getLocalDateKey(now);
       const todayNumber = new Date(`${todayKey}T12:00:00`).getDay();
-      const isQuiet = isWithinQuietHours(notificationSettings);
 
-      tasks.forEach((task) => {
-        if (task.completed || !task.reminder?.enabled || !task.scheduledDate || !task.scheduledStartTime) return;
+      if (notificationSettings.taskReminders) {
+        tasks.forEach((task) => {
+          try {
+            if (task.completed || !task.reminder?.enabled || !task.scheduledDate || !task.scheduledStartTime) return;
 
-        const startsToday =
-          task.scheduledDate === todayKey ||
-          (task.scheduledDate < todayKey && task.recurrence === 'daily') ||
-          (task.scheduledDate < todayKey && task.recurrence === 'weekdays' && todayNumber > 0 && todayNumber < 6) ||
-          (task.scheduledDate < todayKey && task.recurrence === 'weekly' &&
-            new Date(`${task.scheduledDate}T12:00:00`).getDay() === todayNumber);
-        if (!startsToday) return;
+            const startsToday =
+              task.scheduledDate === todayKey ||
+              (task.scheduledDate < todayKey && task.recurrence === 'daily') ||
+              (task.scheduledDate < todayKey && task.recurrence === 'weekdays' && todayNumber > 0 && todayNumber < 6) ||
+              (task.scheduledDate < todayKey && task.recurrence === 'weekly' &&
+                new Date(`${task.scheduledDate}T12:00:00`).getDay() === todayNumber);
+            if (!startsToday) return;
 
-        const scheduled = new Date(`${todayKey}T${task.scheduledStartTime}:00`);
-        const leadTime = task.reminder.minutesBefore || notificationSettings.advanceNoticeMinutes || 15;
-        const reminderAt = scheduled.getTime() - leadTime * 60 * 1000;
-        if (now.getTime() < reminderAt || now.getTime() > scheduled.getTime() + 60 * 1000) return;
+            const scheduled = new Date(`${todayKey}T${task.scheduledStartTime}:00`);
+            const leadTime = task.reminder.minutesBefore || notificationSettings.advanceNoticeMinutes || 15;
+            const reminderAt = scheduled.getTime() - leadTime * 60 * 1000;
+            if (now.getTime() < reminderAt || now.getTime() > scheduled.getTime() + REMINDER_GRACE_MS) return;
 
-        const notificationId = `task-reminder-${task.id}-${todayKey}`;
-        let wasAdded = false;
-
-        setNotifications((prev) => {
-          if (prev.some((notification) => notification.id === notificationId)) return prev;
-          wasAdded = true;
-          return [
-            {
-              id: notificationId,
-              title: `Reminder: ${task.title}`,
-              message: `Your planned study time is ${task.scheduledStartTime}.`,
-              timestamp: 'Just now',
-              read: false,
-              type: 'reminder',
-              actionLabel: 'Open task',
-            },
-            ...prev,
-          ];
+            deliver(
+              {
+                id: `task-reminder-${task.id}-${todayKey}`,
+                title: `Reminder: ${task.title}`,
+                message: `Your planned study time is ${task.scheduledStartTime}.`,
+                timestamp: 'Just now',
+                read: false,
+                type: 'reminder',
+                actionLabel: 'Open task',
+              },
+              'reminder',
+              `⏰ Reminder: ${task.title} starts at ${task.scheduledStartTime}.`
+            );
+          } catch (err) {
+            // One failing task must never abort reminders for the others.
+            console.warn('Task reminder check failed:', task.id, err);
+          }
         });
+      }
 
-        if (wasAdded) {
-          if (notificationSettings.soundEnabled && !isQuiet) {
-            playChime('reminder');
-          }
+      if (notificationSettings.deadlineAlerts) {
+        tasks.forEach((task) => {
+          try {
+            if (task.completed) return;
+            const deadline = new Date(task.deadline);
+            if (Number.isNaN(deadline.getTime())) return;
+            const msLeft = deadline.getTime() - now.getTime();
+            if (msLeft < 0 || msLeft > DEADLINE_WINDOW_MS) return;
 
-          if (
-            notificationSettings.browserNotifications &&
-            typeof window !== 'undefined' &&
-            'Notification' in window &&
-            Notification.permission === 'granted' &&
-            !isQuiet
-          ) {
-            new Notification(`StudyAI reminder: ${task.title}`, {
-              body: `Planned for ${task.scheduledStartTime}.`,
+            const formatted = deadline.toLocaleString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
             });
+            deliver(
+              {
+                id: `deadline-${task.id}-${todayKey}`,
+                title: `Deadline soon: ${task.title}`,
+                message: `Due ${formatted}.`,
+                timestamp: 'Just now',
+                read: false,
+                type: 'deadline',
+                actionLabel: 'Open task',
+              },
+              'urgent',
+              `⏳ ${task.title} is due ${formatted}.`
+            );
+          } catch (err) {
+            console.warn('Deadline alert check failed:', task.id, err);
           }
-        }
-      });
+        });
+      }
     };
 
     checkTaskReminders();
     const intervalId = window.setInterval(checkTaskReminders, 60000);
-    return () => window.clearInterval(intervalId);
+    const handleVisibilityChange = () => {
+      // Catch up immediately when the user returns to the app/tab.
+      if (document.visibilityState === 'visible') checkTaskReminders();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [tasks, notificationSettings, notifications]);
+
+  // Native: on first launch ask for the OS notification permission once — like
+  // any other app — and turn system notifications on if the user accepts.
+  // The flag guarantees we never re-enable them after the user opts out.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    const BOOTSTRAP_KEY = 'studyai_native_notif_bootstrap';
+    try {
+      if (localStorage.getItem(BOOTSTRAP_KEY)) return;
+    } catch {
+      return;
+    }
+    void ensureNativePermission().then((result) => {
+      try {
+        localStorage.setItem(BOOTSTRAP_KEY, '1');
+      } catch {
+        /* storage unavailable — next launch will simply try again */
+      }
+      if (result === 'granted') {
+        setNotificationSettings((prev) =>
+          prev.browserNotifications ? prev : { ...prev, browserNotifications: true }
+        );
+      }
+    });
+  }, []);
+
+  // Native: keep OS-level alarms in sync with tasks/settings so reminders fire
+  // even when the app is closed (and re-arm after a reboot via the plugin's
+  // BOOT_COMPLETED receiver).
+  useEffect(() => {
+    syncScheduledNotifications(tasks, notificationSettings);
   }, [tasks, notificationSettings]);
+
+  // Native: opening a reminder/deadline notification jumps to its task.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    let disposed = false;
+    let handle: { remove(): Promise<void> } | null = null;
+    void LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
+      if (disposed) return;
+      const extra = action.notification.extra as { taskId?: string } | undefined;
+      const taskId = extra?.taskId;
+      if (!taskId) return;
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      setCurrentTab('tasks');
+      setSelectedTask(task);
+      setActiveSubScreen('task_detail');
+    }).then((listenerHandle) => {
+      if (disposed) {
+        void listenerHandle.remove();
+      } else {
+        handle = listenerHandle;
+      }
+    });
+    return () => {
+      disposed = true;
+      if (handle) void handle.remove();
+    };
+  }, [tasks]);
 
   useEffect(() => {
     StudyStorage.saveMetrics(metrics);
   }, [metrics]);
 
-  // Sync dark class on body
+  // Sync dark class on <html>, keep the browser/chrome theme color in step,
+  // and keep following the OS preference until the user picks one manually.
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.setAttribute('content', isDark ? '#0f172a' : '#4F46E5');
   }, [isDark]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemChange = (event: MediaQueryListEvent) => {
+      if (StudyStorage.getTheme() === null) setIsDark(event.matches);
+    };
+    mediaQuery.addEventListener('change', handleSystemChange);
+    return () => mediaQuery.removeEventListener('change', handleSystemChange);
+  }, []);
 
   // Handle Tab navigation
   const handleTabChange = (tab: NavTab) => {
@@ -664,6 +801,14 @@ export default function App() {
   };
 
   const [courseWorkspaceInitialTab, setCourseWorkspaceInitialTab] = useState<'overview' | 'tasks' | 'resources' | 'ai' | 'progress'>('overview');
+
+  // Dark/light toggle — persists the choice so it survives a reload.
+  const handleToggleTheme = () => {
+    const next = !isDark;
+    setIsDark(next);
+    StudyStorage.saveTheme(next ? 'dark' : 'light');
+  };
+
 
   // Open a course workspace by id (used by the Courses list + Home course cards).
   const openCourseById = (courseId: string, initialTab?: 'overview' | 'tasks' | 'resources' | 'ai' | 'progress') => {
@@ -1757,7 +1902,7 @@ export default function App() {
           onOpenProfile={() => setActiveSubScreen('profile')}
           onOpenAIMemory={() => setIsAIMemoryOpen(true)}
           onOpenCalendarSync={() => setActiveSubScreen('calendar_sync')}
-          onToggleTheme={() => setIsDark(!isDark)}
+          onToggleTheme={handleToggleTheme}
           isDark={isDark}
           onResetData={handleResetData}
         />
@@ -2020,7 +2165,7 @@ export default function App() {
   useEffect(() => registerBackHandler(() => nativeBackRef.current()), []);
 
   return (
-    <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
+    <div className="w-full h-full flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
       <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
@@ -2102,15 +2247,17 @@ export default function App() {
               className={`flex-1 min-h-0 ${
                 activeSubScreen === 'resource_reader'
                   ? 'overflow-hidden flex flex-col p-0 h-full'
-                  : 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24'
+                  : 'overflow-y-auto overflow-x-hidden px-4 sm:px-6 lg:px-8 pt-4 pb-6'
               } no-scrollbar`}
             >
               {renderCurrentView()}
             </div>
 
-            {/* Fixed Mobile Bottom Nav Bar */}
+            {/* Mobile Bottom Nav Bar — in-flow (shrink-0) so it is always flush
+                with the bottom of the viewport on every screen size, and the
+                safe-area inset is applied exactly once (on this wrapper). */}
             {!isTaskComposerOpen && (
-              <div className="fixed bottom-0 left-0 right-0 z-40 pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+              <div className="relative shrink-0 z-40 pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
                 <MobileBottomNav
                   currentTab={currentTab}
                   onTabChange={handleTabChange}
