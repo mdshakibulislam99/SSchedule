@@ -78,39 +78,42 @@ npm run android:assets   # scripts/generate-android-assets.py, no deps needed
 npm run cap:sync
 ```
 
-## Mandatory App Updates (Force-Update System)
+## Update Notifications (GitHub Releases: 7-day grace → hard block)
 
-The app includes an automated version check and non-dismissible force-update modal:
+The app includes an automated version check with a dismissible grace period:
 
 1. **How it works**:
-   - On launch, the app compares its local version (`CURRENT_APP_VERSION` in
-     `src/utils/version.ts`) against the remote backend endpoint `/api/app-version`.
-   - If the installed version is lower than `minRequiredVersion`, or if `forceUpdate: true` and the version is below `latestVersion`, the app displays a full-screen, non-dismissible **"Update Required"** modal.
-   - The Android hardware back button is intercepted so users cannot back out or bypass the modal without updating.
-   - Clicking **"Update Now"** opens the download/store link directly (`APP_DOWNLOAD_URL`).
+   - On launch, the app fetches the latest published GitHub release
+     (`api.github.com/repos/mdshakibulislam99/SSchedule/releases/latest`,
+     overridable at build time via `VITE_GITHUB_REPO`) and compares its tag
+     against the local version (`CURRENT_APP_VERSION` in `src/utils/version.ts`).
+   - If the installed version is older, a full-screen update modal appears with
+     a **7-day countdown**. During the window it is dismissible ("Remind Me
+     Later" / "Continue Using App"); the Android hardware back button is
+     intercepted so users cannot back out or bypass the modal without updating.
+   - Once the 7 days expire without an update, the modal becomes
+     non-dismissible and blocks the app until the user updates.
+   - Clicking **"Update Now"** downloads the release's APK asset (falls back to
+     the release page when no APK is attached).
+   - If the network is unreachable, the last fetched policy is served from
+     `localStorage`; with no cache the app assumes it is up to date.
 
-2. **Triggering a mandatory update when releasing a new version**:
-   - You can update environment variables on your server:
-     ```env
-     LATEST_APP_VERSION=1.2.0
-     MIN_REQUIRED_APP_VERSION=1.2.0
-     FORCE_APP_UPDATE=true
-     APP_DOWNLOAD_URL=https://play.google.com/store/apps/details?id=com.sschedule.app
-     ```
-   - Or send an HTTP POST request to your API:
-     ```bash
-     curl -X POST https://your-api.example.com/api/app-version \
-       -H "Content-Type: application/json" \
-       -d '{
-         "latestVersion": "1.2.0",
-         "minRequiredVersion": "1.2.0",
-         "forceUpdate": true,
-         "title": "Update Required",
-         "message": "A critical update is required to continue using ChronoPulse AI.",
-         "releaseNotes": ["New AI study features", "Important bug fixes"]
-       }'
-     ```
-   - You can also test the force-update flow directly inside the app in **Settings > App Version & Updates > Update Policy & Simulation Controls**.
+2. **Triggering an update prompt when releasing a new version**:
+   - Publish a GitHub release with the next version tag (e.g. `v1.3.0`) and
+     attach the APK. That's it — no server, no config flip, and no rebuild of
+     already-shipped installs is needed.
+   - The grace window starts the first time a client sees the new release, and
+     each target version gets its own fresh 7-day window.
+
+3. **Policy constants**: `BASELINE_POLICY` in
+   `src/services/appUpdateService.ts` holds `minRequiredVersion`,
+   `forceUpdate` and `gracePeriodDays`. The 7-day countdown and hard block
+   apply to **any** newer release, independent of `minRequiredVersion`.
+
+4. **Testing on-device**: **Settings > App Version & Updates > Update Policy &
+   Simulation Controls** lets you simulate an old installed version, expire the
+   grace window, simulate a policy requiring v2.0.0, or restore the real
+   GitHub feed.
 
 ## Known WebView limitations
 

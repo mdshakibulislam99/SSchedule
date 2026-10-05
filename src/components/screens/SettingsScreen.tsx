@@ -89,7 +89,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         }
       }
     } catch {
-      setUpdateFeedback('Could not reach update server.');
+      setUpdateFeedback('Could not check for updates.');
     } finally {
       setIsCheckingUpdate(false);
       setTimeout(() => setUpdateFeedback(null), 4000);
@@ -117,17 +117,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
-  const handleToggleServerForcePolicy = async (force: boolean) => {
+  const handleToggleForcePolicy = async (force: boolean) => {
     setIsCheckingUpdate(true);
-    await AppUpdateService.updateRemotePolicy({
-      // Toggling the sandbox switch off must clear the simulated requirement,
-      // otherwise the server keeps force-prompting for a version that no
-      // longer exists. Use the real current version as the baseline.
-      minRequiredVersion: force ? '2.0.0' : CURRENT_APP_VERSION,
-      latestVersion: force ? '2.0.0' : CURRENT_APP_VERSION,
-      forceUpdate: force,
-      gracePeriodDays: 7,
-    });
+    if (force) {
+      // Local sandbox override: the packaged app reads GitHub Releases, so
+      // "a server requiring v2.0.0" is simulated on-device instead of POSTed.
+      AppUpdateService.setPolicyOverride({
+        latestVersion: '2.0.0',
+        minRequiredVersion: '2.0.0',
+        forceUpdate: true,
+        gracePeriodDays: 7,
+      });
+    } else {
+      // Restore the real GitHub feed (clears latest/min/force override).
+      AppUpdateService.clearPolicyOverride();
+    }
     if (onCheckUpdates) {
       await onCheckUpdates();
     }
@@ -380,7 +384,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           {showDevVersionControls && (
             <div className="mt-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-2 text-xs">
               <p className="text-slate-500 dark:text-slate-400 text-[11px]">
-                Test the mandatory force-update system as a student or adjust remote policy:
+                Test the mandatory force-update system as a student or adjust the local update policy:
               </p>
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
@@ -420,14 +424,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </button>
               </div>
 
-              <div className="pt-1">
+              <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handleToggleServerForcePolicy(true)}
-                  className="w-full py-1.5 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                  onClick={() => handleToggleForcePolicy(true)}
+                  className="py-1.5 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <DownloadCloud className="w-3 h-3" />
-                  <span>Simulate Server Requiring v2.0.0 (7-Day Grace)</span>
+                  <span>Require v2.0.0 (7-Day Grace)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleForcePolicy(false)}
+                  className="py-1.5 px-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Restore GitHub Feed</span>
                 </button>
               </div>
             </div>

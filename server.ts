@@ -80,7 +80,9 @@ let appVersionConfig: AppVersionConfigPayload = {
   updatedAt: new Date().toISOString(),
 };
 
-// Public endpoint for mobile clients to query version requirements
+// Public endpoint to query version requirements. NOTE: the packaged app now
+// polls GitHub Releases directly (see src/services/appUpdateService.ts); this
+// endpoint remains for local dev tooling and a future AI backend deployment.
 app.get('/api/app-version', (_req: Request, res: Response) => {
   res.json(appVersionConfig);
 });
