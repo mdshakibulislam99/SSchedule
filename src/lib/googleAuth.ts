@@ -70,13 +70,17 @@ function ensureNativeGoogleInit(): Promise<void> {
 
 function isUserCancellation(err: any): boolean {
   const code = String(err?.code || '');
-  const message = String(err?.message || '').toLowerCase();
+  const message = String(err?.message || err || '').toLowerCase();
   return (
     code === 'USER_CANCELLED' ||
     code === 'CANCELLED' ||
     code === 'auth/popup-closed-by-user' ||
     code === 'auth/cancelled-popup-request' ||
-    message.includes('cancel')
+    message.includes('cancel') ||
+    message.includes('popup window closed') ||
+    message.includes('popup_closed') ||
+    message.includes('window closed') ||
+    message.includes('closed')
   );
 }
 
@@ -95,6 +99,7 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
   await ensureNativeGoogleInit();
 
   let idToken: string | null = null;
+  let accessToken: string | null = null;
 
   try {
     // NOTE: do NOT pass `scopes` here. The Android plugin unconditionally
@@ -115,7 +120,12 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
     const login = await withTimeout(
       SocialLogin.login({
         provider: 'google',
-        options: {},
+        options: {
+          style: 'standard',
+          filterByAuthorizedAccounts: false,
+          autoSelectEnabled: false,
+          forcePrompt: true,
+        },
       }),
       NATIVE_LOGIN_TIMEOUT_MS,
       'Google took too long to respond.'
@@ -124,17 +134,21 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
     // The plugin returns a union: online mode yields tokens, offline mode
     // yields only a server auth code (which is useless for Firebase Auth).
     const result: any = login?.result;
-    if (result && 'idToken' in result) {
-      idToken = result.idToken ?? null;
+    if (result) {
+      if ('idToken' in result && result.idToken) {
+        idToken = result.idToken;
+      }
+      if (result.accessToken) {
+        accessToken = typeof result.accessToken === 'string'
+          ? result.accessToken
+          : result.accessToken.token || null;
+      }
     }
   } catch (err: any) {
     if (isUserCancellation(err)) {
       throw new Error('Google Sign-In was cancelled.');
     }
     console.warn('Native Google login failed:', err);
-    // Surface the plugin's actual message. It distinguishes the real causes
-    // (OAuth client / SHA-1 misconfiguration vs. no Google account on the
-    // device), and a generic "not available" string hid all of that.
     const detail = String(err?.message || '').trim();
     throw new Error(
       detail || 'Google Sign-In failed on this device. Please try again.'
@@ -147,6 +161,18 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
 
   const credential = GoogleAuthProvider.credential(idToken);
   const cred = await signInWithCredential(auth, credential);
+
+  if (accessToken && typeof window !== 'undefined') {
+    try {
+      const payload = JSON.stringify({
+        token: accessToken,
+        expiresAt: Date.now() + 3500 * 1000,
+      });
+      localStorage.setItem('chrono_gcal_token', payload);
+      sessionStorage.setItem('chrono_gcal_token', payload);
+    } catch {}
+  }
+
   return cred.user;
 }
 
@@ -220,9 +246,17 @@ export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
     return result.user;
   } catch (popupErr: any) {
     const code = String(popupErr?.code || '');
+    const popupErrMsg = String(popupErr?.message || popupErr || '').toLowerCase();
     console.warn('Firebase signInWithPopup failed:', code, popupErr);
 
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    if (
+      code === 'auth/popup-closed-by-user' ||
+      code === 'auth/cancelled-popup-request' ||
+      popupErrMsg.includes('popup window closed') ||
+      popupErrMsg.includes('popup_closed') ||
+      popupErrMsg.includes('window closed') ||
+      popupErrMsg.includes('closed')
+    ) {
       throw new Error('Google Sign-In was cancelled.');
     }
 
@@ -247,7 +281,14 @@ export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
                 }
               },
               error_callback: (err: any) => {
-                if (err?.type === 'popup_closed') {
+                const errType = String(err?.type || '').toLowerCase();
+                const errMsg = String(err?.message || err || '').toLowerCase();
+                if (
+                  errType === 'popup_closed' ||
+                  errMsg.includes('closed') ||
+                  errMsg.includes('popup window closed') ||
+                  errMsg.includes('cancel')
+                ) {
                   reject(new Error('Google Sign-In was cancelled.'));
                 } else {
                   reject(new Error(err?.message || 'Google account selector failed to open.'));

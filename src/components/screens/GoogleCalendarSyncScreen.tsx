@@ -51,7 +51,13 @@ export const GoogleCalendarSyncScreen: React.FC<GoogleCalendarSyncScreenProps> =
     try {
       await fn();
     } catch (err: any) {
-      if (!err?.message?.includes('popup_closed')) {
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (
+        !msg.includes('popup_closed') &&
+        !msg.includes('closed') &&
+        !msg.includes('cancel') &&
+        !msg.includes('popup window closed')
+      ) {
         setError('Could not connect. Check the setup steps below and try again.');
       }
     } finally {

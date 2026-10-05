@@ -29,8 +29,13 @@ export const AIService = {
           };
         }
       } catch (err: any) {
-        console.warn('Puter native login rejected or error:', err);
-        throw err;
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (msg.includes('closed') || msg.includes('cancel')) {
+          console.info('Puter sign-in popup closed by user.');
+          return null;
+        }
+        console.warn('Puter login error:', err);
+        return null;
       }
     }
     return null;

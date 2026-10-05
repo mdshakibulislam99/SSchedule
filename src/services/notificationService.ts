@@ -34,6 +34,7 @@ export interface SyncAlarmsOptions {
 export type PermissionStateResult = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
 let isInitialized = false;
+let notificationTapHandler: ((extra?: Record<string, unknown>) => void) | undefined;
 
 /**
  * Initialize notification channels and listener handlers on Android/Capacitor.
@@ -41,6 +42,10 @@ let isInitialized = false;
 export async function initNotifications(
   onNotificationTap?: (extra?: Record<string, unknown>) => void
 ): Promise<void> {
+  if (onNotificationTap) {
+    notificationTapHandler = onNotificationTap;
+  }
+
   if (isInitialized) return;
   isInitialized = true;
 
@@ -49,7 +54,7 @@ export async function initNotifications(
       // Create high-priority reminder channel for Android 8.0+
       await LocalNotifications.createChannel({
         id: CHANNELS.REMINDERS,
-        name: 'ChronoPulse Reminders',
+        name: 'SShedule Reminders',
         description: 'High-priority alerts for study tasks, classes, and deadlines',
         importance: 5, // High importance (heads-up banner with sound & vibration)
         visibility: 1, // Public on lockscreen
@@ -61,7 +66,7 @@ export async function initNotifications(
       // Create general updates channel
       await LocalNotifications.createChannel({
         id: CHANNELS.GENERAL,
-        name: 'ChronoPulse Updates & Briefings',
+        name: 'SShedule Updates & Briefings',
         description: 'Daily briefings, AI recommendations, and summaries',
         importance: 4,
         visibility: 1,
@@ -71,8 +76,8 @@ export async function initNotifications(
       // Handle tap on notifications
       LocalNotifications.addListener('localNotificationActionPerformed', (notificationAction) => {
         const extra = notificationAction.notification?.extra as Record<string, unknown> | undefined;
-        if (onNotificationTap) {
-          onNotificationTap(extra);
+        if (notificationTapHandler) {
+          notificationTapHandler(extra);
         }
       });
     } catch (err) {
@@ -115,6 +120,15 @@ export async function requestNotificationPermission(): Promise<boolean> {
       // Ensure channels exist first
       await initNotifications();
       const status = await LocalNotifications.requestPermissions();
+      // On Android 12+ (API 31+), check exact alarm setting for background notifications
+      try {
+        const exactSetting = await LocalNotifications.checkExactNotificationSetting();
+        if (exactSetting && exactSetting.exact_alarm !== 'granted') {
+          await LocalNotifications.changeExactNotificationSetting();
+        }
+      } catch {
+        // Non-blocking exact alarm setting check
+      }
       return status.display === 'granted';
     } catch (err) {
       console.error('Error requesting native notification permissions:', err);
@@ -211,7 +225,15 @@ export async function syncAllScheduledAlarms({
   schedule,
   settings,
 }: SyncAlarmsOptions): Promise<number> {
-  if (!Capacitor.isNativePlatform() || !settings.browserNotifications) {
+  if (!Capacitor.isNativePlatform()) {
+    return 0;
+  }
+
+  // If user explicitly disabled notifications, cancel pending alarms
+  if (settings.browserNotifications === false) {
+    try {
+      await LocalNotifications.cancelAll();
+    } catch {}
     return 0;
   }
 
@@ -281,7 +303,7 @@ export async function syncAllScheduledAlarms({
             upcomingNotifications.push({
               id: hashString(`task-dl-2h-${task.id}`),
               title: `⚠️ 2h Deadline Warning: ${task.title}`,
-              body: `This assignment is due in 2 hours! Open ChronoPulse to wrap it up.`,
+              body: `This assignment is due in 2 hours! Open SShedule to wrap it up.`,
               channelId: CHANNELS.REMINDERS,
               schedule: { at: new Date(twoHoursBefore), allowWhileIdle: true },
               extra: { type: 'task', taskId: task.id },
@@ -370,7 +392,7 @@ export async function syncAllScheduledAlarms({
         if (eveningMs > now) {
           upcomingNotifications.push({
             id: hashString(`evening-suggestion-${d.toDateString()}`),
-            title: `💡 ChronoPulse AI: Evening Focus Wrap-up`,
+            title: `💡 SShedule AI: Evening Focus Wrap-up`,
             body: `Review completed tasks, log focus streaks, and optimize tomorrow's plan.`,
             channelId: CHANNELS.GENERAL,
             schedule: { at: new Date(eveningMs), allowWhileIdle: true },

@@ -16,7 +16,8 @@
     "apk:release": "npm run cap:sync && cd android && ./gradlew assembleRelease",
     "apk:install": "npm run cap:sync && cd android && ./gradlew installDebug",
     "android:keystore": "keytool -genkeypair -v -keystore android/app/release.keystore -alias sschedule -keyalg RSA -keysize 2048 -validity 10000 -storepass chronopulse -keypass chronopulse -dname CN=SShedule,OU=Mobile,O=SShedule,C=BD",
-    "android:assets": "python3 scripts/generate-android-assets.py"
+    "android:assets": "python3 scripts/generate-android-assets.py",
+    "postinstall": "node scripts/patch-social-login.cjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.2",

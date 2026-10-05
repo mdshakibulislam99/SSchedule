@@ -1,3 +1,5 @@
+import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { app } from './firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
@@ -105,64 +107,144 @@ interface CachedToken {
   expiresAt: number;
 }
 
+let memoryCachedToken: CachedToken | null = null;
+
 function readCachedToken(): CachedToken | null {
+  if (memoryCachedToken && memoryCachedToken.expiresAt > Date.now()) {
+    return memoryCachedToken;
+  }
   try {
-    const raw = sessionStorage.getItem(TOKEN_CACHE_KEY);
-    return raw ? (JSON.parse(raw) as CachedToken) : null;
+    const raw = sessionStorage.getItem(TOKEN_CACHE_KEY) || localStorage.getItem(TOKEN_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedToken;
+    if (parsed?.token && Number(parsed.expiresAt) > Date.now()) {
+      memoryCachedToken = parsed;
+      return parsed;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
 function writeCachedToken(token: string, expiresInSeconds: number) {
+  const cached: CachedToken = {
+    token,
+    expiresAt: Date.now() + Math.max(300, expiresInSeconds) * 1000,
+  };
+  memoryCachedToken = cached;
   try {
-    sessionStorage.setItem(
-      TOKEN_CACHE_KEY,
-      JSON.stringify({ token, expiresAt: Date.now() + expiresInSeconds * 1000 }),
-    );
-  } catch {
-    // sessionStorage unavailable — keep working in-memory for this request cycle
-  }
+    sessionStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cached));
+  } catch {}
+  try {
+    localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cached));
+  } catch {}
 }
 
 export function clearCachedToken() {
+  memoryCachedToken = null;
   try {
     sessionStorage.removeItem(TOKEN_CACHE_KEY);
-  } catch {
-    // ignore
-  }
+  } catch {}
+  try {
+    localStorage.removeItem(TOKEN_CACHE_KEY);
+  } catch {}
 }
 
 /**
  * Requests a Google OAuth access token for the Calendar API.
- * `silent: true` attempts a refresh with no consent prompt.
+ * 1. Checks memory, localStorage, and sessionStorage cache.
+ * 2. Attempts Firebase Auth Google sign-in popup (uses Firebase auth domain, avoiding origin_mismatch).
+ * 3. Falls back to Google Identity Services (GIS).
  */
-export function requestCalendarToken(opts: { silent?: boolean } = {}): Promise<string> {
-  return loadGis().then(
-    () =>
-      new Promise<string>((resolve, reject) => {
-        try {
-          const client = window.google.accounts.oauth2.initTokenClient({
-            client_id: OAUTH_CLIENT_ID,
-            scope: GOOGLE_CALENDAR_SCOPES.join(' '),
-            callback: (resp: any) => {
-              if (resp?.access_token) {
-                writeCachedToken(resp.access_token, Number(resp.expires_in) || 3600);
-                resolve(resp.access_token);
-              } else {
-                reject(new GoogleAuthError(resp?.error || 'access_denied', resp?.error_description));
-              }
-            },
-            error_callback: (err: any) => {
-              reject(new GoogleAuthError(err?.type || 'popup_failed', err?.message));
-            },
-          });
-          client.requestAccessToken({ prompt: opts.silent ? '' : 'consent' });
-        } catch (err) {
-          reject(new GoogleAuthError('init_failed', (err as Error)?.message));
-        }
-      }),
-  );
+export async function requestCalendarToken(opts: { silent?: boolean } = {}): Promise<string> {
+  const cached = readCachedToken();
+  if (cached && cached.expiresAt - Date.now() > 60_000) {
+    return cached.token;
+  }
+
+  if (opts.silent) {
+    if (cached?.token) return cached.token;
+    throw new GoogleAuthError('silent_token_unavailable', 'No valid Google access token available.');
+  }
+
+  // 1. First attempt: Firebase Auth GoogleAuthProvider popup
+  // This uses Firebase's official OAuth handler domain (which avoids origin_mismatch in Google Cloud)
+  try {
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    GOOGLE_CALENDAR_SCOPES.forEach((scope) => provider.addScope(scope));
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      writeCachedToken(credential.accessToken, 3600);
+      return credential.accessToken;
+    }
+  } catch (firebaseErr: any) {
+    const code = String(firebaseErr?.code || '');
+    const msg = String(firebaseErr?.message || firebaseErr || '').toLowerCase();
+    if (
+      code === 'auth/popup-closed-by-user' ||
+      code === 'auth/cancelled-popup-request' ||
+      msg.includes('popup window closed') ||
+      msg.includes('popup_closed') ||
+      msg.includes('window closed') ||
+      msg.includes('closed') ||
+      msg.includes('cancel')
+    ) {
+      throw new GoogleAuthError('cancelled', 'Sign-in popup was closed.');
+    }
+    console.warn('Firebase popup attempt failed, falling back to GIS client:', firebaseErr);
+  }
+
+  // 2. Second attempt: Google Identity Services (GIS) Token Client
+  await loadGis();
+  return new Promise<string>((resolve, reject) => {
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: OAUTH_CLIENT_ID,
+        scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+        callback: (resp: any) => {
+          if (resp?.access_token) {
+            writeCachedToken(resp.access_token, Number(resp.expires_in) || 3600);
+            resolve(resp.access_token);
+          } else {
+            reject(new GoogleAuthError(resp?.error || 'access_denied', resp?.error_description));
+          }
+        },
+        error_callback: (err: any) => {
+          const msg = String(err?.message || err || '').toLowerCase();
+          const type = String(err?.type || '').toLowerCase();
+          if (
+            type === 'popup_closed' ||
+            msg.includes('popup window closed') ||
+            msg.includes('popup_closed') ||
+            msg.includes('window closed') ||
+            msg.includes('closed') ||
+            msg.includes('cancel')
+          ) {
+            reject(new GoogleAuthError('cancelled', 'Sign-in popup was closed.'));
+            return;
+          }
+          if (msg.includes('origin') || type === 'origin_mismatch') {
+            reject(
+              new GoogleAuthError(
+                'origin_mismatch',
+                'Google Cloud OAuth origin mismatch: Please register this origin in Google Cloud Console or authorize OAuth in AI Studio.',
+              ),
+            );
+          } else {
+            reject(new GoogleAuthError(err?.type || 'popup_failed', msg || 'Popup request failed.'));
+          }
+        },
+      });
+      client.requestAccessToken({ prompt: opts.silent ? '' : 'consent' });
+    } catch (err) {
+      reject(new GoogleAuthError('init_failed', (err as Error)?.message));
+    }
+  });
 }
 
 /** Returns a valid access token, silently refreshing when possible. */

@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
+import { Capacitor } from '@capacitor/core';
 import { RefreshCw } from 'lucide-react';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
@@ -95,6 +96,8 @@ import {
   sendSystemNotification,
   scheduleTaskSystemReminder,
   syncAllScheduledAlarms,
+  checkNotificationPermission,
+  requestNotificationPermission,
   CHANNELS,
 } from './services/notificationService';
 
@@ -455,11 +458,18 @@ export default function App() {
       const fUser = await signInWithGoogle();
       if (fUser) {
         showToast(`Signed in with Google as ${fUser.displayName || fUser.email}`);
+        setCurrentTab('home');
+        setActiveSubScreen(null);
       }
     } catch (err: any) {
       console.warn('Google sign-in error:', err);
-      const msg = String(err?.message || '');
-      if (!msg.includes('cancelled') && !msg.includes('popup-closed-by-user')) {
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (
+        !msg.includes('cancelled') &&
+        !msg.includes('closed') &&
+        !msg.includes('popup-closed-by-user') &&
+        !msg.includes('popup window closed')
+      ) {
         showToast(err?.message || 'Google sign-in could not be completed.');
       }
     } finally {
@@ -705,6 +715,21 @@ export default function App() {
       setActiveSubScreen('notifications');
     });
   }, [tasks, schedule]);
+
+  // On native Android launch, request notification permissions so background alarms can alert in the notification bar
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      void checkNotificationPermission().then((status) => {
+        if (status === 'prompt') {
+          void requestNotificationPermission().then((granted) => {
+            if (granted) {
+              setNotificationSettings((prev) => ({ ...prev, browserNotifications: true }));
+            }
+          });
+        }
+      });
+    }
+  }, []);
 
   useEffect(() => {
     StudyStorage.saveMetrics(metrics);

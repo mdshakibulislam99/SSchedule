@@ -755,7 +755,7 @@ export const INITIAL_NOTIFICATIONS: NotificationItem[] = [
 export const INITIAL_NOTIFICATION_SETTINGS: NotificationSettings = {
   inAppBanners: true,
   soundEnabled: true,
-  browserNotifications: false,
+  browserNotifications: true,
   taskReminders: true,
   classReminders: true,
   deadlineAlerts: true,
