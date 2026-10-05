@@ -10,6 +10,7 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
+import { CURRENT_APP_VERSION, CURRENT_BUILD_NUMBER } from '../../utils/version';
 
 interface MoreScreenProps {
   onNavigate: (destination: string) => void;
@@ -92,6 +93,10 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
           );
         })}
       </div>
+
+      <p className="text-center text-xs text-slate-400 dark:text-slate-500 pt-1">
+        SShedule v{CURRENT_APP_VERSION} (Build {CURRENT_BUILD_NUMBER})
+      </p>
     </div>
   );
 };
