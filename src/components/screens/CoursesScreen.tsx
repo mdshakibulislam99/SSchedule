@@ -16,11 +16,13 @@ import {
   ListPlus,
   GraduationCap,
   FileText,
+  Settings2,
+  AlertCircle,
 } from 'lucide-react';
 import { Course, CourseModule, CourseResource, Task, AIProviderConfig } from '../../types';
 import { computeCourseProgress, getCourseResources, getCourseTasks } from '../../utils/courses';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
-import { AIOrchestrator } from '../../services/aiOrchestrator';
+import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 
 interface CoursesScreenProps {
   courses: Course[];
@@ -112,11 +114,19 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
     const promptToSend = (customPrompt || aiCourseInput).trim();
     if (!promptToSend || isAiGenerating) return;
 
+    const configToUse = aiConfig || INITIAL_AI_CONFIG;
+    if (!isAIConfigured(configToUse)) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      setAiStatus('AI provider is not configured. Please open Settings to connect Puter.js (free) or enter an API key.');
+      return;
+    }
+
     setIsAiGenerating(true);
     setAiStatus(null);
 
     try {
-      const configToUse = aiConfig || INITIAL_AI_CONFIG;
       const result = await AIOrchestrator.parseOrGenerateCourse(promptToSend, configToUse);
 
       setName(result.name);
@@ -377,15 +387,41 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
             <div className="w-full max-w-lg mx-auto px-4 sm:px-6 py-6 pb-20 space-y-6">
 
               {/* ✨ AI Course Assistant Box inside + New Course */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-indigo-50/90 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 shadow-xs space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950 dark:text-indigo-200">
-                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                    <span>Chat with AI to Build Course</span>
+              <div className="p-4.5 rounded-3xl bg-gradient-to-br from-indigo-50/90 via-purple-50/50 to-white dark:from-slate-900 dark:via-indigo-950/30 dark:to-slate-900 border border-indigo-100/90 dark:border-indigo-900/50 shadow-xs space-y-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                        AI Curriculum Builder
+                      </h3>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Auto-fills syllabus, modules, and starter tasks
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded-full border border-indigo-200/60 dark:border-indigo-800">
-                    Auto-Fills Details & Modules
-                  </span>
+
+                  {isAIConfigured(aiConfig || INITIAL_AI_CONFIG) ? (
+                    <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800 flex items-center gap-1.5 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>Ready</span>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+                        }
+                      }}
+                      className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 flex items-center gap-1 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Settings2 className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                      <span>Setup AI</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* AI Input Form */}
@@ -401,14 +437,14 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
                       type="text"
                       value={aiCourseInput}
                       onChange={(e) => setAiCourseInput(e.target.value)}
-                      placeholder="e.g. 'CS 301 Machine Learning with Prof. Alan Turing, red color, 🤖 icon'..."
-                      className="w-full pl-3 pr-8 py-2 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800/80 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                      placeholder="e.g. 'CS 301 Machine Learning with Prof. Alan Turing'..."
+                      className="w-full pl-3.5 pr-8 py-2.5 rounded-2xl bg-white dark:bg-slate-900/90 border border-indigo-200/80 dark:border-indigo-800/80 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 transition-all"
                     />
                     {aiCourseInput && (
                       <button
                         type="button"
                         onClick={() => setAiCourseInput('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -417,14 +453,14 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
                   <button
                     type="submit"
                     disabled={!aiCourseInput.trim() || isAiGenerating}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all shrink-0 cursor-pointer"
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs active:scale-95 shrink-0 cursor-pointer"
                   >
                     {isAiGenerating ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <Sparkles className="w-3.5 h-3.5" />
                     )}
-                    <span className="hidden sm:inline">Ask AI</span>
+                    <span>Build</span>
                   </button>
                 </form>
 
@@ -443,21 +479,47 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
                       type="button"
                       onClick={() => handleGenerateWithAI(chip.prompt)}
                       disabled={isAiGenerating}
-                      className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-100 dark:border-indigo-900 text-indigo-700 dark:text-indigo-300 font-medium hover:border-indigo-300 transition-colors shrink-0 disabled:opacity-50 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-xl bg-white/95 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-medium hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all shrink-0 disabled:opacity-50 cursor-pointer shadow-2xs"
                     >
                       {chip.label}
                     </button>
                   ))}
                 </div>
 
+                {/* AI Not Configured Notice with direct setup button */}
+                {!isAIConfigured(aiConfig || INITIAL_AI_CONFIG) && (
+                  <div className="p-3 rounded-2xl bg-amber-500/10 dark:bg-amber-950/40 border border-amber-500/25 text-xs flex items-center justify-between gap-3 animate-fade-in">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-7 h-7 rounded-xl bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center shrink-0 text-amber-600 dark:text-amber-400">
+                        <Settings2 className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-amber-900 dark:text-amber-200">AI Setup Needed</p>
+                        <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 truncate">Configure Puter.js (free) or enter an API key in Settings.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shrink-0 shadow-xs cursor-pointer active:scale-95 transition-all"
+                    >
+                      Setup AI
+                    </button>
+                  </div>
+                )}
+
                 {/* AI Status / Confirmation Banner */}
                 {aiStatus && (
-                  <div className="p-3 rounded-xl bg-indigo-100/70 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 flex items-start gap-2 animate-fade-in">
+                  <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 flex items-start gap-2.5 animate-fade-in">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="font-semibold">{aiStatus}</p>
-                      <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/80 mt-0.5">
-                        You can customize fields below or chat again in the box above to refine.
+                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80 mt-0.5">
+                        You can customize fields below or refine details as needed.
                       </p>
                     </div>
                   </div>
@@ -466,32 +528,37 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
 
               {/* Live Preview Card */}
               <div
-                className="rounded-[1.5rem] p-5 text-white shadow-[0_18px_45px_rgba(15,23,42,0.16)] transition-all duration-300"
+                className="rounded-3xl p-5 text-white shadow-xl transition-all duration-300 relative overflow-hidden"
                 style={{ backgroundColor: color }}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center text-2xl shrink-0">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl shrink-0 shadow-inner">
                     {coverEmoji || '📘'}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="inline-flex px-2 py-0.5 rounded-md bg-white/20 text-xs font-extrabold tracking-wide font-mono">
-                        {code.trim().toUpperCase() || 'CODE'}
+                      <span className="inline-flex px-2.5 py-0.5 rounded-lg bg-white/25 text-xs font-black tracking-wider font-mono uppercase shadow-2xs">
+                        {code.trim().toUpperCase() || 'COURSE101'}
                       </span>
                       {modules.length > 0 && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-black/20 text-white">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-lg bg-black/20 text-white backdrop-blur-xs">
                           <Layers className="w-3 h-3" />
                           <span>{modules.length} {modules.length === 1 ? 'module' : 'modules'}</span>
                         </span>
                       )}
                     </div>
-                    <h3 className="text-lg font-extrabold truncate mt-1">{name.trim() || 'Course name'}</h3>
+                    <h3 className="text-lg font-black truncate mt-1 tracking-tight text-white drop-shadow-xs">
+                      {name.trim() || 'Course Title'}
+                    </h3>
                     {professor.trim() && (
-                      <p className="text-xs text-white/90 truncate mt-0.5">Prof. {professor.trim()}</p>
+                      <p className="text-xs text-white/90 truncate mt-0.5 font-medium">Instructor: {professor.trim()}</p>
                     )}
                   </div>
                 </div>
-                <p className="text-[11px] text-white/75 mt-3">Preview · this is how your course card and workspace will appear.</p>
+                <div className="mt-3.5 pt-3 border-t border-white/15 flex items-center justify-between text-[11px] text-white/80">
+                  <span>Workspace Preview</span>
+                  <span>{objectives.length} learning objectives</span>
+                </div>
               </div>
 
               {/* Form Controls */}

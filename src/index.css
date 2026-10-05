@@ -1,9 +1,5 @@
 @import "tailwindcss";
 
-/* Tailwind v4 defaults the `dark:` variant to `prefers-color-scheme`.
-   This app toggles the `.dark` class on <html>, so register a class-based
-   variant — without this, the dark/light toggle button changes state but
-   no `dark:*` styles actually apply. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {

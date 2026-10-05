@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { SplashScreen } from '@capacitor/splash-screen';
+import { initNotifications } from '../services/notificationService';
 
 /** True only when running inside the packaged Android/iOS shell. */
 export const isNativeApp = (): boolean => Capacitor.isNativePlatform();
@@ -66,5 +67,27 @@ export async function initNativeApp(): Promise<void> {
     await SplashScreen.hide();
   } catch {
     // Already hidden, or the plugin is unavailable — nothing to do.
+  }
+
+  // Initialize Android notification channels
+  try {
+    await initNotifications();
+  } catch {
+    // Non-blocking notification setup
+  }
+}
+
+/**
+ * Synchronize Android native status bar with the current Bright/Night mode.
+ */
+export async function updateNativeTheme(isDark: boolean): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light });
+    if (Capacitor.getPlatform() === 'android') {
+      await StatusBar.setBackgroundColor({ color: isDark ? '#0f172a' : '#ffffff' });
+    }
+  } catch {
+    // Non-blocking status bar update
   }
 }

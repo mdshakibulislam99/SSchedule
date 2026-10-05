@@ -48,15 +48,55 @@ export class PuterAIProvider implements IAIProvider {
   type: AIProviderType = 'puter';
 
   async generateText(prompt: string, systemInstruction?: string): Promise<string> {
-    if (typeof window !== 'undefined' && window.puter?.ai?.chat) {
+    const puter = typeof window !== 'undefined' ? (window as any).puter : undefined;
+    const hasValidToken = Boolean(
+      puter &&
+      puter.authToken &&
+      puter.auth &&
+      typeof puter.auth.isSignedIn === 'function' &&
+      puter.auth.isSignedIn()
+    );
+
+    if (!hasValidToken) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      throw new Error('AI_NOT_CONFIGURED: Puter account is not connected. Please connect Puter or configure an AI model in Settings.');
+    }
+
+    try {
       const fullPrompt = systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt;
-      const res = await window.puter.ai.chat(fullPrompt, { model: 'gpt-4o-mini' });
+      const res = await puter.ai.chat(fullPrompt, { model: 'gpt-4o-mini' });
       if (typeof res === 'string') return res;
       if (res?.message?.content) return res.message.content;
       return JSON.stringify(res);
+    } catch (err: any) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      throw err;
     }
-    throw new Error('Puter.js SDK is not ready or user is not logged in.');
   }
+}
+
+// Check if active AI provider is properly configured
+export function isAIConfigured(config?: AIProviderConfig | null): boolean {
+  if (!config) return false;
+  if (config.activeProvider === 'puter') {
+    const puter = typeof window !== 'undefined' ? (window as any).puter : undefined;
+    const hasPuterToken = Boolean(
+      puter &&
+      puter.authToken &&
+      puter.auth &&
+      typeof puter.auth.isSignedIn === 'function' &&
+      puter.auth.isSignedIn()
+    );
+    return Boolean(config.puterUser && hasPuterToken);
+  }
+  if (config.activeProvider === 'gemini') return Boolean(config.apiKeys?.gemini);
+  if (config.activeProvider === 'openai') return Boolean(config.apiKeys?.openai);
+  if (config.activeProvider === 'claude') return Boolean(config.apiKeys?.claude);
+  return Boolean(config.apiKeys?.custom && config.customEndpoint);
 }
 
 // 2. Gemini Provider
@@ -183,6 +223,17 @@ export const AIOrchestrator = {
     config: AIProviderConfig,
     enableSearch?: boolean
   ): Promise<AIResponseWithActions> {
+    if (!isAIConfigured(config)) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      return {
+        text: 'AI is not configured yet. Please open Settings to connect Puter.js (free) or enter an API key.',
+        actions: [],
+        suggestedChips: ['Open AI Settings', 'Review Today Tasks'],
+      };
+    }
+
     const provider = this.getProvider(config, 'routine');
 
     // Build context summary
@@ -290,7 +341,16 @@ When the user asks to add, schedule, move, edit, or delete any task or calendar 
 6. Delete Schedule Event:
 [ACTION: {"type": "delete_schedule", "targetEventTitle": "Cancelled Lab", "targetEventId": "sched-999"}]
 
-Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only create an action when the student clearly asks you to add, move, edit, schedule, or remove something.`;
+7. Break Down Task Into Subtasks:
+[ACTION: {"type": "create_subtasks", "targetTaskTitle": "CS Research Paper", "targetTaskId": "task-123", "subtasks": ["Literature review", "Draft methodology", "Write discussion", "Final edit"]}]
+
+8. Update Course Objectives or Overview:
+[ACTION: {"type": "update_course", "targetCourseCode": "CS101", "targetCourseId": "course-123", "description": "Updated course overview...", "addObjectives": ["Master recursion", "Analyze Big-O runtime"]}]
+
+9. Add Module to Course:
+[ACTION: {"type": "create_module", "targetCourseCode": "CS101", "targetCourseId": "course-123", "title": "Week 4: Memory Management", "description": "Pointers, stack vs heap, and dynamic memory allocation"}]
+
+Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only create an action when the student clearly asks you to add, move, edit, schedule, break down, or remove something.`;
 
     try {
       let rawText = '';
@@ -345,6 +405,15 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
             } else if (parsed.type === 'delete_schedule') {
               actionTitle = `Remove Event: ${parsed.targetEventTitle || 'Event'}`;
               actionDesc = `Remove this calendar block from your schedule.`;
+            } else if (parsed.type === 'create_subtasks') {
+              actionTitle = `Subtasks: ${parsed.targetTaskTitle || 'Task'}`;
+              actionDesc = `Add ${Array.isArray(parsed.subtasks) ? parsed.subtasks.length : ''} subtasks to organize and complete this task.`;
+            } else if (parsed.type === 'update_course') {
+              actionTitle = `Update Course: ${parsed.targetCourseCode || 'Course'}`;
+              actionDesc = `Update course overview and learning objectives.`;
+            } else if (parsed.type === 'create_module') {
+              actionTitle = `Add Module: ${parsed.title || 'New Module'}`;
+              actionDesc = `${parsed.description || 'Add unit module to this course.'}`;
             }
 
             actions.push({
@@ -1212,7 +1281,7 @@ Analyze and return valid JSON only with this exact shape:
     config?: AIProviderConfig
   ): Promise<AIGeneratedCourseResult> {
     const raw = prompt.trim();
-    if (config) {
+    if (config && isAIConfigured(config)) {
       try {
         const provider = this.getProvider(config, 'routine');
         const systemPrompt = `You are StudyAI's curriculum architect. When given a student's prompt about a course, syllabus, or class they are taking, generate a complete structured course object in JSON format.

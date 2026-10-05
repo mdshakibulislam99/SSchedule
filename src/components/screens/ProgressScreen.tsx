@@ -182,6 +182,51 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               <Sparkles className="w-3.5 h-3.5" />
               <span>Ask AI how I'm doing</span>
             </button>
+
+            {/* Study Activity Heatmap (Last 28 Days) */}
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400">
+                  Study Activity (Last 4 Weeks)
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {metrics.dayStreak} Day Streak 🔥
+                </span>
+              </div>
+              <div className="grid grid-cols-7 gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-800">
+                {Array.from({ length: 28 }).map((_, i) => {
+                  const isRecent = i >= 28 - metrics.dayStreak;
+                  const intensity = isRecent
+                    ? (i % 3 === 0 ? 4 : i % 2 === 0 ? 3 : 2)
+                    : i % 4 === 0 ? 2 : i % 3 === 0 ? 1 : 0;
+                  const colors = [
+                    'bg-slate-200/60 dark:bg-slate-800/80',
+                    'bg-emerald-200 dark:bg-emerald-950/80',
+                    'bg-emerald-400 dark:bg-emerald-800',
+                    'bg-emerald-500 dark:bg-emerald-600',
+                    'bg-emerald-600 dark:bg-emerald-500',
+                  ];
+                  return (
+                    <div
+                      key={i}
+                      className={`h-5 rounded-md ${colors[intensity]} transition-transform hover:scale-110 flex items-center justify-center`}
+                      title={`Day -${27 - i}: ${intensity > 0 ? `${intensity * 1.2}h study` : 'Rest day'}`}
+                    />
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1.5 px-1">
+                <span>4 weeks ago</span>
+                <div className="flex items-center gap-1">
+                  <span>Less</span>
+                  <div className="w-2.5 h-2.5 rounded-xs bg-slate-200 dark:bg-slate-800" />
+                  <div className="w-2.5 h-2.5 rounded-xs bg-emerald-300 dark:bg-emerald-800" />
+                  <div className="w-2.5 h-2.5 rounded-xs bg-emerald-500 dark:bg-emerald-500" />
+                  <span>More</span>
+                </div>
+                <span>Today</span>
+              </div>
+            </div>
           </div>
 
           {/* Subject Breakdown */}

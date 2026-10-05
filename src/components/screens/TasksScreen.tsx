@@ -20,7 +20,7 @@ import {
 import { Task, TaskCategory, ScheduleEvent, AIProviderConfig, AIActionProposal } from '../../types';
 import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
 import { TaskComposer } from '../tasks/TaskComposer';
-import { AIOrchestrator } from '../../services/aiOrchestrator';
+import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
 
 interface TasksScreenProps {
@@ -91,13 +91,20 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     const textToSend = (queryText || aiInput).trim();
     if (!textToSend || isAiProcessing) return;
 
+    const configToUse = aiConfig || INITIAL_AI_CONFIG;
+    if (!isAIConfigured(configToUse)) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      setAiFeedback('AI provider is not configured. Please open Settings to connect Puter.js (free) or set an API key.');
+      return;
+    }
+
     setIsAiProcessing(true);
     setProposedAction(null);
     setAiFeedback(null);
 
     try {
-      const configToUse = aiConfig || INITIAL_AI_CONFIG;
-
       const res = await AIOrchestrator.chatWithContext(
         textToSend,
         [],
@@ -463,6 +470,20 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-[11px]">
           <button
             type="button"
+            onClick={() => handleAskAIInTasks('Break down research paper into 4 subtasks')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
+          >
+            🧩 Break Down into Subtasks
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAskAIInTasks('Set priority of upcoming assignment to High')}
+            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
+          >
+            ⚡ Boost to High Priority
+          </button>
+          <button
+            type="button"
             onClick={() => handleAskAIInTasks('Add Math homework due tomorrow at 3pm')}
             className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
           >
@@ -470,17 +491,10 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => handleAskAIInTasks('Add CS101 lab report due Friday')}
-            className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
-          >
-            ⚡ CS101 Lab due Friday
-          </button>
-          <button
-            type="button"
             onClick={() => handleAskAIInTasks('Schedule 45 min exam prep task on Monday')}
             className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-emerald-100 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 font-medium hover:border-emerald-300 transition-colors shrink-0 cursor-pointer"
           >
-            🎯 45m Exam Prep Monday
+            🎯 45m Exam Prep
           </button>
         </div>
 
@@ -489,7 +503,11 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 shadow-sm space-y-2 animate-fade-in mt-1">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                {proposedAction.type === 'edit_task' ? 'Proposed Task Update' : 'Proposed Task'}
+                {proposedAction.type === 'edit_task'
+                  ? 'Proposed Task Update'
+                  : proposedAction.type === 'create_subtasks'
+                  ? 'Proposed Subtasks Breakdown'
+                  : 'Proposed Task'}
               </span>
               <button
                 type="button"
@@ -516,7 +534,13 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                 className="py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>{proposedAction.type === 'edit_task' ? 'Apply Update' : 'Confirm & Add Task'}</span>
+                <span>
+                  {proposedAction.type === 'edit_task'
+                    ? 'Apply Update'
+                    : proposedAction.type === 'create_subtasks'
+                    ? 'Apply Subtasks'
+                    : 'Confirm & Add Task'}
+                </span>
               </button>
               <button
                 type="button"
@@ -529,10 +553,23 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           </div>
         )}
 
-        {/* Feedback message */}
+        {/* Feedback message with AI Settings button if unconfigured */}
         {aiFeedback && !proposedAction && (
-          <div className="text-xs text-emerald-700 dark:text-emerald-300 font-medium px-1 animate-fade-in">
-            {aiFeedback}
+          <div className="p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-200 text-xs flex items-center justify-between gap-2 animate-fade-in">
+            <span>{aiFeedback}</span>
+            {aiFeedback.includes('not configured') && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+                  }
+                }}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shrink-0 cursor-pointer shadow-xs transition-colors"
+              >
+                Setup AI
+              </button>
+            )}
           </div>
         )}
       </div>

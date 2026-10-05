@@ -205,7 +205,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
   };
 
   return (
-    <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white select-none">
+    <div className="fixed top-0 left-0 right-0 bottom-16 z-30 flex flex-col w-full overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white select-none">
       {/* Permanent Fixed Header & Action Buttons (NEVER SCROLLS) */}
       <div className="shrink-0 w-full bg-white dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800/90 shadow-xs z-40">
         {/* Reader header */}

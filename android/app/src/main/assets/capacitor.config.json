@@ -14,6 +14,10 @@
 			"backgroundColor": "#4F46E5",
 			"showSpinner": false,
 			"androidScaleType": "CENTER_CROP"
+		},
+		"LocalNotifications": {
+			"smallIcon": "ic_launcher_round",
+			"iconColor": "#4F46E5"
 		}
 	}
 }

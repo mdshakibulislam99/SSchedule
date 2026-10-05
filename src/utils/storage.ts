@@ -1087,20 +1087,6 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(metrics));
   },
 
-  getTheme(): 'light' | 'dark' | null {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.THEME);
-      if (!data) return null;
-      const parsed = JSON.parse(data);
-      return parsed === 'light' || parsed === 'dark' ? parsed : null;
-    } catch {
-      return null;
-    }
-  },
-  saveTheme(theme: 'light' | 'dark') {
-    localStorage.setItem(STORAGE_KEYS.THEME, JSON.stringify(theme));
-  },
-
   /**
    * Load rich demo data into localStorage (useful for development & testing)
    */
@@ -1179,6 +1165,25 @@ export const StudyStorage = {
     } catch {
       console.warn('StudyStorage: conversations not persisted (quota).');
     }
+  },
+
+  getTheme(): boolean {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.THEME);
+      if (stored !== null) {
+        return stored === 'dark';
+      }
+    } catch {}
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  },
+
+  saveTheme(isDark: boolean) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME, isDark ? 'dark' : 'light');
+    } catch {}
   },
 
   exportBackup(): string {

@@ -10,6 +10,11 @@ import {
   CheckCircle2,
   RotateCcw,
   Gauge,
+  Volume2,
+  VolumeX,
+  Brain,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import {
   AIProviderConfig,
@@ -24,6 +29,7 @@ import {
 } from '../../types';
 import { AIOrchestrator } from '../../services/aiOrchestrator';
 import { computeCourseProgress, getCourseResources, getCourseTasks } from '../../utils/courses';
+import { calculateSM2, isCardDueForReview, speakText, stopSpeaking } from '../../utils/sm2';
 
 interface CourseTutorScreenProps {
   course: Course;
@@ -101,6 +107,55 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [dueOnly, setDueOnly] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const activeCards = useMemo(() => {
+    if (dueOnly) {
+      const due = courseCards.filter(isCardDueForReview);
+      return due.length > 0 ? due : courseCards;
+    }
+    return courseCards;
+  }, [courseCards, dueOnly]);
+
+  const dueCount = useMemo(() => courseCards.filter(isCardDueForReview).length, [courseCards]);
+
+  const handleRateCard = (card: CourseFlashcard, quality: number) => {
+    stopSpeaking();
+    setIsSpeaking(false);
+    const result = calculateSM2(
+      quality,
+      card.repetitions || 0,
+      card.interval || 1,
+      card.easeFactor || 2.5
+    );
+    const updatedCard: CourseFlashcard = {
+      ...card,
+      repetitions: result.repetitions,
+      interval: result.interval,
+      easeFactor: result.easeFactor,
+      nextReviewDate: result.nextReviewDate,
+      mastered: result.mastered,
+      lastReviewed: new Date().toISOString(),
+    };
+    onSaveFlashcards([updatedCard]);
+    setFlipped(false);
+    if (activeCards.length > 1) {
+      setCardIndex((i) => (i + 1) % activeCards.length);
+    }
+  };
+
+  const handleSpeak = (text: string) => {
+    if (isSpeaking) {
+      stopSpeaking();
+      setIsSpeaking(false);
+    } else {
+      speakText(text);
+      setIsSpeaking(true);
+      const approxMs = Math.max(1500, text.split(' ').length * 350);
+      setTimeout(() => setIsSpeaking(false), approxMs);
+    }
+  };
 
   const generatePath = async () => {
     if (!aiConfigured) {
@@ -564,54 +619,186 @@ Answer with accurate, course-specific help directly drawing from the above cours
             </div>
           )}
 
-          {courseCards.length === 0 ? (
-            <div className="p-6 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
-              No flashcards yet. Generate a set from one of your resources above.
+          {/* SM-2 Filter and Mode Header */}
+          {courseCards.length > 0 && (
+            <div className="flex items-center justify-between gap-2 p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 text-xs">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    setDueOnly(false);
+                    setCardIndex(0);
+                    setFlipped(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    !dueOnly
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  All ({courseCards.length})
+                </button>
+                <button
+                  onClick={() => {
+                    setDueOnly(true);
+                    setCardIndex(0);
+                    setFlipped(false);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all ${
+                    dueOnly
+                      ? 'bg-white dark:bg-slate-700 text-rose-600 dark:text-rose-400 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <Brain className="w-3.5 h-3.5" />
+                  <span>Due for Review</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${dueCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                    {dueCount}
+                  </span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 text-[11px] text-slate-500 pr-1">
+                <Clock className="w-3 h-3" />
+                <span>SM-2 Active</span>
+              </div>
+            </div>
+          )}
+
+          {activeCards.length === 0 ? (
+            <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+              <p className="text-sm font-bold text-slate-900 dark:text-white">All caught up!</p>
+              <p className="text-xs text-slate-500">
+                No flashcards are due for review right now. Switch to "All" to review ahead of time.
+              </p>
             </div>
           ) : (
             (() => {
-              const idx = Math.min(cardIndex, courseCards.length - 1);
-              const card = courseCards[idx];
+              const idx = Math.min(cardIndex, activeCards.length - 1);
+              const card = activeCards[idx];
+              const isDue = isCardDueForReview(card);
+
               return (
                 <div className="space-y-3">
-                  <button
-                    onClick={() => setFlipped((f) => !f)}
-                    className="w-full min-h-[180px] p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-center text-center"
-                  >
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-2">
-                        {flipped ? 'Answer' : 'Question'} · card {idx + 1}/{courseCards.length}
-                      </p>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">{flipped ? card.back : card.front}</p>
-                      <p className="text-[11px] text-slate-400 mt-3">Tap to {flipped ? 'hide' : 'reveal'}</p>
+                  <div className="relative rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
+                    {/* Top bar with audio button and status */}
+                    <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] font-bold text-slate-400">
+                          {idx + 1} / {activeCards.length}
+                        </span>
+                        {card.interval && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">
+                            {card.interval}d interval · Rep {card.repetitions || 0}
+                          </span>
+                        )}
+                        {isDue && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 font-bold">
+                            Due Today
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handleSpeak(flipped ? card.back : card.front)}
+                        className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                          isSpeaking
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:text-indigo-600'
+                        }`}
+                        title="Read aloud (Text-to-Speech)"
+                      >
+                        {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      </button>
                     </div>
-                  </button>
-                  <div className="flex items-center gap-2">
+
+                    {/* Card Body */}
                     <button
-                      onClick={() => {
-                        setFlipped(false);
-                        setCardIndex((i) => (i - 1 + courseCards.length) % courseCards.length);
-                      }}
-                      className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
+                      onClick={() => setFlipped((f) => !f)}
+                      className="w-full min-h-[190px] p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors"
                     >
-                      Previous
-                    </button>
-                    <button
-                      onClick={() => toggleMastered(card)}
-                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold ${card.mastered ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'}`}
-                    >
-                      {card.mastered ? 'Mastered ✓' : 'Mark mastered'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFlipped(false);
-                        setCardIndex((i) => (i + 1) % courseCards.length);
-                      }}
-                      className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold"
-                    >
-                      Next
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-2">
+                        {flipped ? '💡 Answer / Explanation' : '❓ Question / Concept'}
+                      </p>
+                      <p className="text-base font-bold text-slate-900 dark:text-white leading-relaxed max-w-md">
+                        {flipped ? card.back : card.front}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-4">
+                        Tap anywhere to {flipped ? 'see question' : 'reveal answer'}
+                      </p>
                     </button>
                   </div>
+
+                  {/* SM-2 Spaced Repetition Rating Buttons when flipped */}
+                  {flipped ? (
+                    <div className="space-y-1.5 p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/70 dark:border-slate-800">
+                      <p className="text-[11px] font-bold text-center text-slate-500 uppercase tracking-wider mb-2">
+                        How well did you remember this?
+                      </p>
+                      <div className="grid grid-cols-4 gap-2">
+                        <button
+                          onClick={() => handleRateCard(card, 1)}
+                          className="flex flex-col items-center justify-center p-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 hover:bg-rose-100 transition-all cursor-pointer active:scale-95"
+                        >
+                          <span className="text-xs font-bold">Again</span>
+                          <span className="text-[10px] text-rose-500">1d</span>
+                        </button>
+                        <button
+                          onClick={() => handleRateCard(card, 3)}
+                          className="flex flex-col items-center justify-center p-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 hover:bg-amber-100 transition-all cursor-pointer active:scale-95"
+                        >
+                          <span className="text-xs font-bold">Hard</span>
+                          <span className="text-[10px] text-amber-500">{(card.interval || 1)}d</span>
+                        </button>
+                        <button
+                          onClick={() => handleRateCard(card, 4)}
+                          className="flex flex-col items-center justify-center p-2 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-900 text-sky-700 dark:text-sky-300 hover:bg-sky-100 transition-all cursor-pointer active:scale-95"
+                        >
+                          <span className="text-xs font-bold">Good</span>
+                          <span className="text-[10px] text-sky-500">{Math.max(2, Math.round((card.interval || 1) * 1.8))}d</span>
+                        </button>
+                        <button
+                          onClick={() => handleRateCard(card, 5)}
+                          className="flex flex-col items-center justify-center p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-all cursor-pointer active:scale-95"
+                        >
+                          <span className="text-xs font-bold">Easy</span>
+                          <span className="text-[10px] text-emerald-500">{Math.max(4, Math.round((card.interval || 1) * 2.5))}d</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Navigation controls when not flipped */
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setFlipped(false);
+                          setCardIndex((i) => (i - 1 + activeCards.length) % activeCards.length);
+                        }}
+                        className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => toggleMastered(card)}
+                        className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                          card.mastered
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        {card.mastered ? 'Mastered ✓' : 'Mark mastered'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setFlipped(false);
+                          setCardIndex((i) => (i + 1) % activeCards.length);
+                        }}
+                        className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })()

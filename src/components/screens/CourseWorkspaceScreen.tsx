@@ -35,7 +35,7 @@ import {
   StudyFile,
   Task,
 } from '../../types';
-import { AIOrchestrator } from '../../services/aiOrchestrator';
+import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 import { TaskComposer } from '../tasks/TaskComposer';
 import { saveFileBlob } from '../../utils/fileStorage';
 import { extractTextFromFile } from '../../utils/fileExtractor';
@@ -165,6 +165,8 @@ interface CourseWorkspaceScreenProps {
   onDeleteTask?: (taskId: string) => void;
   /** Deletes this course workspace. */
   onDeleteCourse?: (courseId: string, deleteAssociatedData?: boolean) => void;
+  /** Updates this course workspace. */
+  onUpdateCourse?: (course: Course) => void;
   /** Jumps to the Tasks tab filtered to this course (secondary action). */
   onViewAllTasks: (courseCode: string) => void;
 }
@@ -197,6 +199,7 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
   onToggleTask,
   onDeleteTask,
   onDeleteCourse,
+  onUpdateCourse,
   onViewAllTasks,
 }) => {
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
@@ -245,12 +248,18 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
     sender: 'user' | 'ai';
     text: string;
     timestamp: string;
+    isSetupAction?: boolean;
     actionableTask?: {
       title: string;
       description?: string;
       priority: 'high' | 'medium' | 'low';
       estimatedMinutes: number;
     };
+    actionableModule?: {
+      title: string;
+      description?: string;
+    };
+    actionableObjective?: string;
   }
 
   const [aiChatMessages, setAiChatMessages] = useState<AIChatMessageItem[]>([
@@ -480,6 +489,24 @@ ${filesContext ? `\nCourse Files Knowledge Base:\n${filesContext}` : ''}
 
 Be concise, practical, and highly clear. If you recommend a specific next study action or task, formulate it clearly so the student can complete it.`;
 
+    if (!config || !isAIConfigured(config)) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      setAiChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-setup-${Date.now()}`,
+          sender: 'ai',
+          text: 'AI provider is not configured yet. Please open Settings to connect Puter.js (free) or enter an API key to chat with your course materials.',
+          timestamp: 'Just now',
+          isSetupAction: true,
+        },
+      ]);
+      setIsSendingAiChat(false);
+      return;
+    }
+
     try {
       const provider = AIOrchestrator.getProvider(config, 'routine');
       const response = await provider.generateText(text, systemInstruction);
@@ -495,6 +522,24 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
         };
       }
 
+      // Check if response contains a module suggestion
+      let suggestedModule: AIChatMessageItem['actionableModule'] = undefined;
+      const moduleLine = response.split('\n').find((l) => /^(\*|-|\d+\.)?\s*(module|new module|week \d+):/i.test(l.trim()));
+      if (moduleLine) {
+        const cleanMod = moduleLine.replace(/^(\*|-|\d+\.)?\s*(module|new module):\s*/i, '').trim();
+        suggestedModule = {
+          title: cleanMod.slice(0, 60),
+          description: `Added via Course AI chat for ${course.code}`,
+        };
+      }
+
+      // Check if response contains an objective suggestion
+      let suggestedObjective: string | undefined = undefined;
+      const objectiveLine = response.split('\n').find((l) => /^(\*|-|\d+\.)?\s*(objective|learning outcome|goal):/i.test(l.trim()));
+      if (objectiveLine) {
+        suggestedObjective = objectiveLine.replace(/^(\*|-|\d+\.)?\s*(objective|learning outcome|goal):\s*/i, '').trim().slice(0, 100);
+      }
+
       setAiChatMessages((prev) => [
         ...prev,
         {
@@ -503,6 +548,8 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
           text: response || 'I have analyzed your course materials. Let me know if you would like me to unpack any specific module or concept!',
           timestamp: 'Just now',
           actionableTask: suggestedTask,
+          actionableModule: suggestedModule,
+          actionableObjective: suggestedObjective,
         },
       ]);
     } catch (err: any) {
@@ -1364,6 +1411,9 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
               '🃏 Generate flashcards from readings',
               '⚡ What should I focus on right now?',
               ...dynamicQuestions.map((q: string) => `❓ ${q}`),
+              '📝 Create study task for this week',
+              '📦 Add module for upcoming topic',
+              '🎯 Add learning objective for course',
               '📋 Extract study tasks from my readings',
               '📖 Summarize all uploaded course materials',
               '💡 Explain the hardest concept in simple terms',
@@ -1401,6 +1451,25 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                 >
                   <p className="whitespace-pre-wrap">{msg.text}</p>
 
+                  {/* AI Setup Action Banner */}
+                  {msg.isSetupAction && (
+                    <div className="mt-3 p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-between gap-2 animate-fade-in">
+                      <span className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+                        Setup AI in Settings
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+                          }
+                        }}
+                        className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold shadow-2xs active:scale-95 cursor-pointer"
+                      >
+                        Open Settings
+                      </button>
+                    </div>
+                  )}
+
                   {/* Inline suggested task banner */}
                   {msg.actionableTask && (
                     <div className="mt-3 p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 flex items-center justify-between gap-2">
@@ -1424,9 +1493,62 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                           setUploadNotice(`✨ Added task "${msg.actionableTask!.title}"`);
                           setTimeout(() => setUploadNotice(null), 3500);
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold shrink-0 hover:bg-indigo-500 shadow-2xs active:scale-95"
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold shrink-0 hover:bg-indigo-500 shadow-2xs active:scale-95 cursor-pointer"
                       >
                         + Add to Tasks
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Inline suggested module banner */}
+                  {msg.actionableModule && (
+                    <div className="mt-2.5 p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 flex items-center justify-between gap-2 animate-fade-in">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-extrabold uppercase text-purple-600 dark:text-purple-400">Proposed Course Module:</span>
+                        <p className="text-[11px] font-bold text-slate-800 dark:text-white truncate">{msg.actionableModule.title}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newMod = {
+                            id: `mod-${Date.now()}`,
+                            title: msg.actionableModule!.title,
+                            description: msg.actionableModule!.description || '',
+                            order: course.modules.length + 1,
+                            completed: false,
+                          };
+                          onUpdateCourse?.({
+                            ...course,
+                            modules: [...course.modules, newMod],
+                          });
+                          setUploadNotice(`✨ Added module "${newMod.title}" to ${course.code}`);
+                          setTimeout(() => setUploadNotice(null), 3500);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-purple-600 text-white text-[10px] font-bold shrink-0 hover:bg-purple-500 shadow-2xs active:scale-95 cursor-pointer"
+                      >
+                        + Add Module
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Inline suggested objective banner */}
+                  {msg.actionableObjective && (
+                    <div className="mt-2.5 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between gap-2 animate-fade-in">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-extrabold uppercase text-emerald-600 dark:text-emerald-400">Proposed Objective:</span>
+                        <p className="text-[11px] font-bold text-slate-800 dark:text-white truncate">{msg.actionableObjective}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          onUpdateCourse?.({
+                            ...course,
+                            objectives: Array.from(new Set([...course.objectives, msg.actionableObjective!])),
+                          });
+                          setUploadNotice(`✨ Added objective to ${course.code}`);
+                          setTimeout(() => setUploadNotice(null), 3500);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold shrink-0 hover:bg-emerald-500 shadow-2xs active:scale-95 cursor-pointer"
+                      >
+                        + Add Objective
                       </button>
                     </div>
                   )}

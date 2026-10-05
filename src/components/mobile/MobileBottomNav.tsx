@@ -26,7 +26,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   return (
     <nav
       aria-label="Main Navigation"
-      className="w-full bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 px-2 py-1.5 z-40 transition-colors"
+      className="w-full bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 px-2 py-1.5 pb-safe z-40 transition-colors"
     >
       <div className="flex items-center justify-around w-full max-w-xl mx-auto">
         {tabs.map((tab) => {
@@ -39,7 +39,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className="group relative flex-1 basis-0 min-w-0 flex flex-col items-center justify-center min-h-[44px] py-1 active:scale-95 transition-all cursor-pointer"
+                className="group relative flex flex-col items-center justify-center min-w-[52px] min-h-[44px] py-1 active:scale-95 transition-all cursor-pointer"
                 title="AI Study Assistant"
               >
                 <div
@@ -52,7 +52,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                   <Icon className="w-4 h-4 stroke-[2.2]" />
                 </div>
                 <span
-                  className={`text-[10px] font-bold mt-1 tracking-tight whitespace-nowrap ${
+                  className={`text-[10px] font-bold mt-1 tracking-tight ${
                     isActive
                       ? 'text-indigo-600 dark:text-indigo-400'
                       : 'text-slate-500 dark:text-slate-400'
@@ -69,7 +69,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
               aria-current={isActive ? 'page' : undefined}
-              className={`group relative flex-1 basis-0 min-w-0 flex flex-col items-center justify-center min-h-[44px] py-1 active:scale-95 transition-all cursor-pointer ${
+              className={`group relative flex flex-col items-center justify-center min-w-[50px] min-h-[44px] py-1 active:scale-95 transition-all cursor-pointer ${
                 isActive
                   ? 'text-indigo-600 dark:text-indigo-400 font-bold'
                   : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -85,7 +85,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                   <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-950" />
                 )}
               </div>
-              <span className="text-[10px] font-semibold mt-1 tracking-tight whitespace-nowrap">
+              <span className="text-[10px] font-semibold mt-1 tracking-tight">
                 {tab.label}
               </span>
               {isActive && (

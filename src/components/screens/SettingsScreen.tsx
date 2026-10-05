@@ -7,6 +7,7 @@ import {
   Sliders,
   Bell,
   Moon,
+  Sun,
   Shield,
   HelpCircle,
   BrainCircuit,
@@ -64,6 +65,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onResetData,
 }) => {
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateFeedback, setUpdateFeedback] = useState<string | null>(null);
@@ -147,6 +149,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setBackupError(null);
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
@@ -155,7 +158,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         setBackupSuccess('Backup restored successfully! Reloading workspace...');
         setTimeout(() => window.location.reload(), 1200);
       } else {
-        alert('Invalid backup file. Please select a valid SShedule backup JSON file.');
+        setBackupError('Invalid backup file. Please select a valid ChronoPulse backup JSON file.');
+        setTimeout(() => setBackupError(null), 4000);
       }
     };
     reader.readAsText(file);
@@ -304,18 +308,24 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           className="w-full p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-sm hover:border-slate-300 text-left transition-all active:scale-[0.99]"
         >
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <Moon className="w-5 h-5" />
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                isDark
+                  ? 'bg-indigo-950/60 text-indigo-400'
+                  : 'bg-amber-100 text-amber-600'
+              }`}
+            >
+              {isDark ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
             </div>
             <div>
-              <div className="text-sm font-bold text-slate-900 dark:text-white">Appearance</div>
+              <div className="text-sm font-bold text-slate-900 dark:text-white">Appearance (Theme)</div>
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                {isDark ? 'Dark Mode Active' : 'Light Mode Active'}
+                {isDark ? 'Night Mode Active (Dark)' : 'Bright Mode Active (Light)'}
               </div>
             </div>
           </div>
-          <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-            {isDark ? 'Switch Light' : 'Switch Dark'}
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700">
+            {isDark ? 'Switch to Bright ☀️' : 'Switch to Night 🌙'}
           </span>
         </button>
       </div>
@@ -447,6 +457,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-1.5 animate-fade-in">
             <Check className="w-4 h-4" />
             <span>{backupSuccess}</span>
+          </div>
+        )}
+
+        {backupError && (
+          <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-1.5 animate-fade-in">
+            <AlertTriangle className="w-4 h-4" />
+            <span>{backupError}</span>
           </div>
         )}
 

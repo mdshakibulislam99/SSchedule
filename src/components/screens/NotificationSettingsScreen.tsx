@@ -5,6 +5,7 @@ import {
   Volume2,
   VolumeX,
   Globe,
+  Smartphone,
   CheckCircle2,
   AlertTriangle,
   Clock,
@@ -16,11 +17,15 @@ import {
   Send,
   RotateCcw,
   Check,
+  ShieldAlert,
 } from 'lucide-react';
 import { NotificationSettings } from '../../types';
 import { playChime } from '../../utils/audio';
 import { isNativeApp } from '../../lib/native';
-import { checkNativePermission, ensureNativePermission } from '../../services/scheduledNotifications';
+import {
+  checkNotificationPermission,
+  requestNotificationPermission,
+} from '../../services/notificationService';
 
 interface NotificationSettingsScreenProps {
   settings: NotificationSettings;
@@ -35,21 +40,18 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
   onSendTestNotification,
   onBack,
 }) => {
+  const isNative = isNativeApp();
   const [testNotificationSent, setTestNotificationSent] = useState(false);
   const [soundTested, setSoundTested] = useState(false);
-  const [browserPermission, setBrowserPermission] = useState<string>('default');
+  const [permissionStatus, setPermissionStatus] = useState<string>('default');
 
   useEffect(() => {
-    if (isNativeApp()) {
-      // On Android/iOS the real gate is the OS permission, not the web one.
-      void checkNativePermission().then((status) => {
-        if (status !== 'unknown') setBrowserPermission(status);
-      });
-      return;
-    }
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      setBrowserPermission(Notification.permission);
-    }
+    checkNotificationPermission().then((status) => {
+      setPermissionStatus(status);
+      if (status === 'granted' && !settings.browserNotifications) {
+        onUpdateSettings((prev) => ({ ...prev, browserNotifications: true }));
+      }
+    });
   }, []);
 
   const handleToggle = (key: keyof NotificationSettings) => {
@@ -73,32 +75,38 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
     }));
   };
 
-  const handleRequestBrowserPermission = async () => {
-    if (isNativeApp()) {
-      // Native: request the OS-level (POST_NOTIFICATIONS / UNUserNotificationCenter)
-      // permission — this is what allows alerts while the app is closed.
-      const result = await ensureNativePermission();
-      setBrowserPermission(result);
-      onUpdateSettings((prev) => ({ ...prev, browserNotifications: result === 'granted' }));
-      return;
-    }
-
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      alert('Browser notifications are not supported in this environment.');
-      return;
-    }
-
+  const handleRequestSystemPermission = async () => {
     try {
-      const permission = await Notification.requestPermission();
-      setBrowserPermission(permission);
-      if (permission === 'granted') {
+      const granted = await requestNotificationPermission();
+      if (granted) {
+        setPermissionStatus('granted');
         onUpdateSettings((prev) => ({ ...prev, browserNotifications: true }));
       } else {
+        const current = await checkNotificationPermission();
+        setPermissionStatus(current);
         onUpdateSettings((prev) => ({ ...prev, browserNotifications: false }));
       }
     } catch (e) {
       console.warn('Failed to request notification permission:', e);
     }
+  };
+
+  const handleSystemNotificationToggle = async () => {
+    if (!settings.browserNotifications) {
+      // User trying to enable system notifications
+      if (permissionStatus !== 'granted') {
+        const granted = await requestNotificationPermission();
+        if (granted) {
+          setPermissionStatus('granted');
+          onUpdateSettings((prev) => ({ ...prev, browserNotifications: true }));
+        } else {
+          const current = await checkNotificationPermission();
+          setPermissionStatus(current);
+        }
+        return;
+      }
+    }
+    handleToggle('browserNotifications');
   };
 
   const handleTestChime = () => {
@@ -265,45 +273,49 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
             </button>
           </div>
 
-          {/* Browser Push Notifications */}
+          {/* System & Device Notifications (Android / Browser) */}
           <div className="p-4 flex items-center justify-between gap-4">
             <div className="flex items-start gap-3 min-w-0">
               <div className="w-9 h-9 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0 mt-0.5">
-                <Globe className="w-4 h-4" />
+                {isNative ? <Smartphone className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>Browser Notifications</span>
-                  {browserPermission === 'granted' ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                      Permission Granted
+                <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
+                  <span>{isNative ? 'Android System Notifications' : 'Browser Notifications'}</span>
+                  {permissionStatus === 'granted' ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      {isNative ? 'Allowed on Android' : 'Permission Granted'}
                     </span>
-                  ) : browserPermission === 'denied' ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
-                      Blocked in Browser
+                  ) : permissionStatus === 'denied' ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 flex items-center gap-1">
+                      <ShieldAlert className="w-3 h-3" />
+                      {isNative ? 'Blocked in Android Settings' : 'Blocked in Browser'}
                     </span>
                   ) : null}
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Receive background desktop/mobile system notifications when tab is inactive
+                  {isNative
+                    ? 'Delivers native status-bar alerts, lockscreen banners, sound & vibration even when phone is locked or app is minimized.'
+                    : 'Receive background desktop/mobile system notifications when tab is inactive.'}
                 </div>
               </div>
             </div>
 
-            {browserPermission !== 'granted' ? (
+            {permissionStatus !== 'granted' ? (
               <button
                 type="button"
-                onClick={handleRequestBrowserPermission}
-                className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold transition-colors shrink-0"
+                onClick={handleRequestSystemPermission}
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors shrink-0 shadow-xs"
               >
-                Enable
+                {isNative ? 'Allow Android' : 'Enable'}
               </button>
             ) : (
               <button
                 type="button"
                 role="switch"
                 aria-checked={settings.browserNotifications}
-                onClick={() => handleToggle('browserNotifications')}
+                onClick={handleSystemNotificationToggle}
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
                   settings.browserNotifications ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-700'
                 }`}
@@ -316,6 +328,16 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
               </button>
             )}
           </div>
+
+          {isNative && (
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl m-3 border border-slate-200/80 dark:border-slate-700/60 flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-300">
+              <Smartphone className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+              <div>
+                <span className="font-bold text-slate-900 dark:text-white">Android System Channels Active: </span>
+                <span>High-priority heads-up banners with sound and vibration configured for tasks, study sessions, and deadlines.</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

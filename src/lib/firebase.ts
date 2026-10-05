@@ -4,7 +4,11 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
+  signInWithCredential,
   getRedirectResult,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   signOut,
   onAuthStateChanged,
   User as FirebaseUser,
@@ -26,6 +30,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState } from '../types';
+import { loadGis } from './googleCalendar';
 
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -60,30 +65,101 @@ async function testConnection() {
 }
 testConnection();
 
-// Popup failures that a full-page redirect can recover from.
+// Popup failures that a token client or redirect can recover from.
 const POPUP_FALLBACK_CODES = [
   'auth/popup-blocked',
   'auth/cancelled-popup-request',
   'auth/operation-not-supported-in-this-environment',
   'auth/internal-error',
+  'auth/unauthorized-domain',
 ];
 
 // Sign in with Google
 export async function signInWithGoogle(): Promise<FirebaseUser | null> {
+  // 1. First, attempt standard Firebase popup
   try {
+    googleProvider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
-  } catch (error: any) {
-    const code = String(error?.code || '');
-    console.error('Google Sign-In failed:', code || error?.message, error);
-    if (POPUP_FALLBACK_CODES.includes(code)) {
-      // Popups are unavailable here (blocked, embedded view, or partitioned
-      // storage). Fall back to a full-page redirect, which isn't popup-gated.
-      await signInWithRedirect(auth, googleProvider);
-      return null;
+  } catch (popupErr: any) {
+    const code = String(popupErr?.code || '');
+    console.warn('Firebase signInWithPopup failed:', code || popupErr?.message, popupErr);
+
+    // If popup was explicitly closed by user, don't fall back, rethrow
+    if (code === 'auth/popup-closed-by-user') {
+      throw popupErr;
     }
-    throw error;
+
+    // 2. Fallback: Google Identity Services (GIS) OAuth Token Client
+    // This succeeds inside sandboxed iframes, partitioned cookies, and local/preview environments
+    try {
+      await loadGis();
+      const oauthClientId =
+        (firebaseConfig as { oAuthClientId?: string }).oAuthClientId ||
+        '830377325312-6lfn62e4ev345tvd4u61cd4bc45l92ol.apps.googleusercontent.com';
+
+      if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2 && oauthClientId) {
+        const accessToken = await new Promise<string>((resolve, reject) => {
+          try {
+            const client = (window as any).google.accounts.oauth2.initTokenClient({
+              client_id: oauthClientId,
+              scope: 'openid email profile https://www.googleapis.com/auth/calendar.events',
+              callback: (resp: any) => {
+                if (resp?.access_token) {
+                  resolve(resp.access_token);
+                } else {
+                  reject(new Error(resp?.error_description || resp?.error || 'Google login cancelled'));
+                }
+              },
+              error_callback: (err: any) => {
+                reject(new Error(err?.message || 'Google identity popup error'));
+              },
+            });
+            client.requestAccessToken({ prompt: 'select_account' });
+          } catch (gisInitErr) {
+            reject(gisInitErr);
+          }
+        });
+
+        if (accessToken) {
+          const credential = GoogleAuthProvider.credential(null, accessToken);
+          const cred = await signInWithCredential(auth, credential);
+          return cred.user;
+        }
+      }
+    } catch (gisErr: any) {
+      console.warn('GIS OAuth fallback failed:', gisErr);
+    }
+
+    // 3. Last resort fallback: Redirect flow (only outside iframes)
+    if (POPUP_FALLBACK_CODES.includes(code) && typeof window !== 'undefined' && window.self === window.top) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        return null;
+      } catch (redirErr) {
+        console.warn('signInWithRedirect failed:', redirErr);
+      }
+    }
+
+    throw popupErr;
   }
+}
+
+// Create account with Email & Password
+export async function createAccountWithEmail(email: string, pass: string, displayName?: string): Promise<FirebaseUser> {
+  const cred = await createUserWithEmailAndPassword(auth, email, pass);
+  if (displayName && cred.user) {
+    try {
+      await updateProfile(cred.user, { displayName });
+    } catch {}
+  }
+  return cred.user;
+}
+
+// Sign in with Email & Password
+export async function signInWithEmail(email: string, pass: string): Promise<FirebaseUser> {
+  const cred = await signInWithEmailAndPassword(auth, email, pass);
+  return cred.user;
 }
 
 // Completes a sign-in that used the redirect fallback (call once on load).

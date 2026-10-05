@@ -30,14 +30,10 @@ export const AIService = {
         }
       } catch (err: any) {
         console.warn('Puter native login rejected or error:', err);
+        throw err;
       }
     }
-    // Fallback seamless session for student if puter popup is blocked in sandbox iframe
-    const mockPuterName = `student_${Math.floor(1000 + Math.random() * 9000)}`;
-    return {
-      username: mockPuterName,
-      email: `${mockPuterName}@puter.user`,
-    };
+    return null;
   },
 
   async signOutPuter(): Promise<void> {

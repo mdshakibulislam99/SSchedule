@@ -178,6 +178,11 @@ export interface CourseFlashcard {
   back: string;
   mastered: boolean;
   createdAt: string;
+  repetitions?: number;
+  interval?: number;
+  easeFactor?: number;
+  nextReviewDate?: string;
+  lastReviewed?: string;
 }
 
 export interface CourseKeyTerm {
@@ -349,6 +354,9 @@ export interface AIActionProposal {
     | 'delete_schedule'
     | 'create_study_plan'
     | 'reschedule_event'
+    | 'create_subtasks'
+    | 'update_course'
+    | 'create_module'
     | 'create_goal'
     | 'save_note';
   title: string;

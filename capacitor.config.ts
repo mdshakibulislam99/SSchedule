@@ -24,10 +24,8 @@ const config: CapacitorConfig = {
       androidScaleType: 'CENTER_CROP',
     },
     LocalNotifications: {
-      // Status-bar icon tint (brand indigo) + show banners while the app is
-      // in the foreground on iOS (Android shows them by default).
+      smallIcon: 'ic_launcher_round',
       iconColor: '#4F46E5',
-      presentationOptions: ['badge', 'sound', 'banner', 'list'],
     },
   },
 };

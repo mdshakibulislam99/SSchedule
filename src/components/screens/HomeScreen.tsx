@@ -12,6 +12,9 @@ import {
   ChevronRight,
   Calendar,
   Cloud,
+  Sun,
+  Moon,
+  Target,
 } from 'lucide-react';
 import { Task, ScheduleEvent, UserProfile, NotificationItem } from '../../types';
 import { getLocalDateKey } from '../../utils/dates';
@@ -34,6 +37,8 @@ interface HomeScreenProps {
   onStartFocusTimer?: (task: Task) => void;
   onSignInWithGoogle?: () => void;
   isFirebaseSynced?: boolean;
+  isDark?: boolean;
+  onToggleTheme?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -52,6 +57,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onStartFocusTimer,
   onSignInWithGoogle,
   isFirebaseSynced = false,
+  isDark = false,
+  onToggleTheme,
 }) => {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const activeTasks = tasks.filter((t) => !t.completed);
@@ -114,6 +121,66 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     day: 'numeric',
   });
 
+  // Closest upcoming exam or midterm within 14 days
+  const upcomingExam = React.useMemo(() => {
+    const now = new Date();
+    const candidates: {
+      title: string;
+      courseCode?: string;
+      targetDate: Date;
+      daysLeft: number;
+      hoursLeft: number;
+      task?: Task;
+    }[] = [];
+
+    tasks
+      .filter((t) => !t.completed && t.deadline && (t.type === 'exam' || /exam|midterm|final|quiz/i.test(t.title)))
+      .forEach((t) => {
+        const parts = t.deadline.split('-');
+        if (parts.length === 3) {
+          const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 9, 0);
+          const diffMs = d.getTime() - now.getTime();
+          const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          if (diffMs > -1000 * 60 * 60 * 12 && days <= 14) {
+            candidates.push({
+              title: t.title,
+              courseCode: t.courseCode,
+              targetDate: d,
+              daysLeft: Math.max(0, days),
+              hoursLeft: Math.max(0, hours),
+              task: t,
+            });
+          }
+        }
+      });
+
+    schedule
+      .filter((e) => e.type === 'exam' && e.date >= getLocalDateKey(now))
+      .forEach((e) => {
+        const parts = e.date.split('-');
+        if (parts.length === 3) {
+          const [sh, sm] = (e.startTime || '09:00').split(':').map(Number);
+          const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), sh || 9, sm || 0);
+          const diffMs = d.getTime() - now.getTime();
+          const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          if (diffMs > -1000 * 60 * 60 * 4 && days <= 14) {
+            candidates.push({
+              title: e.title,
+              courseCode: e.courseCode,
+              targetDate: d,
+              daysLeft: Math.max(0, days),
+              hoursLeft: Math.max(0, hours),
+            });
+          }
+        }
+      });
+
+    candidates.sort((a, b) => a.targetDate.getTime() - b.targetDate.getTime());
+    return candidates[0] || null;
+  }, [tasks, schedule]);
+
   return (
     <div className="w-full max-w-4xl mx-auto flex flex-col space-y-5 pb-12 animate-fade-in text-slate-900 dark:text-slate-100 font-sans">
       {/* 1. CLEAN, MINIMAL HEADER */}
@@ -165,6 +232,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </button>
           )}
 
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              className="p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label={isDark ? 'Switch to Bright Mode' : 'Switch to Night Mode'}
+              title={isDark ? 'Switch to Bright Mode' : 'Switch to Night Mode'}
+            >
+              {isDark ? (
+                <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
+              ) : (
+                <Moon className="w-4 h-4 text-indigo-600 dark:text-indigo-400 hover:-rotate-12 transition-transform" />
+              )}
+            </button>
+          )}
+
           <button
             onClick={onOpenNotifications}
             className="relative p-2 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
@@ -177,6 +259,89 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </button>
         </div>
       </header>
+
+      {/* UPCOMING EXAM COUNTDOWN BANNER (if within 14 days) */}
+      {upcomingExam && (
+        <section
+          className={`rounded-2xl p-4 sm:p-5 border transition-all ${
+            upcomingExam.daysLeft <= 2
+              ? 'bg-gradient-to-r from-rose-950 via-slate-900 to-rose-950 border-rose-800/80 shadow-md'
+              : 'bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 border-indigo-800/80 shadow-sm'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  upcomingExam.daysLeft <= 2
+                    ? 'bg-rose-500/20 text-rose-400'
+                    : 'bg-indigo-500/20 text-indigo-400'
+                }`}
+              >
+                <Target className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      upcomingExam.daysLeft <= 2
+                        ? 'bg-rose-500 text-white'
+                        : 'bg-indigo-600 text-white'
+                    }`}
+                  >
+                    {upcomingExam.daysLeft === 0
+                      ? 'EXAM TODAY'
+                      : upcomingExam.daysLeft === 1
+                      ? 'EXAM TOMORROW'
+                      : 'UPCOMING EXAM'}
+                  </span>
+                  {upcomingExam.courseCode && (
+                    <span className="text-xs font-semibold text-slate-300">
+                      {upcomingExam.courseCode}
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-base font-bold text-white mt-1 truncate">
+                  {upcomingExam.title}
+                </h3>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/10">
+              <div className="text-right">
+                <div className="text-xs text-slate-400">Countdown</div>
+                <div className="text-sm font-extrabold text-white font-mono">
+                  {upcomingExam.daysLeft > 0 ? `${upcomingExam.daysLeft}d ` : ''}
+                  {upcomingExam.hoursLeft}h left
+                </div>
+              </div>
+
+              {upcomingExam.task ? (
+                <button
+                  onClick={() => onSelectTask(upcomingExam.task!)}
+                  className="px-3.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold hover:bg-slate-100 transition-transform active:scale-95 cursor-pointer shadow-sm"
+                >
+                  Prepare Now
+                </button>
+              ) : upcomingExam.courseCode ? (
+                <button
+                  onClick={() => onOpenCourse(upcomingExam.courseCode!)}
+                  className="px-3.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold hover:bg-slate-100 transition-transform active:scale-95 cursor-pointer shadow-sm"
+                >
+                  Open Course
+                </button>
+              ) : (
+                <button
+                  onClick={onOpenCalendar}
+                  className="px-3.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold hover:bg-slate-100 transition-transform active:scale-95 cursor-pointer shadow-sm"
+                >
+                  View Schedule
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* 2. RECOMMENDED WORK */}
       <section className="rounded-2xl bg-slate-900 border border-slate-800 shadow-sm overflow-hidden">

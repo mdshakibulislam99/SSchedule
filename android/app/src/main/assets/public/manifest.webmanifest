@@ -1,0 +1,56 @@
+{
+  "id": "/",
+  "name": "ChronoPulse AI - Smart Schedule & Productivity Optimizer",
+  "short_name": "ChronoPulse",
+  "description": "An AI-powered time management app that analyzes daily schedules, prioritizes tasks with deadlines, generates subtasks, alerts in real-time, and optimizes productivity with Puter.js and multi-model AI.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#4F46E5",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add Task",
+      "short_name": "New Task",
+      "description": "Create a new study task or assignment",
+      "url": "/?action=new_task",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Focus Timer",
+      "short_name": "Focus",
+      "description": "Start a deep work Pomodoro session",
+      "url": "/?action=study_session",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "What To Do Now",
+      "short_name": "Next Up",
+      "description": "Get instant AI recommendation on what to work on next",
+      "url": "/?action=what_to_do_now",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

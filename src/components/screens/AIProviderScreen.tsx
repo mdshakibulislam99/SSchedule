@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Sparkles, Check, Key, LogIn, LogOut, CheckCircle2, ShieldCheck, Globe } from 'lucide-react';
 import { AIProviderConfig, AIProviderType } from '../../types';
 import { AIService } from '../../services/aiService';
@@ -18,9 +18,39 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
   const [activeProvider, setActiveProvider] = useState<AIProviderType>(config.activeProvider);
   const [useHybridMode, setUseHybridMode] = useState<boolean>(config.useHybridMode);
   const [apiKeys, setApiKeys] = useState(config.apiKeys || {});
-  const [puterUser, setPuterUser] = useState(config.puterUser);
+
+  // Strictly verify if Puter has a real active authToken on the client
+  const isPuterTrulyConnected = () => {
+    if (typeof window === 'undefined') return false;
+    const puter = (window as any).puter;
+    const hasToken = Boolean(puter?.authToken);
+    const signedIn = typeof puter?.auth?.isSignedIn === 'function' ? puter.auth.isSignedIn() : false;
+    return Boolean(hasToken && signedIn);
+  };
+
+  // Only initialize puterUser if genuinely authenticated with an active session
+  const [puterUser, setPuterUser] = useState<{ username: string; email?: string } | null>(() => {
+    if (!isPuterTrulyConnected()) {
+      return null;
+    }
+    return config.puterUser;
+  });
+
   const [isSigningInPuter, setIsSigningInPuter] = useState(false);
   const [puterStatusMsg, setPuterStatusMsg] = useState<string | null>(null);
+
+  // If a mock or demo user was previously stored without a real token, purge it immediately
+  useEffect(() => {
+    if (!isPuterTrulyConnected()) {
+      setPuterUser(null);
+      if (config.puterUser) {
+        onSaveConfig({
+          ...config,
+          puterUser: null,
+        });
+      }
+    }
+  }, []);
 
   const providers: {
     id: AIProviderType;
@@ -69,14 +99,20 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
     setPuterStatusMsg(null);
     try {
       const user = await AIService.signInPuter();
-      if (user) {
+      const isReal = isPuterTrulyConnected();
+
+      if (user && isReal) {
         setPuterUser(user);
         setActiveProvider('puter');
-        setPuterStatusMsg(`Connected as @${user.username}`);
+        setPuterStatusMsg(null);
         playChime('success');
+      } else {
+        setPuterUser(null);
+        setPuterStatusMsg('Connection closed without completing login. Not connected.');
       }
     } catch (e: any) {
-      setPuterStatusMsg(e?.message || 'Puter login cancelled');
+      setPuterUser(null);
+      setPuterStatusMsg('Connection closed without connecting. Not connected.');
     } finally {
       setIsSigningInPuter(false);
     }
@@ -85,16 +121,19 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
   const handlePuterSignOut = async () => {
     await AIService.signOutPuter();
     setPuterUser(null);
-    setPuterStatusMsg('Signed out of Puter.js');
+    setPuterStatusMsg(null);
   };
 
   const handleSave = () => {
+    const isReal = isPuterTrulyConnected();
+    const verifiedUser = isReal ? puterUser : null;
+
     onSaveConfig({
       ...config,
       activeProvider,
       useHybridMode,
       apiKeys,
-      puterUser,
+      puterUser: verifiedUser,
     });
     playChime('success');
     onBack();
@@ -170,37 +209,52 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
 
               {/* Puter Specific Sign In Button */}
               {p.id === 'puter' && isSelected && (
-                <div className="mt-3 pt-3 border-t border-indigo-100 dark:border-indigo-900/60">
-                  {puterUser ? (
+                <div className="mt-3 pt-3 border-t border-indigo-100 dark:border-indigo-900/60" onClick={(e) => e.stopPropagation()}>
+                  {puterUser && isPuterTrulyConnected() ? (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4" />
                         <span>Connected as @{puterUser.username}</span>
                       </span>
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           handlePuterSignOut();
                         }}
-                        className="text-xs text-rose-500 font-semibold hover:underline"
+                        className="text-xs text-rose-500 hover:text-rose-600 font-semibold hover:underline cursor-pointer"
                       >
                         Disconnect
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePuterSignIn();
-                      }}
-                      disabled={isSigningInPuter}
-                      className="w-full py-2 px-3 rounded-xl bg-indigo-600 text-white text-xs font-bold flex items-center justify-center gap-2 hover:bg-indigo-500 transition-colors"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      <span>{isSigningInPuter ? 'Connecting...' : 'Sign in with Puter.js Account'}</span>
-                    </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500" />
+                          <span>Status: Not connected</span>
+                        </span>
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Authentication required</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePuterSignIn();
+                        }}
+                        disabled={isSigningInPuter}
+                        className="w-full py-2.5 px-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs active:scale-95 cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>{isSigningInPuter ? 'Connecting to Puter...' : 'Connect Puter.js Account'}</span>
+                      </button>
+                      {puterStatusMsg && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">
+                          {puterStatusMsg}
+                        </p>
+                      )}
+                    </div>
                   )}
-                  {puterStatusMsg && <p className="text-[11px] text-indigo-500 mt-1">{puterStatusMsg}</p>}
                 </div>
               )}
 

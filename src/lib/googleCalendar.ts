@@ -47,7 +47,7 @@ export function isReconnectError(err: unknown): boolean {
 
 let gisPromise: Promise<void> | null = null;
 
-function loadGis(): Promise<void> {
+export function loadGis(): Promise<void> {
   if (typeof window === 'undefined') return Promise.reject(new Error('No window'));
   if (window.google?.accounts?.oauth2) return Promise.resolve();
   if (gisPromise) return gisPromise;

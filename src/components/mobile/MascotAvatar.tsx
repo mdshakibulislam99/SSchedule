@@ -3,13 +3,22 @@ import React from 'react';
 export const MascotAvatar: React.FC<{ size?: number; className?: string }> = ({ size = 48, className = '' }) => {
   return (
     <div
-      className={`relative rounded-full flex items-center justify-center bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-400 shadow-md shadow-indigo-500/25 ${className}`}
-      style={{ width: size, height: size }}
+      className={`relative rounded-full shrink-0 aspect-square flex items-center justify-center bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-400 shadow-md shadow-indigo-500/25 ${className}`}
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        maxWidth: size,
+        maxHeight: size,
+        aspectRatio: '1 / 1',
+      }}
     >
       {/* Robot Mascot SVG */}
       <svg
         viewBox="0 0 100 100"
-        className="w-[78%] h-[78%] text-white"
+        preserveAspectRatio="xMidYMid meet"
+        className="w-[78%] h-[78%] aspect-square shrink-0 text-white"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >

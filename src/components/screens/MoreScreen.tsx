@@ -7,15 +7,23 @@ import {
   Settings,
   User,
   ChevronRight,
+  Sun,
+  Moon,
 } from 'lucide-react';
-import { NavTab } from '../mobile/MobileBottomNav';
 
 interface MoreScreenProps {
   onNavigate: (destination: string) => void;
   unreadCount?: number;
+  isDark?: boolean;
+  onToggleTheme?: () => void;
 }
 
-export const MoreScreen: React.FC<MoreScreenProps> = ({ onNavigate, unreadCount = 0 }) => {
+export const MoreScreen: React.FC<MoreScreenProps> = ({
+  onNavigate,
+  unreadCount = 0,
+  isDark = false,
+  onToggleTheme,
+}) => {
   const items = [
     { id: 'files', label: 'Files & Notes', desc: 'Uploaded documents & summaries', icon: FileText, color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/60' },
     { id: 'research', label: 'AI Research', desc: 'Deep topic synthesis', icon: Search, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
@@ -31,9 +39,29 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({ onNavigate, unreadCount 
         <div>
           <p className="text-mobile-micro uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">Workspace</p>
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          More Features
+            More Features
           </h1>
         </div>
+
+        {onToggleTheme && (
+          <button
+            onClick={onToggleTheme}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            title={isDark ? 'Switch to Bright Mode' : 'Switch to Night Mode'}
+          >
+            {isDark ? (
+              <>
+                <Sun className="w-4 h-4 text-amber-400" />
+                <span>Bright ☀️</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-indigo-600" />
+                <span>Night 🌙</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       <div className="space-y-2.5">

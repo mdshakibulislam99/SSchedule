@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { Task, PriorityLevel, TaskType, TaskCategory, TaskRecurrence } from '../../types';
+import { getLocalDateKey } from '../../utils/dates';
 
 interface TaskComposerProps {
   open: boolean;
@@ -24,7 +25,7 @@ const FALLBACK_COURSE_COLORS: Record<string, string> = {
   Other: '#6366F1',
 };
 
-const DEFAULT_DEADLINE = '2026-10-04';
+const getDefaultDeadline = () => getLocalDateKey(new Date());
 
 /**
  * The single, shared full-page task composer.
@@ -48,7 +49,7 @@ export const TaskComposer: React.FC<TaskComposerProps> = ({
   const [taskType, setTaskType] = useState<TaskType>('assignment');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [deadline, setDeadline] = useState(DEFAULT_DEADLINE);
+  const [deadline, setDeadline] = useState(getDefaultDeadline());
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledStartTime, setScheduledStartTime] = useState('');
   const [recurrence, setRecurrence] = useState<TaskRecurrence>('none');
@@ -65,7 +66,7 @@ export const TaskComposer: React.FC<TaskComposerProps> = ({
     setTaskType('assignment');
     setTitle('');
     setDescription('');
-    setDeadline(DEFAULT_DEADLINE);
+    setDeadline(getDefaultDeadline());
     setScheduledDate('');
     setScheduledStartTime('');
     setRecurrence('none');
