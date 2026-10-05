@@ -161,17 +161,49 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
 export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
   const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
 
+  // A bound on the popup step. On browsers that block third-party cookies
+  // (Safari ITP, Chrome's upcoming third-party-cookie phase-out, etc.),
+  // Firebase's popup can't post its result back to the opener, so
+  // signInWithPopup stays pending forever after the user picks an account:
+  // the spinner never resolves, the catch (with the GIS/redirect fallbacks)
+  // never runs, and the button spins indefinitely. The same class of hang is
+  // already guarded for the native flow with `withTimeout`; we replicate it
+  // here so a silent popup hang degrades to the GIS / redirect fallbacks.
+  const POPUP_TIMEOUT_MS = 15_000;
   const POPUP_FALLBACK_CODES = [
     'auth/popup-blocked',
     'auth/cancelled-popup-request',
     'auth/operation-not-supported-in-this-environment',
     'auth/internal-error',
     'auth/unauthorized-domain',
+    // Coded onto the timeout rejection below so the redirect fallback
+    // (decided by POPUP_FALLBACK_CODES) covers the hung-popup case too.
+    'auth/popup-timeout',
   ];
 
   try {
     googleProvider.setCustomParameters({ prompt: 'select_account' });
-    const result = await signInWithPopup(auth, googleProvider);
+
+    const popupPromise = signInWithPopup(auth, googleProvider);
+    // Swallow a late settlement once the timeout has won the race, so a
+    // popup that resolves/rejects after we've moved on can't surface as an
+    // unhandled rejection.
+    popupPromise.catch(() => {});
+    const result = await Promise.race([
+      popupPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              Object.assign(
+                new Error('Google Sign-In popup timed out.'),
+                { code: 'auth/popup-timeout' },
+              ),
+            ),
+          POPUP_TIMEOUT_MS,
+        ),
+      ),
+    ]);
 
     try {
       const credential = GoogleAuthProvider.credentialFromResult(result);
