@@ -96,7 +96,11 @@ function isUserCancellation(err: any): boolean {
  * exchange it for a Firebase session and never trust a client-supplied email.
  */
 export async function signInWithGoogleNative(): Promise<FirebaseUser> {
-  await ensureNativeGoogleInit();
+  await withTimeout(
+    ensureNativeGoogleInit(),
+    NATIVE_LOGIN_TIMEOUT_MS,
+    'Google initialization took too long to respond.'
+  );
 
   let idToken: string | null = null;
   let accessToken: string | null = null;
@@ -160,7 +164,27 @@ export async function signInWithGoogleNative(): Promise<FirebaseUser> {
   }
 
   const credential = GoogleAuthProvider.credential(idToken);
-  const cred = await signInWithCredential(auth, credential);
+
+  console.log('[GoogleAuth] ID token received');
+  console.log('[GoogleAuth] Starting Firebase signInWithCredential...');
+
+  let cred;
+  try {
+    cred = await withTimeout(
+      signInWithCredential(auth, credential),
+      NATIVE_LOGIN_TIMEOUT_MS,
+      'Firebase sign-in took too long to respond.'
+    );
+
+    console.log('[GoogleAuth] Firebase sign-in successful:', cred.user.uid);
+  } catch (error: any) {
+    console.error('[GoogleAuth] Firebase signInWithCredential failed:', {
+      code: error?.code,
+      message: error?.message,
+      name: error?.name,
+    });
+    throw error;
+  }
 
   if (accessToken && typeof window !== 'undefined') {
     try {
