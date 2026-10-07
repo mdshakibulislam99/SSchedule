@@ -25,6 +25,7 @@ import { isNativeApp } from '../../lib/native';
 import {
   checkNotificationPermission,
   requestNotificationPermission,
+  requestBatteryOptimizationExemption,
 } from '../../services/notificationService';
 
 interface NotificationSettingsScreenProps {
@@ -53,6 +54,10 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
       }
     });
   }, []);
+
+  const handleBatteryOptimization = async () => {
+    await requestBatteryOptimizationExemption();
+  };
 
   const handleToggle = (key: keyof NotificationSettings) => {
     onUpdateSettings((prev) => ({
@@ -336,6 +341,32 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
                 <span className="font-bold text-slate-900 dark:text-white">Android System Channels Active: </span>
                 <span>High-priority heads-up banners with sound and vibration configured for tasks, study sessions, and deadlines.</span>
               </div>
+            </div>
+          )}
+
+          {isNative && (
+            <div className="p-4 flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 dark:text-white">
+                    Battery Optimization Exemption
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Tap to open Android settings and disable battery optimization for SShedule, so scheduled alarms fire even when the app is closed or the screen is off.
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleBatteryOptimization}
+                className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shrink-0 shadow-xs"
+              >
+                Open Settings
+              </button>
             </div>
           )}
         </div>

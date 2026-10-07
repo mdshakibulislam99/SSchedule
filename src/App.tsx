@@ -6,6 +6,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { Capacitor } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { RefreshCw } from 'lucide-react';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
@@ -29,6 +31,7 @@ import {
 import type { User as FirebaseUser } from 'firebase/auth';
 import { registerBackHandler, updateNativeTheme } from './lib/native';
 import { offlineSyncService } from './services/offlineSyncService';
+import { AIService } from './services/aiService';
 import { useOfflineSync } from './hooks/useOfflineSync';
 import { OfflineSyncBadge } from './components/OfflineSyncBadge';
 
@@ -98,6 +101,7 @@ import {
   syncAllScheduledAlarms,
   checkNotificationPermission,
   requestNotificationPermission,
+  requestBatteryOptimizationExemption,
   CHANNELS,
 } from './services/notificationService';
 
@@ -346,6 +350,22 @@ export default function App() {
     completeGoogleRedirect().catch((err) => {
       const code = String(err?.code || err?.message || 'unknown');
       showToast(`Google Sign-In failed (${code}).`);
+    });
+  }, []);
+
+  // Detect a Puter auth flow that completed via redirect on native
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    void AIService.completePuterRedirect().then((user) => {
+      if (user) {
+        setAIConfig((prev) => ({
+          ...prev,
+          activeProvider: 'puter',
+          puterUser: user,
+        }));
+        playChime('success');
+        showToast(`Connected to Puter as @${user.username} — you can now use Puter AI.`);
+      }
     });
   }, []);
 
@@ -694,27 +714,87 @@ export default function App() {
     });
   }, [tasks, schedule, notificationSettings]);
 
-  // Listen for native Android notification taps
+  // Re-sync alarms when the app resumes from the background.
+  // Catches tasks added/edited while the app was in the background,
+  // and re-schedules alarms after the user grants exact-alarm permission
+  // in the system settings screen.
   useEffect(() => {
-    void initNotifications((extra) => {
-      const type = extra?.type as string | undefined;
-      const taskId = extra?.taskId as string | undefined;
+    if (!Capacitor.isNativePlatform()) return;
 
-      if (type === 'task' && taskId) {
-        const found = tasks.find((t) => t.id === taskId);
-        if (found) {
-          setSelectedTask(found);
-          setActiveSubScreen('task_detail');
+    let listenerHandle: PluginListenerHandle | undefined;
+
+    CapacitorApp.addListener('appStateChange', (state) => {
+      if (state.isActive) {
+        void syncAllScheduledAlarms({
+          tasks,
+          schedule,
+          settings: notificationSettings,
+        });
+      }
+    }).then((handle) => {
+      listenerHandle = handle;
+    });
+
+    return () => {
+      if (listenerHandle) {
+        listenerHandle.remove();
+      }
+    };
+  }, [tasks, schedule, notificationSettings]);
+
+  // Listen for native Android notification taps and foreground notifications
+  useEffect(() => {
+    void initNotifications(
+      (extra) => {
+        const type = extra?.type as string | undefined;
+        const taskId = extra?.taskId as string | undefined;
+
+        if (type === 'task' && taskId) {
+          const found = tasks.find((t) => t.id === taskId);
+          if (found) {
+            setSelectedTask(found);
+            setActiveSubScreen('task_detail');
+            return;
+          }
+        } else if (type === 'class') {
+          setCurrentTab('calendar');
+          setActiveSubScreen(null);
           return;
         }
-      } else if (type === 'class') {
-        setCurrentTab('calendar');
-        setActiveSubScreen(null);
-        return;
-      }
-      setActiveSubScreen('notifications');
-    });
-  }, [tasks, schedule]);
+        setActiveSubScreen('notifications');
+      },
+      (notification) => {
+        // A scheduled notification fired while the app is in the foreground.
+        // Surface it as an in-app notification.
+        const type = notification.extra?.type as string | undefined;
+        if (type === 'task' && notification.title) {
+          const taskId = notification.extra?.taskId as string | undefined;
+          const task = taskId ? tasks.find((t) => t.id === taskId) : undefined;
+          const existingId = `notif-fg-${notification.id ?? Date.now()}`;
+          if (notificationSettings.inAppBanners || notificationSettings.browserNotifications) {
+            if (notificationSettings.soundEnabled && !isWithinQuietHours(notificationSettings)) {
+              playChime('reminder');
+            }
+            setNotifications((prev) => {
+              if (prev.some((n) => n.id === existingId)) return prev;
+              const newNotif = {
+                id: existingId,
+                title: notification.title || '',
+                message: notification.body || '',
+                timestamp: 'Just now',
+                read: false,
+                type: 'reminder' as const,
+                actionLabel: task ? 'Open task' : undefined,
+              };
+              const updated = [newNotif, ...prev];
+              StudyStorage.saveNotifications(updated);
+              return updated;
+            });
+          }
+        }
+      },
+    );
+  }, [tasks, schedule, notificationSettings]);
 
   // On native Android launch, request notification permissions so background alarms can alert in the notification bar
   useEffect(() => {
@@ -727,6 +807,10 @@ export default function App() {
             }
           });
         }
+        // Prompt the user to exempt the app from battery optimization
+        // so AlarmManager can wake the device for scheduled notifications
+        // even when SShedule is closed / swiped away / the phone is asleep
+        void requestBatteryOptimizationExemption();
       });
     }
   }, []);

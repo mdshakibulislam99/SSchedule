@@ -35,15 +35,20 @@ export type PermissionStateResult = 'granted' | 'denied' | 'prompt' | 'unsupport
 
 let isInitialized = false;
 let notificationTapHandler: ((extra?: Record<string, unknown>) => void) | undefined;
+let notificationReceivedHandler: ((notification: { title?: string; body?: string; id?: number; extra?: Record<string, unknown> }) => void) | undefined;
 
 /**
  * Initialize notification channels and listener handlers on Android/Capacitor.
  */
 export async function initNotifications(
-  onNotificationTap?: (extra?: Record<string, unknown>) => void
+  onNotificationTap?: (extra?: Record<string, unknown>) => void,
+  onNotificationReceived?: (notification: { title?: string; body?: string; id?: number; extra?: Record<string, unknown> }) => void,
 ): Promise<void> {
   if (onNotificationTap) {
     notificationTapHandler = onNotificationTap;
+  }
+  if (onNotificationReceived) {
+    notificationReceivedHandler = onNotificationReceived;
   }
 
   if (isInitialized) return;
@@ -78,6 +83,18 @@ export async function initNotifications(
         const extra = notificationAction.notification?.extra as Record<string, unknown> | undefined;
         if (notificationTapHandler) {
           notificationTapHandler(extra);
+        }
+      });
+
+      // Handle notifications received while the app is in the foreground
+      LocalNotifications.addListener('localNotificationReceived', (notification) => {
+        if (notificationReceivedHandler && notification) {
+          notificationReceivedHandler({
+            title: notification.title,
+            body: notification.body,
+            id: typeof notification.id === 'string' ? hashString(notification.id) : notification.id,
+            extra: notification.extra as Record<string, unknown> | undefined,
+          });
         }
       });
     } catch (err) {
@@ -229,11 +246,19 @@ export async function syncAllScheduledAlarms({
     return 0;
   }
 
-  // If user explicitly disabled notifications, cancel pending alarms
+   // If user explicitly disabled notifications, cancel pending alarms
   if (settings.browserNotifications === false) {
     try {
       await LocalNotifications.cancelAll();
     } catch {}
+    return 0;
+  }
+
+  // Verify the OS-level notification permission is actually granted
+  // (POST_NOTIFICATIONS on Android 13+, or channel disabled by user).
+  // If not, alarm scheduling would silently fail — guide the user to settings.
+  if (!(await areNotificationsSystemEnabled())) {
+    console.warn('System notifications are disabled — alarms will not fire until the user grants permission.');
     return 0;
   }
 
@@ -462,6 +487,44 @@ export async function cancelTaskSystemReminder(taskId: string): Promise<void> {
     } catch (err) {
       console.warn(`Could not cancel native notification for task ${taskId}:`, err);
     }
+  }
+}
+
+/**
+ * Check whether the OS-level notification toggles for this app are actually
+ * enabled (both the POST_NOTIFICATIONS runtime permission on Android 13+ and
+ * the channel-level "Show notifications" switch). Returns `true` on web or
+ * when the check can't be performed.
+ */
+export async function areNotificationsSystemEnabled(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return true;
+  try {
+    const result = await LocalNotifications.areEnabled();
+    return result?.value ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open the Android system battery-optimization settings so the user can exempt
+ * SShedule from Doze / app-standby restrictions.
+ *
+ * Device manufacturers like Samsung, Xiaomi, Huawei, and Oppo apply aggressive
+ * battery management that can silently kill AlarmManager wake-ups — preventing
+ * scheduled notifications from firing when the app is closed or the screen is off.
+ */
+export async function requestBatteryOptimizationExemption(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  if (Capacitor.getPlatform() !== 'android') return false;
+
+  try {
+    // intent:// URL intercepted by the Android WebView → opens system battery settings
+    window.open('intent://settings/actionRequestIgnoreBatteryOptimizations#Intent;scheme=package;end', '_blank');
+    return true;
+  } catch (err) {
+    console.warn('Failed to open battery optimization settings:', err);
+    return false;
   }
 }
 
