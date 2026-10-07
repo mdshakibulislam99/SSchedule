@@ -859,7 +859,7 @@ export const FileViewer: React.FC<FileViewerProps> = ({
 
   if (mode === 'focus') {
     return (
-      <div className="fixed inset-0 z-[70] flex flex-col bg-slate-950 animate-fade-in">
+      <div className="fixed inset-0 z-[70] flex flex-col bg-slate-950 animate-fade-in pt-safe">
         <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
           <button
             type="button"

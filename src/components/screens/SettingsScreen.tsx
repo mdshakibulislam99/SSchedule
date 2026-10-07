@@ -12,6 +12,7 @@ import {
   HelpCircle,
   BrainCircuit,
   CalendarClock,
+  Clock,
   LogOut,
   RotateCcw,
   Download,
@@ -23,11 +24,13 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, NotificationSettings, AppUpdateCheckResult } from '../../types';
-import { StudyStorage } from '../../utils/storage';
+import { StudyStorage, ThemeMode } from '../../utils/storage';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { PasswordResetPanel } from '../common/PasswordResetPanel';
 import { CURRENT_APP_VERSION, CURRENT_BUILD_NUMBER, getActiveAppVersion, setSimulatedAppVersion } from '../../utils/version';
 import { AppUpdateService } from '../../services/appUpdateService';
 import { OfflineSyncBadge } from '../OfflineSyncBadge';
+import { GoogleIcon } from './OnboardingFlow';
 
 interface SettingsScreenProps {
   user: UserProfile;
@@ -39,12 +42,15 @@ interface SettingsScreenProps {
   onBack: () => void;
   onOpenAIProvider: () => void;
   onOpenNotifications: () => void;
-  onOpenProfile: () => void;
   onOpenAIMemory: () => void;
   onOpenCalendarSync: () => void;
-  onToggleTheme: () => void;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
   isDark: boolean;
   onResetData: () => void;
+  isFirebaseSynced: boolean;
+  firebaseEmail?: string | null;
+  onGoogleSignIn: () => void;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
@@ -57,16 +63,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onBack,
   onOpenAIProvider,
   onOpenNotifications,
-  onOpenProfile,
   onOpenAIMemory,
   onOpenCalendarSync,
-  onToggleTheme,
+  themeMode,
+  onThemeModeChange,
   isDark,
   onResetData,
+  isFirebaseSynced,
+  firebaseEmail,
+  onGoogleSignIn,
 }) => {
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showResetPasswordPanel, setShowResetPasswordPanel] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateFeedback, setUpdateFeedback] = useState<string | null>(null);
   const [showDevVersionControls, setShowDevVersionControls] = useState(false);
@@ -188,28 +198,57 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </h1>
       </div>
 
-      {/* User Profile Card (Matching Screen 16 in reference image) */}
-      <div
-        onClick={onOpenProfile}
-        className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between cursor-pointer hover:border-slate-300 dark:hover:border-slate-700 transition-all"
-      >
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-lg shadow-md">
-            {user.name.charAt(0)}
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-900 dark:text-white">{user.name}</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
-            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold font-mono">
-              {user.university} · {user.year}
-            </span>
-          </div>
-        </div>
-        <ChevronRight className="w-5 h-5 text-slate-400" />
-      </div>
-
       {/* Settings Menu List (Matching Screen 16) */}
       <div className="space-y-2">
+        {/* Account: sign-in state + in-app password reset */}
+        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-lg shadow-md shrink-0">
+                {user.name.charAt(0)}
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.name}</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {isFirebaseSynced
+                    ? `Signed in as ${firebaseEmail || user.email}`
+                    : 'Not signed in — your data stays on this device'}
+                </p>
+              </div>
+            </div>
+            <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${isFirebaseSynced ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
+              {isFirebaseSynced ? 'Synced' : 'Offline'}
+            </span>
+          </div>
+
+          {!isFirebaseSynced && !showResetPasswordPanel && (
+            <div className="space-y-2">
+              <button
+                onClick={onGoogleSignIn}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+              >
+                <GoogleIcon className="w-4 h-4" />
+                Sign in with Google
+              </button>
+              <button
+                onClick={() => setShowResetPasswordPanel(true)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs transition-all cursor-pointer"
+              >
+                Forgot password? Send reset link
+              </button>
+            </div>
+          )}
+
+          {showResetPasswordPanel && (
+            <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">
+              <PasswordResetPanel
+                initialEmail={user.email}
+                backLabel="Close"
+                onBack={() => setShowResetPasswordPanel(false)}
+              />
+            </div>
+          )}
+        </div>
         {/* AI Provider */}
         <button
           onClick={onOpenAIProvider}
@@ -310,10 +349,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </button>
 
         {/* Appearance (Theme) */}
-        <button
-          onClick={onToggleTheme}
-          className="w-full p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-sm hover:border-slate-300 text-left transition-all active:scale-[0.99]"
-        >
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center gap-3">
             <div
               className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
@@ -327,14 +363,41 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <div>
               <div className="text-sm font-bold text-slate-900 dark:text-white">Appearance (Theme)</div>
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                {isDark ? 'Night Mode Active (Dark)' : 'Bright Mode Active (Light)'}
+                {themeMode === 'default'
+                  ? `Auto — currently ${isDark ? 'Night 🌙' : 'Bright ☀️'}`
+                  : themeMode === 'bright'
+                    ? 'Always Bright ☀️'
+                    : 'Always Night 🌙'}
               </div>
             </div>
           </div>
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700">
-            {isDark ? 'Switch to Bright ☀️' : 'Switch to Night 🌙'}
-          </span>
-        </button>
+
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                { mode: 'default' as const, label: 'Default', desc: 'Auto by time', Icon: Clock },
+                { mode: 'bright' as const, label: 'Bright', desc: 'Always day', Icon: Sun },
+                { mode: 'night' as const, label: 'Night', desc: 'Always dark', Icon: Moon },
+              ]
+            ).map(({ mode, label, desc, Icon }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => onThemeModeChange(mode)}
+                aria-pressed={themeMode === mode}
+                className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
+                  themeMode === mode
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300'
+                    : 'border-slate-200/80 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{label}</span>
+                <span className="text-[10px] font-normal opacity-70">{desc}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* App Version & Mandatory Updates */}

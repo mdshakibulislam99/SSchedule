@@ -12,8 +12,6 @@ import {
   ChevronRight,
   Calendar,
   Cloud,
-  Sun,
-  Moon,
   Target,
 } from 'lucide-react';
 import { Task, ScheduleEvent, UserProfile, NotificationItem } from '../../types';
@@ -37,8 +35,6 @@ interface HomeScreenProps {
   onStartFocusTimer?: (task: Task) => void;
   onSignInWithGoogle?: () => void;
   isFirebaseSynced?: boolean;
-  isDark?: boolean;
-  onToggleTheme?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -57,8 +53,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onStartFocusTimer,
   onSignInWithGoogle,
   isFirebaseSynced = false,
-  isDark = false,
-  onToggleTheme,
 }) => {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const activeTasks = tasks.filter((t) => !t.completed);
@@ -84,6 +78,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const primaryTask =
     activeTasks.find((t) => t.priority === 'high') || activeTasks[0] || tasks[0];
+
+  // Bold due date/time badge for the Next Focus card (top-right).
+  const dueLabel = (() => {
+    if (!primaryTask) return null;
+    const due = new Date(primaryTask.deadline);
+    const hasDue = !isNaN(due.getTime());
+    const dateStr = hasDue ? due.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+    let timeStr = '';
+    if (hasDue) {
+      const dueKey = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`;
+      const planned = !!(primaryTask.scheduledStartTime && primaryTask.scheduledDate === dueKey);
+      const source = planned
+        ? new Date(`${dueKey}T${primaryTask.scheduledStartTime}:00`)
+        : due;
+      if (planned || source.getHours() !== 0 || source.getMinutes() !== 0) {
+        timeStr = source.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      }
+    }
+    if (!dateStr && !timeStr) return null;
+    return [dateStr ? `Due ${dateStr}` : '', timeStr].filter(Boolean).join(' · ');
+  })();
 
   const courseCodes = Array.from(new Set(tasks.map((t) => t.courseCode).filter(Boolean))) as string[];
   const courseWorkloads = courseCodes.map((code) => {
@@ -232,21 +247,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </button>
           )}
 
-          {onToggleTheme && (
-            <button
-              onClick={onToggleTheme}
-              className="p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              aria-label={isDark ? 'Switch to Bright Mode' : 'Switch to Night Mode'}
-              title={isDark ? 'Switch to Bright Mode' : 'Switch to Night Mode'}
-            >
-              {isDark ? (
-                <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
-              ) : (
-                <Moon className="w-4 h-4 text-indigo-600 dark:text-indigo-400 hover:-rotate-12 transition-transform" />
-              )}
-            </button>
-          )}
-
           <button
             onClick={onOpenNotifications}
             className="relative p-2 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
@@ -345,63 +345,75 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
       {/* 2. RECOMMENDED WORK */}
       <section className="rounded-2xl bg-slate-900 border border-slate-800 shadow-sm overflow-hidden">
-        <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-indigo-950/70 to-slate-900">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-[11px] text-slate-300">
-              <span className="font-bold text-indigo-300 uppercase tracking-wider font-mono text-[10px]">
-                NEXT FOCUS
-              </span>
-              <span className="text-slate-500">·</span>
-              {primaryTask?.courseCode ? (
-                <span className="font-semibold text-slate-200">
-                  {primaryTask.courseCode}
+        <div className="p-4 sm:p-5 flex flex-col gap-3 sm:gap-4 bg-gradient-to-r from-slate-900 via-indigo-950/70 to-slate-900">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[11px] text-slate-300 min-w-0">
+                <span className="font-bold text-indigo-300 uppercase tracking-wider font-mono text-[10px] shrink-0">
+                  NEXT FOCUS
                 </span>
-              ) : (
-                <span className="text-slate-300">Study</span>
-              )}
-              <span className="text-slate-500">·</span>
-              <span className="text-slate-300">Match {user.energyLevel * 20}%</span>
+                <span className="text-slate-500 shrink-0">·</span>
+                {primaryTask?.courseCode ? (
+                  <span className="font-semibold text-slate-200 truncate">
+                    {primaryTask.courseCode}
+                  </span>
+                ) : (
+                  <span className="text-slate-300 shrink-0">Study</span>
+                )}
+              </div>
+
+              <h2
+                onClick={() => primaryTask && onSelectTask(primaryTask)}
+                className="text-base font-bold text-white truncate mt-1 cursor-pointer hover:text-indigo-300 transition-colors"
+              >
+                {primaryTask ? primaryTask.title : 'Review Course Materials'}
+              </h2>
             </div>
 
-            <h2
-              onClick={() => primaryTask && onSelectTask(primaryTask)}
-              className="text-base font-bold text-white truncate mt-1 cursor-pointer hover:text-indigo-300 transition-colors"
-            >
-              {primaryTask ? primaryTask.title : 'Review Course Materials'}
-            </h2>
-
-            {primaryTask && (
-              <p className="text-xs text-slate-300 truncate mt-0.5">
-                Due {new Date(primaryTask.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                {primaryTask.estimatedMinutes ? ` · ~${primaryTask.estimatedMinutes}m` : ''}
-                {primaryTask.aiPlanReason ? ` · ${primaryTask.aiPlanReason}` : ''}
-              </p>
+            {dueLabel && (
+              <div className="shrink-0 rounded-lg bg-white/10 border border-white/10 px-2.5 py-1.5">
+                <p className="text-[11px] font-bold text-amber-300 leading-tight whitespace-nowrap">
+                  {dueLabel}
+                </p>
+              </div>
             )}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => {
-                if (primaryTask) {
-                  if (onStartFocusTimer) onStartFocusTimer(primaryTask);
-                  else onSelectTask(primaryTask);
-                } else {
-                  onOpenWhatToDoNow();
-                }
-              }}
-              className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
-            >
-              <Play className="w-3.5 h-3.5 fill-current shrink-0" />
-              <span>Start 25 min</span>
-            </button>
+          <div className="flex items-center justify-between gap-3">
+            {primaryTask && (primaryTask.estimatedMinutes || primaryTask.aiPlanReason) ? (
+              <p className="text-xs text-slate-300 truncate min-w-0">
+                {primaryTask.estimatedMinutes ? `~${primaryTask.estimatedMinutes}m` : ''}
+                {primaryTask.estimatedMinutes && primaryTask.aiPlanReason ? ' · ' : ''}
+                {primaryTask.aiPlanReason || ''}
+              </p>
+            ) : (
+              <span />
+            )}
 
-            <button
-              onClick={onOpenWhatToDoNow}
-              className="inline-flex items-center gap-1 py-2 px-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 text-xs font-medium transition-colors cursor-pointer"
-            >
-              <span>Analysis</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  if (primaryTask) {
+                    if (onStartFocusTimer) onStartFocusTimer(primaryTask);
+                    else onSelectTask(primaryTask);
+                  } else {
+                    onOpenWhatToDoNow();
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5 fill-current shrink-0" />
+                <span>Start 25 min</span>
+              </button>
+
+              <button
+                onClick={onOpenWhatToDoNow}
+                className="inline-flex items-center gap-1 py-2 px-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 text-xs font-medium transition-colors cursor-pointer"
+              >
+                <span>Analysis</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         </div>
       </section>

@@ -351,7 +351,7 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
 
       {/* Full-Page New Course Modal with Integrated AI Assistant */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[70] flex flex-col bg-slate-50 dark:bg-slate-950 animate-fade-in">
+        <div className="fixed inset-0 z-[70] flex flex-col bg-slate-50 dark:bg-slate-950 animate-fade-in pt-safe">
           {/* Header */}
           <header className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-slate-200/80 dark:border-slate-800">
             <button

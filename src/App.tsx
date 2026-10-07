@@ -87,7 +87,7 @@ import {
   GoogleCalendarSyncState,
   AppUpdateCheckResult,
 } from './types';
-import { StudyStorage } from './utils/storage';
+import { StudyStorage, ThemeMode } from './utils/storage';
 import { playChime } from './utils/audio';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
@@ -113,8 +113,12 @@ function getEndTime(startTime: string, durationMinutes: number): string {
 }
 
 export default function App() {
-  // Theme state: initialized from saved preference in StudyStorage
-  const [isDark, setIsDark] = useState<boolean>(() => StudyStorage.getTheme());
+  // Theme mode: 'default' auto-switches day/night by time, 'bright'/'night' are fixed
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => StudyStorage.getThemeMode());
+  // Tick every minute so 'default' follows the time of day
+  const [, setNightTick] = useState(0);
+  const isDark =
+    themeMode === 'night' || (themeMode === 'default' && StudyStorage.isNightTime());
 
 
   // Core Persistent State
@@ -352,6 +356,8 @@ export default function App() {
       showToast(`Google Sign-In failed (${code}).`);
     });
   }, []);
+
+
 
   // Detect a Puter auth flow that completed via redirect on native
   useEffect(() => {
@@ -645,22 +651,29 @@ export default function App() {
       const isQuiet = isWithinQuietHours(notificationSettings);
 
       tasks.forEach((task) => {
-        if (task.completed || !task.reminder?.enabled || !task.scheduledDate || !task.scheduledStartTime) return;
+        const baseDate = task.scheduledDate || (task.deadline ? getLocalDateKey(new Date(task.deadline)) : '');
+        if (task.completed || !task.reminder?.enabled || !baseDate) return;
 
         const startsToday =
-          task.scheduledDate === todayKey ||
-          (task.scheduledDate < todayKey && task.recurrence === 'daily') ||
-          (task.scheduledDate < todayKey && task.recurrence === 'weekdays' && todayNumber > 0 && todayNumber < 6) ||
-          (task.scheduledDate < todayKey && task.recurrence === 'weekly' &&
-            new Date(`${task.scheduledDate}T12:00:00`).getDay() === todayNumber);
+          baseDate === todayKey ||
+          (baseDate < todayKey && task.recurrence === 'daily') ||
+          (baseDate < todayKey && task.recurrence === 'weekdays' && todayNumber > 0 && todayNumber < 6) ||
+          (baseDate < todayKey && task.recurrence === 'weekly' &&
+            new Date(`${baseDate}T12:00:00`).getDay() === todayNumber);
         if (!startsToday) return;
 
-        const scheduled = new Date(`${todayKey}T${task.scheduledStartTime}:00`);
+        // Anchor to the planned time when set, otherwise end of the due day.
+        const anchor = task.scheduledStartTime
+          ? new Date(`${todayKey}T${task.scheduledStartTime}:00`)
+          : new Date(`${todayKey}T23:59:59`);
         const leadTime = task.reminder.minutesBefore || notificationSettings.advanceNoticeMinutes || 15;
-        const reminderAt = scheduled.getTime() - leadTime * 60 * 1000;
-        if (now.getTime() < reminderAt || now.getTime() > scheduled.getTime() + 60 * 1000) return;
+        const reminderAt = anchor.getTime() - leadTime * 60 * 1000;
+        if (now.getTime() < reminderAt || now.getTime() > anchor.getTime() + 60 * 1000) return;
 
         const notificationId = `task-reminder-${task.id}-${todayKey}`;
+        const message = task.scheduledStartTime
+          ? `Your planned study time is ${task.scheduledStartTime}.`
+          : `Due today${task.courseCode ? ` (${task.courseCode})` : ''}.`;
         let wasAdded = false;
 
         setNotifications((prev) => {
@@ -670,7 +683,7 @@ export default function App() {
             {
               id: notificationId,
               title: `Reminder: ${task.title}`,
-              message: `Your planned study time is ${task.scheduledStartTime}.`,
+              message,
               timestamp: 'Just now',
               read: false,
               type: 'reminder',
@@ -689,7 +702,7 @@ export default function App() {
             void sendSystemNotification({
               id: notificationId,
               title: `Reminder: ${task.title}`,
-              body: `Planned for ${task.scheduledStartTime}.`,
+              body: message,
               channelId: CHANNELS.REMINDERS,
               extra: { taskId: task.id },
             });
@@ -819,16 +832,27 @@ export default function App() {
     StudyStorage.saveMetrics(metrics);
   }, [metrics]);
 
-  // Sync dark class on body, persist to localStorage, and update native Android status bar
+  // Sync dark class on body, update native Android status bar
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-    StudyStorage.saveTheme(isDark);
     void updateNativeTheme(isDark);
   }, [isDark]);
+
+  // Persist the chosen theme mode
+  useEffect(() => {
+    StudyStorage.saveThemeMode(themeMode);
+  }, [themeMode]);
+
+  // Only tick the clock while in 'default' (auto) mode
+  useEffect(() => {
+    if (themeMode !== 'default') return;
+    const id = setInterval(() => setNightTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, [themeMode]);
 
   // Handle PWA and App Shortcuts action query parameters
   useEffect(() => {
@@ -2026,12 +2050,15 @@ export default function App() {
           onBack={goBackSubScreen}
           onOpenAIProvider={() => setActiveSubScreen('ai_provider')}
           onOpenNotifications={() => setActiveSubScreen('notification_settings')}
-          onOpenProfile={() => setActiveSubScreen('profile')}
           onOpenAIMemory={() => setIsAIMemoryOpen(true)}
           onOpenCalendarSync={() => setActiveSubScreen('calendar_sync')}
-          onToggleTheme={() => setIsDark(!isDark)}
+          themeMode={themeMode}
+          onThemeModeChange={setThemeMode}
           isDark={isDark}
           onResetData={handleResetData}
+          isFirebaseSynced={Boolean(firebaseUser)}
+          firebaseEmail={firebaseUser?.email || null}
+          onGoogleSignIn={handleGoogleSignIn}
         />
       );
     }
@@ -2138,8 +2165,6 @@ export default function App() {
             }}
             onSignInWithGoogle={handleGoogleSignIn}
             isFirebaseSynced={Boolean(firebaseUser)}
-            isDark={isDark}
-            onToggleTheme={() => setIsDark((prev) => !prev)}
           />
         );
 
@@ -2245,8 +2270,6 @@ export default function App() {
               }
             }}
             unreadCount={notifications.filter((n) => !n.read).length}
-            isDark={isDark}
-            onToggleTheme={() => setIsDark((prev) => !prev)}
           />
         );
     }

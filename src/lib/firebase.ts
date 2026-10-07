@@ -5,11 +5,15 @@ import {
   getRedirectResult,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signInWithCustomToken,
+  updatePassword,
   updateProfile,
   signOut,
   onAuthStateChanged,
   User as FirebaseUser,
 } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   getFirestore,
   initializeFirestore,
@@ -147,6 +151,37 @@ export async function createAccountWithEmail(email: string, pass: string, displa
 export async function signInWithEmail(email: string, pass: string): Promise<FirebaseUser> {
   const cred = await signInWithEmailAndPassword(auth, email, pass);
   return cred.user;
+}
+
+// ---- In-app password reset via email OTP (backed by Cloud Functions) ----
+// Step 1: ask the backend to email a 6-digit code to the account
+export async function requestResetOtp(email: string): Promise<void> {
+  const fn = httpsCallable(getFunctions(), 'requestPasswordResetOtp');
+  await fn({ email });
+}
+
+// Step 2: verify the code; returns a short-lived token proving verification
+export async function verifyResetOtp(email: string, code: string): Promise<string> {
+  const fn = httpsCallable(getFunctions(), 'verifyPasswordResetOtp');
+  const res = await fn({ email, code });
+  return (res.data as { token: string }).token;
+}
+
+// Step 3: sign in with the verification token and set the new password
+// (the new password goes only to Firebase Auth, never to our servers)
+export async function finishPasswordReset(token: string, newPassword: string): Promise<FirebaseUser> {
+  const cred = await signInWithCustomToken(auth, token);
+  await updatePassword(cred.user, newPassword);
+  return cred.user;
+}
+
+// ---- Reset password via Firebase's own email link (no external services) ----
+// Sends Firebase's standard reset-email link. The user taps the link in their
+// email and completes the password change on Firebase's page. Simple & zero-setup.
+// (A true in-app 6-digit OTP code would need the Cloud Function in functions/
+// + an email provider; that's optional — see functions/index.js.)
+export async function resetPasswordWith(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email);
 }
 
 // Completes a sign-in that used the redirect fallback (call once on load).

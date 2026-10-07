@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, PermissionStatus } from '@capacitor/local-notifications';
 import { Task, ScheduleEvent, NotificationSettings } from '../types';
+import { getLocalDateKey } from '../utils/dates';
 
 export const CHANNELS = {
   REMINDERS: 'chronopulse_reminders',
@@ -287,20 +288,51 @@ export async function syncAllScheduledAlarms({
     const advanceMs = (settings.advanceNoticeMinutes || 15) * 60 * 1000;
 
     // 1. SCHEDULE TASK REMINDERS
+    // Only tasks the user explicitly gave a reminder fire one (Google Tasks
+    // behavior). The reminder is anchored to the planned time when set,
+    // otherwise to the due date, and repeating tasks get one reminder per
+    // occurrence inside the 7-day scheduling window.
     if (settings.taskReminders) {
-      tasks.forEach((task) => {
-        if (task.completed || !task.scheduledDate || !task.scheduledStartTime) return;
-        try {
-          const startMs = new Date(`${task.scheduledDate}T${task.scheduledStartTime}:00`).getTime();
-          const taskLeadMs = (task.reminder?.minutesBefore || settings.advanceNoticeMinutes || 15) * 60 * 1000;
-          const reminderTime = startMs - taskLeadMs;
+      const todayKey = getLocalDateKey();
+      const todayMs = new Date(`${todayKey}T12:00:00`).getTime();
 
-          // Only schedule future reminders within next 7 days
-          if (reminderTime > now && reminderTime < now + 7 * 86400000) {
+      tasks.forEach((task) => {
+        if (task.completed || !task.reminder?.enabled) return;
+        try {
+          const baseDate = task.scheduledDate || task.deadline?.slice(0, 10) || '';
+          if (!baseDate) return;
+          const baseMs = new Date(`${baseDate}T12:00:00`).getTime();
+          if (isNaN(baseMs)) return;
+
+          const leadMs = (task.reminder.minutesBefore ?? settings.advanceNoticeMinutes ?? 15) * 60 * 1000;
+          const recurrence = task.recurrence || 'none';
+
+          for (let offset = 0; offset <= 7; offset++) {
+            const dayKey = getLocalDateKey(new Date(todayMs + offset * 86400000));
+            if (dayKey < baseDate) continue;
+
+            const dayMs = new Date(`${dayKey}T12:00:00`).getTime();
+            const weekday = new Date(`${dayKey}T12:00:00`).getDay();
+            const diffDays = Math.round((dayMs - baseMs) / 86400000);
+            const occursOnDay =
+              recurrence === 'daily' ||
+              (recurrence === 'weekdays' && weekday > 0 && weekday < 6) ||
+              (recurrence === 'weekly' && diffDays % 7 === 0) ||
+              (recurrence === 'none' && diffDays === 0);
+            if (!occursOnDay) continue;
+
+            const anchorMs = task.scheduledStartTime
+              ? new Date(`${dayKey}T${task.scheduledStartTime}:00`).getTime()
+              : new Date(`${dayKey}T23:59:59`).getTime();
+            const reminderTime = anchorMs - leadMs;
+            if (reminderTime <= now || reminderTime >= now + 7 * 86400000) continue;
+
             upcomingNotifications.push({
-              id: hashString(`task-rem-${task.id}-${task.scheduledDate}`),
-              title: `📌 Study Task: ${task.title}`,
-              body: `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m duration`,
+              id: hashString(`task-rem-${task.id}-${dayKey}`),
+              title: `📌 Task Reminder: ${task.title}`,
+              body: task.scheduledStartTime
+                ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m duration`
+                : `Due ${new Date(dayMs).toLocaleDateString([], { month: 'short', day: 'numeric' })}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m estimated`,
               channelId: CHANNELS.REMINDERS,
               schedule: { at: new Date(reminderTime), allowWhileIdle: true },
               extra: { type: 'task', taskId: task.id },

@@ -503,7 +503,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
       )}
 
       {focus && !hasFile && (
-        <div className="fixed inset-0 z-[70] flex flex-col bg-white dark:bg-slate-950 animate-fade-in">
+        <div className="fixed inset-0 z-[70] flex flex-col bg-white dark:bg-slate-950 animate-fade-in pt-safe">
           <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800">
             <button
               type="button"
@@ -532,7 +532,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
 
       {/* AI result panel */}
       {aiPanel && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in sm:items-center">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-4 pb-24 sm:pb-6 backdrop-blur-sm animate-fade-in sm:items-center">
           <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-sm font-bold flex items-center gap-2">

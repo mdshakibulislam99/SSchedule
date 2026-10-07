@@ -49,6 +49,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Password-reset OTP records: written/verified only by Cloud Functions
+    // (Admin SDK bypasses rules). Clients never read or write these.
+    match /resetCodes/{docId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

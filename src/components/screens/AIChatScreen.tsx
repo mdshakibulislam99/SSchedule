@@ -544,7 +544,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
 
           {/* Sidebar Drawer */}
           <aside
-            className="relative z-10 w-80 sm:w-88 max-w-[85vw] h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col animate-slide-right"
+            className="relative z-10 w-80 sm:w-88 max-w-[85vw] h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col animate-slide-right pt-safe"
             onClick={(e) => e.stopPropagation()}
             aria-label="Chat History Sidebar"
           >

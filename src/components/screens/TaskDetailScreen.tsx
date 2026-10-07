@@ -188,8 +188,8 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
           </p>
         )}
 
-        {/* Schedule pill if scheduled */}
-        {task.scheduledDate && (
+        {/* Study-slot pill — only when a planned time exists (distinct from the due date) */}
+        {task.scheduledDate && task.scheduledStartTime && (
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
             <Calendar className="w-3 h-3 text-indigo-500 shrink-0" />
             <span>
@@ -197,7 +197,7 @@ export const TaskDetailScreen: React.FC<TaskDetailScreenProps> = ({
                 month: 'short',
                 day: 'numeric',
               })}
-              {task.scheduledStartTime ? ` at ${task.scheduledStartTime}` : ''}
+              {` at ${task.scheduledStartTime}`}
             </span>
           </div>
         )}

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronLeft,
   ChevronRight,
@@ -25,6 +26,7 @@ import { SCHEDULE_EVENT_COLORS, SCHEDULE_EVENT_EMOJI } from '../../services/cale
 import { AIOrchestrator } from '../../services/aiOrchestrator';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { TimePickerSheet, formatTime12h } from '../common/TimePickerSheet';
 
 interface CalendarScreenProps {
   schedule: ScheduleEvent[];
@@ -307,6 +309,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const [endTime, setEndTime] = useState('11:30');
   const [type, setType] = useState<ScheduleEventType>('study');
   const [location, setLocation] = useState('');
+  const [timePickerTarget, setTimePickerTarget] = useState<'start' | 'end' | null>(null);
 
   const eventsByDate = useMemo(() => {
     const map: Record<string, ScheduleEvent[]> = {};
@@ -1029,28 +1032,33 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
         )}
       </div>
 
-      {/* Add Event Modal Sheet */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in pb-16">
-          <div
-            className="relative z-[61] w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 p-5 shadow-2xl animate-slide-up max-h-[calc(100dvh-4rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-4" />
+      {/* Add Event Modal — centered dialog, portaled to <body> so the fixed
+          bottom nav (and any ancestor stacking context) can't clip it. */}
+      {isAddModalOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm overlay-safe animate-fade-in">
+            <div
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-[1.75rem] border border-slate-200/80 dark:border-slate-800 shadow-2xl animate-pop-in flex flex-col max-h-[calc(100dvh-2rem)] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="shrink-0 flex items-center justify-between px-5 pt-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {editingEvent ? 'Edit Block' : 'Schedule Block'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                {editingEvent ? 'Edit Block' : 'Schedule Block'}
-              </h3>
-              <button
-                onClick={() => setIsAddModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full"
+              <form
+                id="calendar-event-form"
+                onSubmit={handleSaveEvent}
+                className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4"
               >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveEvent} className="space-y-4 py-4">
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                   Title *
@@ -1097,24 +1105,28 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     Start Time
                   </label>
-                  <input
-                    type="time"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setTimePickerTarget('start')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono text-slate-900 dark:text-white flex items-center justify-between gap-2 text-left transition-colors hover:border-indigo-300 dark:hover:border-indigo-800"
+                  >
+                    <span className="tabular-nums">{formatTime12h(startTime)}</span>
+                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  </button>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
                     End Time
                   </label>
-                  <input
-                    type="time"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setTimePickerTarget('end')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono text-slate-900 dark:text-white flex items-center justify-between gap-2 text-left transition-colors hover:border-indigo-300 dark:hover:border-indigo-800"
+                  >
+                    <span className="tabular-nums">{formatTime12h(endTime)}</span>
+                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  </button>
                 </div>
               </div>
 
@@ -1148,16 +1160,37 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all"
-              >
-                {editingEvent ? 'Save Changes' : 'Add to Calendar'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+              </form>
+
+              {/* Pinned footer — the primary action is always visible */}
+              <div className="shrink-0 px-5 py-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="submit"
+                  form="calendar-event-form"
+                  className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all"
+                >
+                  {editingEvent ? 'Save Changes' : 'Add to Calendar'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Round clock-face time picker for Start / End time (portals itself) */}
+      <TimePickerSheet
+        open={timePickerTarget !== null}
+        value={timePickerTarget === 'end' ? endTime : startTime}
+        onSelect={(v) => {
+          if (timePickerTarget === 'end') {
+            if (v) setEndTime(v);
+          } else if (v) {
+            setStartTime(v);
+          }
+        }}
+        onClose={() => setTimePickerTarget(null)}
+        allowClear={false}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(eventToDelete)}

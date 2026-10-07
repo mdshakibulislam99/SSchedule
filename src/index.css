@@ -177,6 +177,24 @@
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* Keeps overlay content clear of the status bar / gesture area while the
+   surface's own background still fills the whole screen. */
+.pt-safe-6 {
+  padding-top: max(1.5rem, env(safe-area-inset-top, 0px));
+}
+.pt-safe-4 {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+}
+
+/* Padding for centered dialog backdrops: never lets a dialog touch any
+   system bar, on every side. */
+.overlay-safe {
+  padding-top: max(1.25rem, env(safe-area-inset-top, 0px));
+  padding-right: max(1.25rem, env(safe-area-inset-right, 0px));
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1.25rem, env(safe-area-inset-left, 0px));
+}
+
 /* Custom subtle scrollbar */
 ::-webkit-scrollbar {
   width: 4px;
@@ -241,4 +259,21 @@
 
 .animate-fade-in {
   animation: fade-in 0.2s ease-out forwards;
+}
+
+/* Centered dialog entrance — ends at transform:none so it never leaves a
+   containing block behind for fixed-position children. */
+@keyframes pop-in {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.animate-pop-in {
+  animation: pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

@@ -853,6 +853,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             setIsAddModalOpen(false);
             if (onComposerStateChange) onComposerStateChange(false);
           }}
+          onOpenChange={onComposerStateChange}
         />
       )}
 

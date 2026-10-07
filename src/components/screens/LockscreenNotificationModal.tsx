@@ -42,7 +42,7 @@ export const LockscreenNotificationModal: React.FC<LockscreenNotificationModalPr
   const topTask = tasks.find((t) => !t.completed) || tasks[0];
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col justify-between p-6 pb-24 sm:pb-6 bg-gradient-to-b from-blue-500 via-indigo-600 to-purple-800 text-white animate-fade-in select-none">
+    <div className="fixed inset-0 z-[60] flex flex-col justify-between px-6 pt-safe-6 pb-24 sm:pb-6 bg-gradient-to-b from-blue-500 via-indigo-600 to-purple-800 text-white animate-fade-in select-none">
       {/* Dismiss button */}
       <div className="flex justify-end pt-2">
         <button

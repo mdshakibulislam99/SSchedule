@@ -24,6 +24,10 @@ import { getLocalDateKey } from './dates';
 
 const INITIAL_SCHEDULE_DATE = getLocalDateKey();
 
+// 'default' follows the time of day (day/night), 'bright' is always light,
+// 'night' is always dark.
+export type ThemeMode = 'default' | 'bright' | 'night';
+
 const STORAGE_KEYS = {
   USER: 'studyai_user_profile',
   COURSES: 'studyai_courses',
@@ -1167,23 +1171,27 @@ export const StudyStorage = {
     }
   },
 
-  getTheme(): boolean {
+  getThemeMode(): ThemeMode {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.THEME);
-      if (stored !== null) {
-        return stored === 'dark';
-      }
+      if (stored === 'dark') return 'night'; // legacy value
+      if (stored === 'light') return 'bright'; // legacy value
+      if (stored === 'default' || stored === 'bright' || stored === 'night') return stored;
     } catch {}
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
-    }
-    return false;
+    // Default: auto-switch between day and night following the time of day
+    return 'default';
   },
 
-  saveTheme(isDark: boolean) {
+  saveThemeMode(mode: ThemeMode) {
     try {
-      localStorage.setItem(STORAGE_KEYS.THEME, isDark ? 'dark' : 'light');
+      localStorage.setItem(STORAGE_KEYS.THEME, mode);
     } catch {}
+  },
+
+  // Night window: 18:00 (6 PM) to 06:00 (6 AM)
+  isNightTime(date: Date = new Date()): boolean {
+    const h = date.getHours();
+    return h >= 18 || h < 6;
   },
 
   exportBackup(): string {
