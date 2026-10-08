@@ -59,6 +59,7 @@ function initFirestoreWithOfflinePersistence(): Firestore {
           localCache: persistentLocalCache({
             tabManager: persistentMultipleTabManager(),
           }),
+          ignoreUndefinedProperties: true,
         },
         databaseId
       );
@@ -205,15 +206,56 @@ export function onAuthChange(callback: (user: FirebaseUser | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
+/**
+ * Strips all undefined properties recursively from objects and arrays so Firestore
+ * never throws "Unsupported field value: undefined".
+ */
+export function cleanForFirestore<T>(data: T): T {
+  if (data === undefined) {
+    return undefined as any;
+  }
+  if (data === null || typeof data !== 'object') {
+    return data;
+  }
+  if (data instanceof Date) {
+    return data.toISOString() as any;
+  }
+  if (Array.isArray(data)) {
+    return data
+      .map((item) => cleanForFirestore(item))
+      .filter((item) => item !== undefined) as any;
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      const val = cleanForFirestore(value);
+      if (val !== undefined) {
+        cleaned[key] = val;
+      }
+    }
+  }
+  return cleaned as T;
+}
+
 // Firestore Persistence Helpers
 export async function syncUserProfileToFirestore(userId: string, profile: UserProfile) {
+  if (!userId) return;
   try {
     const userRef = doc(db, 'users', userId);
-    await setDoc(userRef, {
+    const base: Record<string, any> = {
       ...profile,
       id: userId,
+      firebaseUid: userId,
+      isFirebaseSynced: true,
       updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    };
+    if (profile.photoURL) {
+      base.photoURL = profile.photoURL;
+    } else {
+      delete base.photoURL;
+    }
+    const cleanPayload = cleanForFirestore(base);
+    await setDoc(userRef, cleanPayload, { merge: true });
   } catch (err) {
     console.warn('Failed to sync profile to Firestore:', err);
   }
@@ -345,11 +387,12 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
 }
 
 export async function syncTasksToFirestore(userId: string, tasks: Task[]) {
+  if (!userId || !tasks || tasks.length === 0) return;
   try {
     const batch = writeBatch(db);
     tasks.forEach((t) => {
       const taskRef = doc(db, 'users', userId, 'tasks', t.id);
-      batch.set(taskRef, { ...t, userId }, { merge: true });
+      batch.set(taskRef, cleanForFirestore({ ...t, userId }), { merge: true });
     });
     await batch.commit();
   } catch (err) {
@@ -358,11 +401,12 @@ export async function syncTasksToFirestore(userId: string, tasks: Task[]) {
 }
 
 export async function syncScheduleToFirestore(userId: string, schedule: ScheduleEvent[]) {
+  if (!userId || !schedule || schedule.length === 0) return;
   try {
     const batch = writeBatch(db);
     schedule.forEach((s) => {
       const sRef = doc(db, 'users', userId, 'schedule', s.id);
-      batch.set(sRef, { ...s, userId }, { merge: true });
+      batch.set(sRef, cleanForFirestore({ ...s, userId }), { merge: true });
     });
     await batch.commit();
   } catch (err) {
@@ -371,11 +415,12 @@ export async function syncScheduleToFirestore(userId: string, schedule: Schedule
 }
 
 export async function syncCoursesToFirestore(userId: string, courses: Course[]) {
+  if (!userId || !courses || courses.length === 0) return;
   try {
     const batch = writeBatch(db);
     courses.forEach((c) => {
       const cRef = doc(db, 'users', userId, 'courses', c.id);
-      batch.set(cRef, { ...c, userId }, { merge: true });
+      batch.set(cRef, cleanForFirestore({ ...c, userId }), { merge: true });
     });
     await batch.commit();
   } catch (err) {
@@ -384,11 +429,12 @@ export async function syncCoursesToFirestore(userId: string, courses: Course[]) 
 }
 
 export async function syncResourcesToFirestore(userId: string, resources: CourseResource[]) {
+  if (!userId || !resources || resources.length === 0) return;
   try {
     const batch = writeBatch(db);
     resources.forEach((r) => {
       const rRef = doc(db, 'users', userId, 'resources', r.id);
-      batch.set(rRef, { ...r, userId }, { merge: true });
+      batch.set(rRef, cleanForFirestore({ ...r, userId }), { merge: true });
     });
     await batch.commit();
   } catch (err) {
@@ -400,11 +446,12 @@ export async function syncGoogleCalendarStateToFirestore(
   userId: string,
   state: GoogleCalendarSyncState,
 ) {
+  if (!userId) return;
   try {
-    await setDoc(doc(db, 'users', userId, 'integrations', 'googleCalendar'), {
+    await setDoc(doc(db, 'users', userId, 'integrations', 'googleCalendar'), cleanForFirestore({
       ...state,
       updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    }), { merge: true });
   } catch (err) {
     console.warn('Failed to sync Google Calendar state to Firestore:', err);
   }

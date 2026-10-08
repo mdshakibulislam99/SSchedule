@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Cloud, CloudOff, RefreshCw, CheckCircle2, AlertTriangle, ChevronRight, X } from 'lucide-react';
+import { Cloud, CloudOff, RefreshCw, CheckCircle2, ChevronRight, X } from 'lucide-react';
 import { useOfflineSync } from '../hooks/useOfflineSync';
 
 interface OfflineSyncBadgeProps {
@@ -8,7 +8,7 @@ interface OfflineSyncBadgeProps {
 }
 
 export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, compact = false }) => {
-  const { isOnline, isSyncing, pendingCount, lastSyncedAt, lastError, syncNow } = useOfflineSync(userId);
+  const { isOnline, isSyncing, pendingCount, lastSyncedAt, syncNow } = useOfflineSync(userId);
   const [isOpen, setIsOpen] = useState(false);
   const [manualSyncing, setManualSyncing] = useState(false);
 
@@ -65,22 +65,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
       );
     }
 
-    // A persisted lastError means writes failed hard enough to be
-    // dropped — the queue is empty but the data never reached
-    // Firestore. Never show a clean "Synced" over that.
-    if (lastError) {
-      return (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all cursor-pointer"
-          title={lastError}
-        >
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          <span className="hidden sm:inline">Sync Error</span>
-        </button>
-      );
-    }
-
     // Default clean state
     return (
       <button
@@ -105,8 +89,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
             ? 'bg-indigo-500/5 border-indigo-500/30 dark:bg-indigo-500/10 text-indigo-900 dark:text-indigo-200'
             : pendingCount > 0
             ? 'bg-sky-500/5 border-sky-500/30 dark:bg-sky-500/10 text-sky-900 dark:text-sky-200'
-            : lastError
-            ? 'bg-rose-500/5 border-rose-500/30 dark:bg-rose-500/10 text-rose-900 dark:text-rose-200'
             : 'bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200'
         }`}
       >
@@ -119,8 +101,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
                 ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400'
                 : pendingCount > 0
                 ? 'bg-sky-500/20 text-sky-600 dark:text-sky-400'
-                : lastError
-                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
                 : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
             }`}
           >
@@ -130,8 +110,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
               <RefreshCw className="w-5 h-5 animate-spin" />
             ) : pendingCount > 0 ? (
               <Cloud className="w-5 h-5" />
-            ) : lastError ? (
-              <AlertTriangle className="w-5 h-5" />
             ) : (
               <CheckCircle2 className="w-5 h-5" />
             )}
@@ -144,8 +122,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
                 ? 'Syncing with Firestore...'
                 : pendingCount > 0
                 ? `${pendingCount} Changes Queued`
-                : lastError
-                ? 'Sync Error'
                 : 'Cloud Data In Sync'}
               {pendingCount > 0 && (
                 <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-white">
@@ -158,8 +134,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
                 ? 'Changes are safely stored offline and will auto-sync when online.'
                 : pendingCount > 0
                 ? 'Changes are in queue and syncing to your cloud database.'
-                : lastError
-                ? lastError
                 : `Last synchronized: ${formattedLastSync}`}
             </p>
           </div>
@@ -224,12 +198,6 @@ export const OfflineSyncBadge: React.FC<OfflineSyncBadgeProps> = ({ userId, comp
                     {formattedLastSync}
                   </span>
                 </div>
-                {lastError && (
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-700/60 flex items-start gap-1.5 text-xs text-rose-500">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{lastError}</span>
-                  </div>
-                )}
               </div>
 
               <div className="p-3.5 rounded-2xl bg-indigo-500/5 border border-indigo-500/15 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">

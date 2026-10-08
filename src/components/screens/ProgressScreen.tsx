@@ -32,24 +32,45 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'goals'>('overview');
 
+  const hasStudyData =
+    metrics.tasksCompleted > 0 ||
+    (metrics.studyTimeFormatted && metrics.studyTimeFormatted !== '0h 0m');
+
   // Daily study distribution data (Hours per day for current week)
-  const weeklyDistribution = [
-    { day: 'Mon', hours: 3.5, label: '3h 30m' },
-    { day: 'Tue', hours: 4.2, label: '4h 12m' },
-    { day: 'Wed', hours: 2.8, label: '2h 48m' },
-    { day: 'Thu', hours: 5.0, label: '5h 00m' },
-    { day: 'Fri', hours: 3.2, label: '3h 12m' },
-    { day: 'Sat', hours: 1.5, label: '1h 30m' },
-    { day: 'Sun', hours: 2.2, label: '2h 15m' },
-  ];
+  const weeklyDistribution = hasStudyData
+    ? [
+        { day: 'Mon', hours: 3.5, label: '3h 30m' },
+        { day: 'Tue', hours: 4.2, label: '4h 12m' },
+        { day: 'Wed', hours: 2.8, label: '2h 48m' },
+        { day: 'Thu', hours: 5.0, label: '5h 00m' },
+        { day: 'Fri', hours: 3.2, label: '3h 12m' },
+        { day: 'Sat', hours: 1.5, label: '1h 30m' },
+        { day: 'Sun', hours: 2.2, label: '2h 15m' },
+      ]
+    : [
+        { day: 'Mon', hours: 0, label: '0m' },
+        { day: 'Tue', hours: 0, label: '0m' },
+        { day: 'Wed', hours: 0, label: '0m' },
+        { day: 'Thu', hours: 0, label: '0m' },
+        { day: 'Fri', hours: 0, label: '0m' },
+        { day: 'Sat', hours: 0, label: '0m' },
+        { day: 'Sun', hours: 0, label: '0m' },
+      ];
   const maxHours = Math.max(...weeklyDistribution.map((d) => d.hours), 5);
 
-  const timeOfDayBreakdown = [
-    { period: 'Morning', time: '6am – 12pm', pct: 35, icon: Sun, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/60' },
-    { period: 'Afternoon', time: '12pm – 5pm', pct: 45, icon: Zap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
-    { period: 'Evening', time: '5pm – 10pm', pct: 15, icon: Sunset, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
-    { period: 'Night', time: '10pm – 2am', pct: 5, icon: Moon, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/60' },
-  ];
+  const timeOfDayBreakdown = hasStudyData
+    ? [
+        { period: 'Morning', time: '6am – 12pm', pct: 35, icon: Sun, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/60' },
+        { period: 'Afternoon', time: '12pm – 5pm', pct: 45, icon: Zap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
+        { period: 'Evening', time: '5pm – 10pm', pct: 15, icon: Sunset, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
+        { period: 'Night', time: '10pm – 2am', pct: 5, icon: Moon, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/60' },
+      ]
+    : [
+        { period: 'Morning', time: '6am – 12pm', pct: 0, icon: Sun, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/60' },
+        { period: 'Afternoon', time: '12pm – 5pm', pct: 0, icon: Zap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
+        { period: 'Evening', time: '5pm – 10pm', pct: 0, icon: Sunset, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
+        { period: 'Night', time: '10pm – 2am', pct: 0, icon: Moon, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/60' },
+      ];
 
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">

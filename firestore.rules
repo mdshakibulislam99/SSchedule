@@ -12,12 +12,11 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
-      // Every per-user subcollection: tasks, courses, resources, schedule,
+      // Every per-user subcollection recursively: tasks, courses, resources, schedule,
       // goals, notifications, files, notes, research, aiMemory,
       // conversations, metrics, quizzes, flashcards, annotations,
-      // integrations, … The wildcard keeps the rules complete automatically
-      // as new collections are added (an enumeration once missed `notes`).
-      match /{collection}/{docId} {
+      // integrations, etc.
+      match /{allSubcollections=**} {
         allow read, write: if isOwner(userId);
       }
     }

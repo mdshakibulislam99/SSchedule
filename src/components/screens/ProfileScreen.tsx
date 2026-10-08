@@ -14,7 +14,6 @@ import {
   Save,
   User,
   Sparkles,
-  Trash2,
   Loader2,
 } from 'lucide-react';
 import { UserProfile, ProgressMetrics } from '../../types';
@@ -27,8 +26,6 @@ interface ProfileScreenProps {
   onOpenGoals: () => void;
   onOpenStats: () => void;
   onRestartOnboarding: () => void;
-  onLoadDemoData?: () => void;
-  onClearAllData?: () => void;
   onSignInWithGoogle?: () => void;
   onSignOut?: () => void;
   isFirebaseSynced?: boolean;
@@ -71,8 +68,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenGoals,
   onOpenStats,
   onRestartOnboarding,
-  onLoadDemoData,
-  onClearAllData,
   onSignInWithGoogle,
   onSignOut,
   isFirebaseSynced = false,
@@ -461,7 +456,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <div className="border-x border-slate-200 dark:border-slate-800">
           <div className="text-base font-extrabold font-mono text-indigo-600 dark:text-indigo-400 flex items-center justify-center gap-1">
             <Flame className="w-4 h-4 fill-current" />
-            <span>{user.streak || 5}</span>
+            <span>{user.streak ?? metrics.dayStreak ?? 0}</span>
           </div>
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
             Day Streak
@@ -470,7 +465,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         <div>
           <div className="text-base font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
-            {metrics.productivityScore || 8.4}
+            {metrics.productivityScore ?? metrics.focusScore ?? 0}
           </div>
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
             Focus Score
@@ -518,61 +513,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
           <ChevronRight className="w-4 h-4 text-slate-400" />
         </button>
-      </div>
-
-      {/* Development & Testing Data Management */}
-      <div className="pt-2 space-y-2">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-1">
-          Development & Testing
-        </div>
-
-        {onLoadDemoData && (
-          <button
-            onClick={onLoadDemoData}
-            className="w-full p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900/60 flex items-center justify-between shadow-2xs hover:border-indigo-300 text-left transition-all cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-indigo-950 dark:text-indigo-200 block">
-                  Load Sample Demo Data
-                </span>
-                <span className="text-[11px] text-indigo-600/90 dark:text-indigo-400 block mt-0.5">
-                  Populates CS101, assignments, schedule & study materials for testing
-                </span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0" />
-          </button>
-        )}
-
-        {onClearAllData && (
-          <button
-            onClick={() => {
-              if (window.confirm('Reset app to a clean state? This removes sample data and opens the onboarding wizard for new students.')) {
-                onClearAllData();
-              }
-            }}
-            className="w-full p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between shadow-2xs hover:border-slate-300 text-left transition-all cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
-                <Trash2 className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900 dark:text-white block">
-                  Start Clean (Simulate New Student)
-                </span>
-                <span className="text-[11px] text-slate-400 block mt-0.5">
-                  Clears all mock data and opens initial student onboarding
-                </span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-          </button>
-        )}
       </div>
 
       {/* Single Log Out — the only logout entry point in the app */}

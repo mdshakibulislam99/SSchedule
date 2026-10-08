@@ -4,7 +4,7 @@ import {
   deleteDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, cleanForFirestore } from '../lib/firebase';
 import {
   OfflineQueueItem,
   OfflineSyncAction,
@@ -103,7 +103,7 @@ class OfflineSyncService {
       collection,
       docId,
       action: 'upsert',
-      data: { ...data, updatedAt: new Date().toISOString() },
+      data: cleanForFirestore({ ...data, updatedAt: new Date().toISOString() }),
     });
   }
 
@@ -139,7 +139,7 @@ class OfflineSyncService {
         collection,
         docId: item.id,
         action: 'upsert',
-        data: { ...item, updatedAt: new Date().toISOString() },
+        data: cleanForFirestore({ ...item, updatedAt: new Date().toISOString() }),
       });
     });
   }
@@ -382,28 +382,34 @@ class OfflineSyncService {
       return;
     }
 
+    const cleanData = cleanForFirestore(data || {});
+
     // Upsert
     if (collection === 'profile') {
       const userRef = doc(db, 'users', userId);
-      await setDoc(userRef, {
-        ...data,
+      const profileClean: Record<string, any> = {
+        ...cleanData,
         id: userId,
         updatedAt: new Date().toISOString(),
-      }, { merge: true });
+      };
+      if (!profileClean.photoURL) {
+        delete profileClean.photoURL;
+      }
+      await setDoc(userRef, cleanForFirestore(profileClean), { merge: true });
       return;
     }
 
     if (collection === 'integrations') {
       const intRef = doc(db, 'users', userId, 'integrations', docId);
       await setDoc(intRef, {
-        ...data,
+        ...cleanData,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
       return;
     }
 
     const docRef = doc(db, 'users', userId, collection, docId);
-    await setDoc(docRef, { ...data, userId }, { merge: true });
+    await setDoc(docRef, { ...cleanData, userId }, { merge: true });
   }
 
   private scheduleFlush(delayMs = 500) {
@@ -457,7 +463,20 @@ class OfflineSyncService {
     try {
       const storedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
       if (storedQueue) {
-        this.queue = JSON.parse(storedQueue);
+        const rawQueue: OfflineQueueItem[] = JSON.parse(storedQueue);
+        // Sanitize loaded queue items and heal any corrupted undefined payloads from previous sessions
+        this.queue = rawQueue.map((item) => ({
+          ...item,
+          data: item.data ? cleanForFirestore(item.data) : undefined,
+          retryCount:
+            item.lastError && item.lastError.includes('Unsupported field value: undefined')
+              ? 0
+              : item.retryCount,
+          lastError:
+            item.lastError && item.lastError.includes('Unsupported field value: undefined')
+              ? undefined
+              : item.lastError,
+        }));
       }
       const storedLastSync = localStorage.getItem(LAST_SYNCED_KEY);
       if (storedLastSync) {

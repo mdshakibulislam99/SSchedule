@@ -134,7 +134,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
       console.warn('Could not load existing cloud profile:', err);
     }
 
-    const isReturning = Boolean(cloudProfile?.isOnboarded) || hasCloudData;
+    const isReturning =
+      Boolean(cloudProfile?.isOnboarded) ||
+      hasCloudData ||
+      Boolean(cloudProfile && (cloudProfile.name || cloudProfile.studyField));
 
     if (isReturning) {
       // Returning user — skip setup and restore their saved profile choices.

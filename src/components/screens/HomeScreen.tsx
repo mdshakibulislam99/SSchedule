@@ -14,7 +14,7 @@ import {
   Cloud,
   Target,
 } from 'lucide-react';
-import { Task, ScheduleEvent, UserProfile, NotificationItem } from '../../types';
+import { Task, ScheduleEvent, UserProfile, NotificationItem, ProgressMetrics } from '../../types';
 import { getLocalDateKey } from '../../utils/dates';
 import { OfflineSyncBadge } from '../OfflineSyncBadge';
 
@@ -23,6 +23,7 @@ interface HomeScreenProps {
   tasks: Task[];
   schedule: ScheduleEvent[];
   notifications: NotificationItem[];
+  metrics?: ProgressMetrics;
   onOpenWhatToDoNow: () => void;
   onOpenAIChat: (query?: string) => void;
   onOpenTasks: (courseCode?: string) => void;
@@ -42,6 +43,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   tasks,
   schedule,
   notifications,
+  metrics,
   onOpenWhatToDoNow,
   onOpenTasks,
   onOpenCalendar,
@@ -364,9 +366,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
               <h2
                 onClick={() => primaryTask && onSelectTask(primaryTask)}
-                className="text-base font-bold text-white truncate mt-1 cursor-pointer hover:text-indigo-300 transition-colors"
+                className={`text-base font-bold text-white truncate mt-1 ${
+                  primaryTask ? 'cursor-pointer hover:text-indigo-300' : ''
+                } transition-colors`}
               >
-                {primaryTask ? primaryTask.title : 'Review Course Materials'}
+                {primaryTask ? primaryTask.title : 'No active tasks'}
               </h2>
             </div>
 
@@ -386,6 +390,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 {primaryTask.estimatedMinutes && primaryTask.aiPlanReason ? ' · ' : ''}
                 {primaryTask.aiPlanReason || ''}
               </p>
+            ) : !primaryTask ? (
+              <p className="text-xs text-slate-300 truncate min-w-0">
+                Add a task or schedule to plan your study session
+              </p>
             ) : (
               <span />
             )}
@@ -397,13 +405,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     if (onStartFocusTimer) onStartFocusTimer(primaryTask);
                     else onSelectTask(primaryTask);
                   } else {
-                    onOpenWhatToDoNow();
+                    onOpenTasks();
                   }
                 }}
                 className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
               >
-                <Play className="w-3.5 h-3.5 fill-current shrink-0" />
-                <span>Start 25 min</span>
+                {primaryTask ? (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current shrink-0" />
+                    <span>Start 25 min</span>
+                  </>
+                ) : (
+                  <span>+ Add Task</span>
+                )}
               </button>
 
               <button
@@ -460,14 +474,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             className="p-3 sm:py-3.5 sm:px-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer group"
           >
             <div className="flex items-center justify-between text-slate-400 text-[11px]">
-              <span>Focus Today</span>
+              <span>Focus Time</span>
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
             </div>
             <div className="flex items-baseline gap-1 mt-0.5">
               <span className="text-base font-bold text-slate-900 dark:text-white tabular-nums">
-                60
+                {metrics?.studyTimeFormatted || '0h 0m'}
               </span>
-              <span className="text-[11px] text-slate-400">/ 120m</span>
             </div>
           </button>
 
@@ -479,7 +492,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </div>
             <div className="flex items-baseline gap-1 mt-0.5">
               <span className="text-base font-bold text-slate-900 dark:text-white tabular-nums">
-                {user.streak || 5}
+                {user.streak ?? metrics?.dayStreak ?? 0}
               </span>
               <span className="text-[11px] text-slate-400">days</span>
             </div>

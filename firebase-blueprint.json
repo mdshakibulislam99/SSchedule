@@ -97,6 +97,22 @@
         "location": { "type": "string" }
       },
       "required": ["id", "userId", "title", "startTime", "endTime", "date", "type"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Academic or personal student goal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "targetDate": { "type": "string" },
+        "progress": { "type": "number" },
+        "completed": { "type": "boolean" },
+        "aiPlanSteps": { "type": "array" }
+      },
+      "required": ["id", "userId", "title", "category", "targetDate", "completed"]
     }
   },
   "firestore": {
@@ -119,6 +135,10 @@
     "/users/{userId}/schedule/{eventId}": {
       "schema": "ScheduleEvent",
       "description": "Student schedule events scoped to the user"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Student study goals scoped to the user"
     }
   }
 }

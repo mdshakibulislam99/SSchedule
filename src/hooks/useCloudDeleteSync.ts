@@ -18,11 +18,12 @@ export function useCloudDeleteSync<T extends { id: string }>(
   items: T[],
   collection: OfflineSyncCollection,
   firebaseUser: FirebaseUser | null,
+  isPaused: boolean = false,
 ): void {
   const knownIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
-    if (!firebaseUser) {
+    if (!firebaseUser || isPaused) {
       knownIdsRef.current = null;
       return;
     }
@@ -30,11 +31,14 @@ export function useCloudDeleteSync<T extends { id: string }>(
     const nextIds = new Set(items.map((item) => item.id));
     const knownIds = knownIdsRef.current;
 
-    if (knownIds) {
+    // Safety guard: only delete individual items when transitioning between non-empty states.
+    // If the entire collection was cleared (nextIds.size === 0), that happens on logout,
+    // account switch, or state resets, and must NEVER wipe the user's remote cloud database.
+    if (knownIds && knownIds.size > 0 && nextIds.size > 0) {
       knownIds.forEach((id) => {
         if (!nextIds.has(id)) offlineSyncService.enqueueDelete(uid, collection, id);
       });
     }
     knownIdsRef.current = nextIds;
-  }, [items, collection, firebaseUser]);
+  }, [items, collection, firebaseUser, isPaused]);
 }

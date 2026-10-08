@@ -26,13 +26,13 @@ import {
   deleteTaskFromFirestore,
   deleteCourseFromFirestore,
   syncGoogleCalendarStateToFirestore,
+  cleanForFirestore,
 } from './lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { registerBackHandler, updateNativeTheme } from './lib/native';
 import { offlineSyncService } from './services/offlineSyncService';
 import { AIService } from './services/aiService';
 import { useOfflineSync } from './hooks/useOfflineSync';
-import { OfflineSyncBadge } from './components/OfflineSyncBadge';
 
 import { OnboardingFlow } from './components/screens/OnboardingFlow';
 import { HomeScreen } from './components/screens/HomeScreen';
@@ -232,21 +232,25 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<AppUpdateCheckResult | null>(null);
   const [isGraceModalDismissed, setIsGraceModalDismissed] = useState(false);
 
+  const isLoggingOutRef = useRef(false);
+  const isDeleteSyncPaused = isFirebaseSyncing || isLoggingOutRef.current;
+
   // Mirror local deletions into Firestore for every cloud-synced collection,
   // so items removed here don't resurrect on the next restore.
-  useCloudDeleteSync(tasks, 'tasks', firebaseUser);
-  useCloudDeleteSync(schedule, 'schedule', firebaseUser);
-  useCloudDeleteSync(courses, 'courses', firebaseUser);
-  useCloudDeleteSync(resources, 'resources', firebaseUser);
-  useCloudDeleteSync(goals, 'goals', firebaseUser);
-  useCloudDeleteSync(files, 'files', firebaseUser);
-  useCloudDeleteSync(notes, 'notes', firebaseUser);
-  useCloudDeleteSync(research, 'research', firebaseUser);
-  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser);
-  useCloudDeleteSync(notifications, 'notifications', firebaseUser);
-  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser);
-  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser);
-  useCloudDeleteSync(annotations, 'annotations', firebaseUser);
+  // Paused during initial cloud sync, restore, or logout to prevent wiping cloud state!
+  useCloudDeleteSync(tasks, 'tasks', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(schedule, 'schedule', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(courses, 'courses', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(resources, 'resources', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(goals, 'goals', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(files, 'files', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(notes, 'notes', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(research, 'research', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(notifications, 'notifications', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused);
 
   const checkAppUpdates = async () => {
     try {
@@ -269,24 +273,6 @@ export default function App() {
     setTimeout(() => {
       setToastMessage((current) => (current === msg ? null : current));
     }, 3500);
-  };
-
-  const handleLoadDemoData = () => {
-    StudyStorage.loadDemoData();
-    setUser(StudyStorage.getUser());
-    setCourses(StudyStorage.getCourses());
-    setResources(StudyStorage.getResources());
-    setTasks(StudyStorage.getTasks());
-    setSchedule(StudyStorage.getSchedule());
-    setGoals(StudyStorage.getGoals());
-    setFiles(StudyStorage.getFiles());
-    setNotes(StudyStorage.getNotes());
-    setResearch(StudyStorage.getResearch());
-    setAIMemory(StudyStorage.getAIMemory());
-    setNotifications(StudyStorage.getNotifications());
-    setMetrics(StudyStorage.getMetrics());
-    setShowOnboarding(false);
-    showToast('Sample demo data loaded (CS101, assignments & schedule).');
   };
 
   /**
@@ -327,12 +313,6 @@ export default function App() {
     setIsAIMemoryOpen(false);
     setIsTaskComposerOpen(false);
     setIsAISetupPromptOpen(false);
-  };
-
-  const handleClearAllData = () => {
-    resetLocalAppState();
-    setShowOnboarding(true);
-    showToast('Clean student mode active. All mock data cleared.');
   };
 
   const isAIProviderConfigured = (config: AIProviderConfig) => {
@@ -503,34 +483,26 @@ export default function App() {
               cloudData.schedule.length > 0;
 
           // A returning account is one whose profile is marked onboarded,
-          // that has any study data in the cloud, or that still has
-          // pending offline changes. Any of these means the account is
-          // established, so we force isOnboarded and skip onboarding — a
-          // lost or corrupted flag can never strand an existing user on
-          // the setup screens. (We deliberately do NOT treat a bare
-          // profile doc as "returning": a brand-new account gets a
-          // profile with isOnboarded:false on its first sign-in, and
-          // that must still go through onboarding.)
+          // that has any study data in the cloud, or has a profile document.
           const isReturningUser =
             cloudData.profile?.isOnboarded === true ||
             hasCloudData ||
+            Boolean(cloudData.profile && (cloudData.profile.name || cloudData.profile.studyField)) ||
             pendingCount > 0;
+
           if (isReturningUser && cloudData.profile) {
             const restoredProfile: UserProfile = {
               ...user,
               ...cloudData.profile,
-              email: fUser.email || user.email,
-              name: fUser.displayName || user.name,
-              photoURL: fUser.photoURL || undefined,
+              email: fUser.email || cloudData.profile.email || user.email,
+              name: fUser.displayName || cloudData.profile.name || user.name,
+              photoURL: fUser.photoURL || cloudData.profile.photoURL || undefined,
               firebaseUid: fUser.uid,
               isFirebaseSynced: true,
-              // A cloud profile only exists for established accounts, so a
-              // returning user here is always onboarded.
               isOnboarded: true,
             };
             setUser(restoredProfile);
-            // Persist the healed profile so isOnboarded stays correct in the cloud
-            // and we never re-corrupt it with a stale local copy.
+            StudyStorage.saveUser(restoredProfile);
             void syncUserProfileToFirestore(fUser.uid, restoredProfile);
           } else if (isReturningUser) {
             // Study data exists but no profile doc — restore an onboarded profile.
@@ -541,90 +513,92 @@ export default function App() {
               isOnboarded: true,
             };
             setUser(restoredProfile);
+            StudyStorage.saveUser(restoredProfile);
             void syncUserProfileToFirestore(fUser.uid, restoredProfile);
           } else {
-            await syncUserProfileToFirestore(fUser.uid, {
+            const hasLocalData = tasks.length > 0 || courses.length > 0 || schedule.length > 0;
+            const updatedProfile: UserProfile = {
               ...user,
               email: fUser.email || user.email,
               name: fUser.displayName || user.name,
               photoURL: fUser.photoURL || undefined,
               firebaseUid: fUser.uid,
               isFirebaseSynced: true,
-            });
-            await syncTasksToFirestore(fUser.uid, tasks);
-            await syncScheduleToFirestore(fUser.uid, schedule);
-            await syncCoursesToFirestore(fUser.uid, courses);
-            await syncResourcesToFirestore(fUser.uid, resources);
-            // First sign-in on this account: any local data already on
-            // the device must be pushed up too. The diff-based sync
-            // effects are paused for the whole restore pass and never
-            // re-run for state that didn't change, so without this the
-            // remaining slices would stay device-only until their first
-            // edit. Empty slices no-op inside the enqueue helpers.
-            const safeLocalFiles = files.map((f) =>
-              f.dataUrl && f.dataUrl.length > 700_000
-                ? { ...f, dataUrl: undefined }
-                : { ...f },
-            );
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'files', safeLocalFiles);
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'notes', notes.map((n) => ({ ...n })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'research', research.map((r) => ({ ...r })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'aiMemory', aiMemory.map((m) => ({ ...m })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'notifications', notifications.map((n) => ({ ...n })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'quizzes', quizzes.map((q) => ({ ...q })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'flashcards', flashcards.map((f) => ({ ...f })));
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'annotations', annotations.map((a) => ({ ...a })));
-            offlineSyncService.enqueueUpsert(fUser.uid, 'metrics', 'current', { ...metrics });
-            const localConversations = StudyStorage.getConversations();
-            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'conversations', localConversations.map((c) => ({ ...c })));
-            offlineSyncService.enqueueUpsert(fUser.uid, 'integrations', 'googleCalendar', calendarSync);
-            // First sign-in on this account: any local data already on
-            // the device was just pushed up — record it as synced so the
-            // diff-based effects don't re-queue it on the next edit.
-            markSynced('tasks', tasks);
-            markSynced('schedule', schedule);
-            markSynced('courses', courses);
-            markSynced('resources', resources);
-            markSynced('files', safeLocalFiles);
-            markSynced('notes', notes);
-            markSynced('research', research);
-            markSynced('aiMemory', aiMemory);
-            markSynced('notifications', notifications);
-            markSynced('quizzes', quizzes);
-            markSynced('flashcards', flashcards);
-            markSynced('annotations', annotations);
-            syncedSigsRef.current.set('metrics:current', itemSignature(metrics));
-            conversationsIdsRef.current = new Set(localConversations.map((c) => c.id));
+              isOnboarded: user.isOnboarded || hasLocalData,
+            };
+            setUser(updatedProfile);
+            StudyStorage.saveUser(updatedProfile);
+            await syncUserProfileToFirestore(fUser.uid, updatedProfile);
+
+            if (hasLocalData) {
+              await syncTasksToFirestore(fUser.uid, tasks);
+              await syncScheduleToFirestore(fUser.uid, schedule);
+              await syncCoursesToFirestore(fUser.uid, courses);
+              await syncResourcesToFirestore(fUser.uid, resources);
+              offlineSyncService.enqueueBatchUpsert(fUser.uid, 'goals', goals.map((g) => ({ ...g })));
+              markSynced('tasks', tasks);
+              markSynced('schedule', schedule);
+              markSynced('courses', courses);
+              markSynced('resources', resources);
+              markSynced('goals', goals);
+              setShowOnboarding(false);
+            }
           }
 
-          // Record what we just pulled from the cloud as already
-          // synced, so the diff-based sync effects only push items
-          // the user actually edits afterwards — never the whole
-          // restored dataset.
+          // Restore or merge tasks
           if (cloudData.tasks && cloudData.tasks.length > 0) {
             setTasks(cloudData.tasks);
+            StudyStorage.saveTasks(cloudData.tasks);
             markSynced('tasks', cloudData.tasks);
+          } else if (tasks.length > 0) {
+            await syncTasksToFirestore(fUser.uid, tasks);
+            markSynced('tasks', tasks);
           }
+
+          // Restore or merge schedule
           if (cloudData.schedule && cloudData.schedule.length > 0) {
             setSchedule(cloudData.schedule);
+            StudyStorage.saveSchedule(cloudData.schedule);
             markSynced('schedule', cloudData.schedule);
+          } else if (schedule.length > 0) {
+            await syncScheduleToFirestore(fUser.uid, schedule);
+            markSynced('schedule', schedule);
           }
+
+          // Restore or merge courses
           if (cloudData.courses && cloudData.courses.length > 0) {
             setCourses(cloudData.courses);
+            StudyStorage.saveCourses(cloudData.courses);
             markSynced('courses', cloudData.courses);
+          } else if (courses.length > 0) {
+            await syncCoursesToFirestore(fUser.uid, courses);
+            markSynced('courses', courses);
           }
+
+          // Restore or merge resources
           if (cloudData.resources && cloudData.resources.length > 0) {
             setResources(cloudData.resources);
+            StudyStorage.saveResources(cloudData.resources);
             markSynced('resources', cloudData.resources);
+          } else if (resources.length > 0) {
+            await syncResourcesToFirestore(fUser.uid, resources);
+            markSynced('resources', resources);
           }
+
+          // Restore or merge goals
           if (cloudData.goals && cloudData.goals.length > 0) {
             setGoals(cloudData.goals);
+            StudyStorage.saveGoals(cloudData.goals);
             markSynced('goals', cloudData.goals);
+          } else if (goals.length > 0) {
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'goals', goals.map((g) => ({ ...g })));
+            markSynced('goals', goals);
           }
+
+          // Restore files
           if (cloudData.files && cloudData.files.length > 0) {
             setFiles(cloudData.files);
-            // Match the signature the files effect uses (large base64
-            // payloads are stripped before they are ever synced).
+            StudyStorage.saveFiles(cloudData.files);
             const safeFiles = cloudData.files.map((f) =>
               f.dataUrl && f.dataUrl.length > 700_000
                 ? { ...f, dataUrl: undefined }
@@ -632,49 +606,84 @@ export default function App() {
             );
             markSynced('files', safeFiles);
           }
+
+          // Restore notes
           if (cloudData.notes && cloudData.notes.length > 0) {
             setNotes(cloudData.notes);
+            StudyStorage.saveNotes(cloudData.notes);
             markSynced('notes', cloudData.notes);
           }
+
+          // Restore research
           if (cloudData.research && cloudData.research.length > 0) {
             setResearch(cloudData.research);
+            StudyStorage.saveResearch(cloudData.research);
             markSynced('research', cloudData.research);
           }
+
+          // Restore AI memory
           if (cloudData.aiMemory && cloudData.aiMemory.length > 0) {
             setAIMemory(cloudData.aiMemory);
+            StudyStorage.saveAIMemory(cloudData.aiMemory);
             markSynced('aiMemory', cloudData.aiMemory);
           }
+
+          // Restore notifications
           if (cloudData.notifications && cloudData.notifications.length > 0) {
             setNotifications(cloudData.notifications);
+            StudyStorage.saveNotifications(cloudData.notifications);
             markSynced('notifications', cloudData.notifications);
           }
+
+          // Restore quizzes
           if (cloudData.quizzes && cloudData.quizzes.length > 0) {
             setQuizzes(cloudData.quizzes);
+            StudyStorage.saveQuizzes(cloudData.quizzes);
             markSynced('quizzes', cloudData.quizzes);
           }
+
+          // Restore flashcards
           if (cloudData.flashcards && cloudData.flashcards.length > 0) {
             setFlashcards(cloudData.flashcards);
+            StudyStorage.saveFlashcards(cloudData.flashcards);
             markSynced('flashcards', cloudData.flashcards);
           }
+
+          // Restore annotations
           if (cloudData.annotations && cloudData.annotations.length > 0) {
             setAnnotations(cloudData.annotations);
+            StudyStorage.saveAnnotations(cloudData.annotations);
             markSynced('annotations', cloudData.annotations);
           }
+
+          // Restore metrics
           if (cloudData.metrics) {
             setMetrics(cloudData.metrics);
+            StudyStorage.saveMetrics(cloudData.metrics);
             syncedSigsRef.current.set(
               'metrics:current',
               itemSignature(cloudData.metrics),
             );
           }
+
+          // Restore conversations
           if (cloudData.conversations && cloudData.conversations.length > 0) {
             StudyStorage.saveConversations(cloudData.conversations);
             conversationsIdsRef.current = new Set(cloudData.conversations.map((c) => c.id));
           }
+
+          // Restore calendar sync
           if (cloudData.calendarSync) {
             setCalendarSync(cloudData.calendarSync);
+            StudyStorage.saveCalendarSync(cloudData.calendarSync);
           }
-          showToast(`Cloud connected: ${fUser.displayName || 'Google Account'}`);
+
+          // For returning accounts with restored data, immediately dismiss onboarding
+          if (isReturningUser) {
+            setShowOnboarding(false);
+          }
+
+          showToast(`Cloud connected: ${fUser.displayName || fUser.email || 'Google Account'}`);
           void offlineSyncService.syncNow();
         } catch (e) {
           console.warn('Sync load error:', e);
@@ -877,7 +886,7 @@ export default function App() {
       if (syncedSigsRef.current.get(key) !== sig) {
         syncedSigsRef.current.set(key, sig);
         syncUserProfileToFirestore(firebaseUser.uid, user);
-        offlineSyncService.enqueueUpsert(firebaseUser.uid, 'profile', firebaseUser.uid, user);
+        offlineSyncService.enqueueUpsert(firebaseUser.uid, 'profile', firebaseUser.uid, cleanForFirestore(user));
       }
     }
   }, [user, firebaseUser]);
@@ -925,13 +934,23 @@ export default function App() {
     );
     if (!confirmed) return;
 
+    isLoggingOutRef.current = true;
+
     if (firebaseUser) {
-      // Push any pending offline writes to Firestore before the session ends.
+      // 1. Explicitly ensure all current state is pushed to Firestore before session terminates
       try {
+        await syncUserProfileToFirestore(firebaseUser.uid, user);
+        if (tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
+        if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
+        if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
+        if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
         await offlineSyncService.syncNow();
       } catch (err) {
-        console.warn('Offline queue flush before logout failed:', err);
+        console.warn('Sync before logout failed:', err);
       }
+
+      // 2. Clear pending offline queue for this user so no leftover delete operations execute later
+      offlineSyncService.clearQueue(firebaseUser.uid);
 
       try {
         await signOutUser();
@@ -950,9 +969,13 @@ export default function App() {
     setAIConfig((prev) => ({ ...prev, puterUser: null }));
     setFirebaseUser(null);
     offlineSyncService.setActiveUser(null);
-    // Only wipe the device when the data is backed up by the signed-in account.
+    // Wipe device copy only when backed up by the signed-in account
     if (firebaseUser) resetLocalAppState();
-    setShowOnboarding(true); // login page (OnboardingFlow, step 1)
+    setShowOnboarding(true); // return to login / auth page
+
+    setTimeout(() => {
+      isLoggingOutRef.current = false;
+    }, 600);
   };
 
   // Sync to local storage
@@ -2123,12 +2146,6 @@ export default function App() {
     playChime('success');
   };
 
-  // Reset Demo Seed Data
-  const handleResetData = () => {
-    localStorage.clear();
-    window.location.reload();
-  };
-
   // Render SubScreens or Tabs
   const renderCurrentView = () => {
     const currentSelectedTask = selectedTask
@@ -2490,7 +2507,6 @@ export default function App() {
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
           isDark={isDark}
-          onResetData={handleResetData}
           isFirebaseSynced={Boolean(firebaseUser)}
           firebaseEmail={firebaseUser?.email || null}
           onGoogleSignIn={handleGoogleSignIn}
@@ -2542,8 +2558,6 @@ export default function App() {
           onOpenGoals={() => setActiveSubScreen('goals')}
           onOpenStats={() => setActiveSubScreen('progress')}
           onRestartOnboarding={() => setShowOnboarding(true)}
-          onLoadDemoData={handleLoadDemoData}
-          onClearAllData={handleClearAllData}
           onSignInWithGoogle={handleGoogleSignIn}
           onSignOut={handleSignOut}
           isFirebaseSynced={Boolean(firebaseUser)}
@@ -2579,6 +2593,7 @@ export default function App() {
             tasks={tasks}
             schedule={schedule}
             notifications={notifications}
+            metrics={metrics}
             onOpenWhatToDoNow={() => setActiveSubScreen('what_to_do_now')}
             onOpenAIChat={(q) => requireAIProvider(() => setCurrentTab('ai'))}
             onOpenTasks={(courseCode) => {
@@ -2762,13 +2777,18 @@ export default function App() {
         {showOnboarding ? (
           <OnboardingFlow
             initialUser={user}
-            onComplete={(updatedUser) => {
+            onComplete={async (updatedUser) => {
               setUser(updatedUser);
+              StudyStorage.saveUser(updatedUser);
               setShowOnboarding(false);
               playChime('success');
               if (updatedUser.firebaseUid) {
-                void syncUserProfileToFirestore(updatedUser.firebaseUid, updatedUser);
+                await syncUserProfileToFirestore(updatedUser.firebaseUid, updatedUser);
                 offlineSyncService.init(updatedUser.firebaseUid);
+                if (tasks.length > 0) await syncTasksToFirestore(updatedUser.firebaseUid, tasks);
+                if (schedule.length > 0) await syncScheduleToFirestore(updatedUser.firebaseUid, schedule);
+                if (courses.length > 0) await syncCoursesToFirestore(updatedUser.firebaseUid, courses);
+                if (resources.length > 0) await syncResourcesToFirestore(updatedUser.firebaseUid, resources);
                 void offlineSyncService.syncNow();
               }
             }}
