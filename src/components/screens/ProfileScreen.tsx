@@ -397,16 +397,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
 
         {isFirebaseSynced ? (
-          <div className="flex items-center justify-between pt-1">
+          <div className="pt-1">
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Tasks, schedule, and goals are automatically synced to Google Cloud Firestore.
+              To sign out, use the single <span className="font-bold text-rose-600 dark:text-rose-400">Log Out</span>{' '}
+              button at the bottom of this page.
             </p>
-            <button
-              onClick={onSignOut}
-              className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline shrink-0 ml-2"
-            >
-              Disconnect
-            </button>
           </div>
         ) : (
           <div className="space-y-2 pt-1">
@@ -579,14 +575,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         )}
       </div>
 
-      {/* Log Out / Profile Reset */}
+      {/* Single Log Out — the only logout entry point in the app */}
       <div className="pt-2">
         <button
-          onClick={isFirebaseSynced ? onSignOut : onRestartOnboarding}
+          onClick={onSignOut}
           className="w-full py-3.5 rounded-2xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center justify-center gap-2 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
         >
           <LogOut className="w-4 h-4" />
-          <span>{isFirebaseSynced ? 'Sign Out of Google' : 'Reset Student Profile'}</span>
+          <span>Log Out</span>
         </button>
       </div>
     </div>

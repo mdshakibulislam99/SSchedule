@@ -65,6 +65,8 @@ interface AIChatScreenProps {
   user?: UserProfile;
   aiConfigured: boolean;
   onAISetupRequired: () => void;
+  /** Called whenever the conversation list changes, so App can sync it to the cloud. */
+  onConversationsSaved?: (conversations: AIConversation[]) => void;
 }
 
 export const AIChatScreen: React.FC<AIChatScreenProps> = ({
@@ -84,6 +86,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   user,
   aiConfigured,
   onAISetupRequired,
+  onConversationsSaved,
 }) => {
   // Topic / Scope selector: 'all' (General Study) or course ID
   const [selectedCourseId, setSelectedCourseId] = useState<string>('all');
@@ -271,6 +274,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         ? prev.map((c) => (c.id === currentConversationId ? updatedConv : c))
         : [updatedConv, ...prev];
       StudyStorage.saveConversations(next);
+      onConversationsSaved?.(next);
       return next;
     });
   }, [messages, currentConversationId, focusedCourse, attachedTask]);
@@ -322,6 +326,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== convId);
       StudyStorage.saveConversations(next);
+      onConversationsSaved?.(next);
       return next;
     });
     if (currentConversationId === convId) {

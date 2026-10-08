@@ -12,41 +12,14 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
-      match /tasks/{taskId} {
+      // Every per-user subcollection: tasks, courses, resources, schedule,
+      // goals, notifications, files, notes, research, aiMemory,
+      // conversations, metrics, quizzes, flashcards, annotations,
+      // integrations, … The wildcard keeps the rules complete automatically
+      // as new collections are added (an enumeration once missed `notes`).
+      match /{collection}/{docId} {
         allow read, write: if isOwner(userId);
       }
-
-      match /courses/{courseId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /resources/{resourceId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /schedule/{eventId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /goals/{goalId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /notifications/{notifId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /files/{fileId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /integrations/{integrationId} {
-        allow read, write: if isOwner(userId);
-      }
-    }
-
-    match /test/{docId} {
-      allow read, write: if true;
     }
 
     // Password-reset OTP records: written/verified only by Cloud Functions

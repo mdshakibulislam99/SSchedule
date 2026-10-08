@@ -19,6 +19,7 @@ import {
   signInWithGoogle,
   createAccountWithEmail,
   signInWithEmail,
+  fetchUserDataFromFirestore,
 } from '../../lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -103,14 +104,65 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     );
   };
 
-  // After any successful sign-in (Google or email) the user continues into the
-  // study setup steps. There is no guest path.
-  const proceedAfterAuth = (fUser: FirebaseUser, message: string) => {
+  // After any successful sign-in (Google or email): a returning account that
+  // already completed onboarding skips the setup steps entirely and lands in
+  // the app with its cloud profile restored (tasks/courses/etc. are restored
+  // by App's auth listener). Brand-new accounts continue into the study setup
+  // steps. There is no guest path.
+  const proceedAfterAuth = async (fUser: FirebaseUser, message: string) => {
     setFirebaseUid(fUser.uid);
     if (fUser.email) setAuthEmail(fUser.email);
     if (fUser.displayName) setName(fUser.displayName);
     if (fUser.photoURL) setPhotoURL(fUser.photoURL);
     setAuthSuccessMsg(message);
+
+    // Does this account already have an onboarded profile — or any study data —
+    // in Firestore? Either signal means a returning user who should skip setup.
+    // We don't rely on isOnboarded alone: if it was ever lost or left unset, the
+    // presence of synced data still proves the account is established.
+    let cloudProfile: Partial<UserProfile> | null = null;
+    let hasCloudData = false;
+    try {
+      const cloud = await fetchUserDataFromFirestore(fUser.uid);
+      cloudProfile = cloud.profile;
+      hasCloudData =
+        cloud.tasks.length +
+          cloud.courses.length +
+          cloud.goals.length +
+          cloud.schedule.length > 0;
+    } catch (err) {
+      console.warn('Could not load existing cloud profile:', err);
+    }
+
+    const isReturning = Boolean(cloudProfile?.isOnboarded) || hasCloudData;
+
+    if (isReturning) {
+      // Returning user — skip setup and restore their saved profile choices.
+      const restored: UserProfile = {
+        ...initialUser,
+        ...cloudProfile,
+        id: cloudProfile?.id || initialUser.id,
+        name: cloudProfile?.name || fUser.displayName || initialUser.name,
+        email: cloudProfile?.email || fUser.email || initialUser.email,
+        avatarUrl: cloudProfile?.avatarUrl || initialUser.avatarUrl,
+        university: cloudProfile?.university || initialUser.university,
+        studyField: cloudProfile?.studyField || initialUser.studyField,
+        year: cloudProfile?.year || initialUser.year,
+        goals:
+          cloudProfile?.goals && cloudProfile.goals.length > 0
+            ? cloudProfile.goals
+            : initialUser.goals,
+        energyLevel: cloudProfile?.energyLevel ?? initialUser.energyLevel,
+        photoURL: cloudProfile?.photoURL || fUser.photoURL || undefined,
+        firebaseUid: fUser.uid,
+        isFirebaseSynced: true,
+        isOnboarded: true,
+      };
+      // Brief "Signed in!" feedback, then straight into the restored app.
+      window.setTimeout(() => onComplete(restored), 700);
+      return;
+    }
+
     window.setTimeout(() => setStep(3), 700);
   };
 
@@ -122,7 +174,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     try {
       const fUser = await signInWithGoogle();
       if (fUser) {
-        proceedAfterAuth(fUser, 'Signed in with Google!');
+        await proceedAfterAuth(fUser, 'Signed in with Google!');
       }
     } catch (err: any) {
       console.warn('Onboarding Google Auth error:', err);
@@ -160,7 +212,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
       const fUser = isSignup
         ? await createAccountWithEmail(authEmail.trim(), authPassword)
         : await signInWithEmail(authEmail.trim(), authPassword);
-      proceedAfterAuth(fUser, isSignup ? 'Account created!' : 'Signed in!');
+      await proceedAfterAuth(fUser, isSignup ? 'Account created!' : 'Signed in!');
     } catch (err: any) {
       console.warn('Email Auth error:', err);
       const code = String(err?.code || '');

@@ -1128,6 +1128,8 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.METRICS, JSON.stringify(CLEAN_METRICS));
     localStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.ANNOTATIONS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.CALENDAR_SYNC, JSON.stringify(INITIAL_CALENDAR_SYNC));
     localStorage.removeItem(STORAGE_KEYS.CALENDAR_OUTBOX);
   },
 

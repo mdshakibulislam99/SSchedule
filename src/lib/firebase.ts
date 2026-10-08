@@ -30,7 +30,7 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import firebaseConfigFile from '../../firebase-applet-config.json';
-import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState } from '../types';
+import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState, StudyFile, StudyNote, ResearchItem, AIMemoryItem, NotificationItem, CourseQuiz, CourseFlashcard, ResourceAnnotation, ProgressMetrics, AIConversation } from '../types';
 
 // The verified Firebase project configuration provided by the user
 export const FIREBASE_CONFIG = {
@@ -226,51 +226,122 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   goals: Goal[];
   courses: Course[];
   resources: CourseResource[];
+  files: StudyFile[];
+  notes: StudyNote[];
+  research: ResearchItem[];
+  aiMemory: AIMemoryItem[];
+  conversations: AIConversation[];
+  notifications: NotificationItem[];
+  quizzes: CourseQuiz[];
+  flashcards: CourseFlashcard[];
+  annotations: ResourceAnnotation[];
+  metrics: ProgressMetrics | null;
   calendarSync: GoogleCalendarSyncState | null;
 }> {
-  try {
-    const userDoc = await getDoc(doc(db, 'users', userId));
-    const profile = userDoc.exists() ? (userDoc.data() as UserProfile) : null;
-
-    // Fetch tasks
-    const tasksSnapshot = await getDocs(collection(db, 'users', userId, 'tasks'));
-    const tasks: Task[] = [];
-    tasksSnapshot.forEach((d) => tasks.push(d.data() as Task));
-
-    // Fetch schedule
-    const scheduleSnapshot = await getDocs(collection(db, 'users', userId, 'schedule'));
-    const schedule: ScheduleEvent[] = [];
-    scheduleSnapshot.forEach((d) => schedule.push(d.data() as ScheduleEvent));
-
-    // Fetch goals
-    const goalsSnapshot = await getDocs(collection(db, 'users', userId, 'goals'));
-    const goals: Goal[] = [];
-    goalsSnapshot.forEach((d) => goals.push(d.data() as Goal));
-
-    // Fetch course workspaces
-    const coursesSnapshot = await getDocs(collection(db, 'users', userId, 'courses'));
-    const courses: Course[] = [];
-    coursesSnapshot.forEach((d) => courses.push(d.data() as Course));
-
-    // Fetch course resources
-    const resourcesSnapshot = await getDocs(collection(db, 'users', userId, 'resources'));
-    const resources: CourseResource[] = [];
-    resourcesSnapshot.forEach((d) => resources.push(d.data() as CourseResource));
-
-    // Fetch Google Calendar integration state
-    let calendarSync: GoogleCalendarSyncState | null = null;
+  // Small helpers so every collection can be fetched in parallel — a
+  // sequential chain of getDocs() would take many round trips on mobile.
+  //
+  // Every read is independent and never throws. A single failing
+  // collection must not reject the whole restore: with a bare
+  // Promise.all, one error turned the entire result into all-empty,
+  // which made a returning user look like a brand-new account and
+  // sent them back through onboarding. Each read now degrades to its
+  // empty value on its own so the rest of the data still loads.
+  const readCol = async <T,>(name: string): Promise<T[]> => {
     try {
-      const syncDoc = await getDoc(doc(db, 'users', userId, 'integrations', 'googleCalendar'));
-      if (syncDoc.exists()) calendarSync = syncDoc.data() as GoogleCalendarSyncState;
+      const snap = await getDocs(collection(db, 'users', userId, name));
+      const out: T[] = [];
+      snap.forEach((d) => out.push(d.data() as T));
+      return out;
     } catch (err) {
-      console.warn('Failed to read Google Calendar sync state:', err);
+      console.warn(
+        `[Firestore] Restore: failed to read '${name}' for ${userId}:`,
+        err,
+      );
+      return [];
     }
+  };
+  const readDoc = async <T,>(...segments: string[]): Promise<T | null> => {
+    try {
+      const snap = await getDoc(doc(db, 'users', userId, ...segments));
+      return snap.exists() ? (snap.data() as T) : null;
+    } catch (err) {
+      console.warn(
+        `[Firestore] Restore: failed to read ${segments.join('/')} for ${userId}:`,
+        err,
+      );
+      return null;
+    }
+  };
 
-    return { profile, tasks, schedule, goals, courses, resources, calendarSync };
-  } catch (err) {
-    console.warn('Error fetching Firestore data:', err);
-    return { profile: null, tasks: [], schedule: [], goals: [], courses: [], resources: [], calendarSync: null };
-  }
+  const [
+    userDoc,
+    tasks,
+    schedule,
+    goals,
+    courses,
+    resources,
+    files,
+    notes,
+    research,
+    aiMemory,
+    conversations,
+    notifications,
+    quizzes,
+    flashcards,
+    annotations,
+    metrics,
+    calendarSync,
+  ] = await Promise.all([
+    readDoc<UserProfile>(),
+    readCol<Task>('tasks'),
+    readCol<ScheduleEvent>('schedule'),
+    readCol<Goal>('goals'),
+    readCol<Course>('courses'),
+    readCol<CourseResource>('resources'),
+    readCol<StudyFile>('files'),
+    readCol<StudyNote>('notes'),
+    readCol<ResearchItem>('research'),
+    readCol<AIMemoryItem>('aiMemory'),
+    readCol<AIConversation>('conversations'),
+    readCol<NotificationItem>('notifications'),
+    readCol<CourseQuiz>('quizzes'),
+    readCol<CourseFlashcard>('flashcards'),
+    readCol<ResourceAnnotation>('annotations'),
+    readDoc<ProgressMetrics>('metrics', 'current'),
+    readDoc<GoogleCalendarSyncState>('integrations', 'googleCalendar'),
+  ]);
+
+  const profile = userDoc;
+
+  console.log('[Firestore] Restore snapshot for', userId, {
+    hasProfile: Boolean(profile),
+    isOnboarded: profile?.isOnboarded,
+    tasks: tasks.length,
+    courses: courses.length,
+    goals: goals.length,
+    schedule: schedule.length,
+  });
+
+  return {
+    profile,
+    tasks,
+    schedule,
+    goals,
+    courses,
+    resources,
+    files,
+    notes,
+    research,
+    aiMemory,
+    conversations,
+    notifications,
+    quizzes,
+    flashcards,
+    annotations,
+    metrics,
+    calendarSync,
+  };
 }
 
 export async function syncTasksToFirestore(userId: string, tasks: Task[]) {

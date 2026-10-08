@@ -28,6 +28,11 @@ class OfflineSyncService {
   private listeners: Set<StatusListener> = new Set();
   private debounceTimer: any = null;
   private retryTimer: any = null;
+  private flushPromise: Promise<{
+    success: boolean;
+    processed: number;
+    remaining: number;
+  }> | null = null;
 
   constructor() {
     this.loadFromStorage();
@@ -226,9 +231,23 @@ class OfflineSyncService {
   }
 
   /**
-   * Main synchronization worker
+   * Main synchronization worker. Concurrent callers (debounced
+   * flush, network-restored flush, manual syncNow, logout) all
+   * coalesce onto the same in-flight run — a second flush()
+   * while one is running now WAITS for it instead of returning
+   * early. Logout depends on this: it must not sign the user
+   * out while writes are still in flight, or the Firestore
+   * token is invalidated mid-write and the item is lost.
    */
-  private async flush(): Promise<{ success: boolean; processed: number; remaining: number }> {
+  private flush(): Promise<{ success: boolean; processed: number; remaining: number }> {
+    if (this.flushPromise) return this.flushPromise;
+    this.flushPromise = this.runFlush().finally(() => {
+      this.flushPromise = null;
+    });
+    return this.flushPromise;
+  }
+
+  private async runFlush(): Promise<{ success: boolean; processed: number; remaining: number }> {
     if (this.isSyncing) {
       return { success: false, processed: 0, remaining: this.queue.length };
     }
@@ -246,11 +265,16 @@ class OfflineSyncService {
     }
 
     this.isSyncing = true;
-    this.lastError = null;
+    // NOTE: lastError is deliberately NOT cleared here. Clearing it
+    // upfront let a flush that only dropped failing items report a
+    // clean state afterwards, so the badge showed green "Synced"
+    // right after data had been lost. It is cleared only when at
+    // least one item actually syncs (see processedCount below).
     this.notifySubscribers();
 
     let processedCount = 0;
     const itemsToProcess = [...this.queue];
+    let sawPermissionError = false;
 
     for (const item of itemsToProcess) {
       // If we went offline mid-sync, halt
@@ -286,6 +310,24 @@ class OfflineSyncService {
           break; // Stop loop and wait for connection restoration
         }
 
+        // Permission errors are permanent until the Firestore rules
+        // are fixed — and logout wipes the device copy, so dropping
+        // the item would silently lose the data. Keep it queued
+        // instead: it syncs automatically once rules are corrected,
+        // and the badge keeps showing the error in the meantime.
+        // Stop this pass since every remaining write fails identically.
+        const isPermissionErr =
+          errMsg.includes('permission-denied') ||
+          errMsg.includes('PERMISSION_DENIED') ||
+          errMsg.includes('insufficient permissions') ||
+          errMsg.includes('Missing or insufficient permissions');
+        if (isPermissionErr) {
+          sawPermissionError = true;
+          item.lastError = errMsg;
+          this.saveToStorage();
+          break;
+        }
+
         // Increment retry count
         item.retryCount = (item.retryCount || 0) + 1;
         item.lastError = errMsg;
@@ -301,6 +343,10 @@ class OfflineSyncService {
     this.isSyncing = false;
     if (processedCount > 0) {
       this.lastSyncedAt = new Date().toISOString();
+      // At least one write reached Firestore, so any earlier
+      // error is resolved. (A flush that processed nothing keeps
+      // its error visible — see the note above.)
+      this.lastError = null;
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem(LAST_SYNCED_KEY, this.lastSyncedAt);
       }
@@ -308,11 +354,13 @@ class OfflineSyncService {
 
     this.notifySubscribers();
 
-    // If items still remain and we are online, schedule a backoff retry
+    // If items still remain and we are online, schedule a backoff retry.
+    // Permission errors are permanent until rules change, so they back
+    // off to once a minute instead of hammering Firestore every 5s.
     if (this.queue.length > 0 && this.isOnline) {
       this.retryTimer = setTimeout(() => {
         void this.flush();
-      }, 5000);
+      }, sawPermissionError ? 60_000 : 5_000);
     }
 
     return {

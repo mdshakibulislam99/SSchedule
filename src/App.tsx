@@ -8,7 +8,6 @@ import confetti from 'canvas-confetti';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
-import { RefreshCw } from 'lucide-react';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
 import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
@@ -86,13 +85,15 @@ import {
   CourseFlashcard,
   GoogleCalendarSyncState,
   AppUpdateCheckResult,
+  AIConversation,
 } from './types';
-import { StudyStorage, ThemeMode } from './utils/storage';
+import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
 import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
+import { useCloudDeleteSync } from './hooks/useCloudDeleteSync';
 import { AppUpdateService } from './services/appUpdateService';
 import {
   initNotifications,
@@ -231,6 +232,22 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<AppUpdateCheckResult | null>(null);
   const [isGraceModalDismissed, setIsGraceModalDismissed] = useState(false);
 
+  // Mirror local deletions into Firestore for every cloud-synced collection,
+  // so items removed here don't resurrect on the next restore.
+  useCloudDeleteSync(tasks, 'tasks', firebaseUser);
+  useCloudDeleteSync(schedule, 'schedule', firebaseUser);
+  useCloudDeleteSync(courses, 'courses', firebaseUser);
+  useCloudDeleteSync(resources, 'resources', firebaseUser);
+  useCloudDeleteSync(goals, 'goals', firebaseUser);
+  useCloudDeleteSync(files, 'files', firebaseUser);
+  useCloudDeleteSync(notes, 'notes', firebaseUser);
+  useCloudDeleteSync(research, 'research', firebaseUser);
+  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser);
+  useCloudDeleteSync(notifications, 'notifications', firebaseUser);
+  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser);
+  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser);
+  useCloudDeleteSync(annotations, 'annotations', firebaseUser);
+
   const checkAppUpdates = async () => {
     try {
       const res = await AppUpdateService.checkAppVersion();
@@ -272,7 +289,13 @@ export default function App() {
     showToast('Sample demo data loaded (CS101, assignments & schedule).');
   };
 
-  const handleClearAllData = () => {
+  /**
+   * Wipes every local trace of the current user from this device: all study
+   * data in localStorage and in memory, calendar sync, and navigation /
+   * selection state. Shared by the "reset to clean state" action and by
+   * full logout.
+   */
+  const resetLocalAppState = () => {
     StudyStorage.clearAllData();
     setUser(StudyStorage.getUser());
     setCourses([]);
@@ -289,10 +312,25 @@ export default function App() {
     setAIMemory([]);
     setNotifications([]);
     setMetrics(StudyStorage.getMetrics());
+    setCalendarSync(INITIAL_CALENDAR_SYNC);
     setSelectedTask(null);
     setSelectedCourseId(null);
     setSelectedResourceId(null);
     setSelectedFileForChat(null);
+    setChatAttachedTask(null);
+    setTaskCourseFilter(undefined);
+    setCurrentTab('home');
+    setActiveSubScreen(null); // also clears the sub-screen back stack
+    setIsQuickActionsOpen(false);
+    setIsVoiceModalOpen(false);
+    setIsWeekPlannerOpen(false);
+    setIsAIMemoryOpen(false);
+    setIsTaskComposerOpen(false);
+    setIsAISetupPromptOpen(false);
+  };
+
+  const handleClearAllData = () => {
+    resetLocalAppState();
     setShowOnboarding(true);
     showToast('Clean student mode active. All mock data cleared.');
   };
@@ -375,6 +413,62 @@ export default function App() {
     });
   }, []);
 
+  // Tracks the conversation ids known to the signed-in user so deleted chats
+  // are removed from Firestore too (see handleConversationsSaved below).
+  const conversationsIdsRef = useRef<Set<string> | null>(null);
+
+  // True while the cloud-restore pass inside onAuthChange is running. The
+  // profile-sync effect is paused for this window so it never pushes the stale
+  // local profile (e.g. isOnboarded: false right after sign-out) back to the
+  // cloud on top of the freshly restored one.
+  const restoreInFlightRef = useRef(false);
+
+  // Last-synced content signature per "<collection>:<id>". Lets every
+  // sync effect push only the items that actually changed instead of
+  // re-uploading an entire collection on every single edit (which made
+  // adding one task re-queue and re-write all of them, one Firestore
+  // write at a time, every time).
+  const syncedSigsRef = useRef<Map<string, string>>(new Map());
+  const itemSignature = (item: unknown) => JSON.stringify(item);
+  const changedItems = <T extends { id: string }>(
+    collection: string,
+    items: T[]
+  ): T[] => {
+    const sigs = syncedSigsRef.current;
+    const changed: T[] = [];
+    for (const item of items) {
+      const key = `${collection}:${item.id}`;
+      if (sigs.get(key) !== itemSignature(item)) changed.push(item);
+    }
+    return changed;
+  };
+  const markSynced = <T extends { id: string }>(
+    collection: string,
+    items: T[]
+  ) => {
+    const sigs = syncedSigsRef.current;
+    const prefix = `${collection}:`;
+    for (const key of [...sigs.keys()]) {
+      if (key.startsWith(prefix)) sigs.delete(key);
+    }
+    for (const item of items) {
+      sigs.set(`${prefix}${item.id}`, itemSignature(item));
+    }
+  };
+  const handleConversationsSaved = (convs: AIConversation[]) => {
+    if (!firebaseUser) return;
+    const uid = firebaseUser.uid;
+    const nextIds = new Set(convs.map((c) => c.id));
+    const knownIds = conversationsIdsRef.current;
+    if (knownIds) {
+      knownIds.forEach((id) => {
+        if (!nextIds.has(id)) offlineSyncService.enqueueDelete(uid, 'conversations', id);
+      });
+    }
+    conversationsIdsRef.current = nextIds;
+    offlineSyncService.enqueueBatchUpsert(uid, 'conversations', convs.map((c) => ({ ...c })));
+  };
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthChange(async (fUser) => {
@@ -382,18 +476,72 @@ export default function App() {
       offlineSyncService.init(fUser ? fUser.uid : null);
       if (fUser) {
         setIsFirebaseSyncing(true);
+        restoreInFlightRef.current = true;
+        // Start each restore from a clean signature slate so
+        // stale entries from a previous account or session can't
+        // make a real edit look "already synced".
+        syncedSigsRef.current.clear();
         try {
+          // Apply any pending offline writes before reading, so the cloud
+          // snapshot below reflects the user's latest data. Without this,
+          // changes still sitting in the offline queue look like a brand
+          // new (empty) account and an existing user is wrongly sent to
+          // the onboarding screens.
+          const pendingCount = offlineSyncService
+            .getPendingQueue()
+            .filter((q) => q.userId === fUser.uid).length;
+          if (pendingCount > 0) {
+            await offlineSyncService.syncNow();
+          }
+
           const cloudData = await fetchUserDataFromFirestore(fUser.uid);
-          if (cloudData.profile) {
-            setUser((prev) => ({
-              ...prev,
+
+          const hasCloudData =
+            cloudData.tasks.length +
+              cloudData.courses.length +
+              cloudData.goals.length +
+              cloudData.schedule.length > 0;
+
+          // A returning account is one whose profile is marked onboarded,
+          // that has any study data in the cloud, or that still has
+          // pending offline changes. Any of these means the account is
+          // established, so we force isOnboarded and skip onboarding — a
+          // lost or corrupted flag can never strand an existing user on
+          // the setup screens. (We deliberately do NOT treat a bare
+          // profile doc as "returning": a brand-new account gets a
+          // profile with isOnboarded:false on its first sign-in, and
+          // that must still go through onboarding.)
+          const isReturningUser =
+            cloudData.profile?.isOnboarded === true ||
+            hasCloudData ||
+            pendingCount > 0;
+          if (isReturningUser && cloudData.profile) {
+            const restoredProfile: UserProfile = {
+              ...user,
               ...cloudData.profile,
-              email: fUser.email || prev.email,
-              name: fUser.displayName || prev.name,
+              email: fUser.email || user.email,
+              name: fUser.displayName || user.name,
               photoURL: fUser.photoURL || undefined,
               firebaseUid: fUser.uid,
               isFirebaseSynced: true,
-            }));
+              // A cloud profile only exists for established accounts, so a
+              // returning user here is always onboarded.
+              isOnboarded: true,
+            };
+            setUser(restoredProfile);
+            // Persist the healed profile so isOnboarded stays correct in the cloud
+            // and we never re-corrupt it with a stale local copy.
+            void syncUserProfileToFirestore(fUser.uid, restoredProfile);
+          } else if (isReturningUser) {
+            // Study data exists but no profile doc — restore an onboarded profile.
+            const restoredProfile: UserProfile = {
+              ...user,
+              firebaseUid: fUser.uid,
+              isFirebaseSynced: true,
+              isOnboarded: true,
+            };
+            setUser(restoredProfile);
+            void syncUserProfileToFirestore(fUser.uid, restoredProfile);
           } else {
             await syncUserProfileToFirestore(fUser.uid, {
               ...user,
@@ -407,19 +555,121 @@ export default function App() {
             await syncScheduleToFirestore(fUser.uid, schedule);
             await syncCoursesToFirestore(fUser.uid, courses);
             await syncResourcesToFirestore(fUser.uid, resources);
+            // First sign-in on this account: any local data already on
+            // the device must be pushed up too. The diff-based sync
+            // effects are paused for the whole restore pass and never
+            // re-run for state that didn't change, so without this the
+            // remaining slices would stay device-only until their first
+            // edit. Empty slices no-op inside the enqueue helpers.
+            const safeLocalFiles = files.map((f) =>
+              f.dataUrl && f.dataUrl.length > 700_000
+                ? { ...f, dataUrl: undefined }
+                : { ...f },
+            );
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'files', safeLocalFiles);
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'notes', notes.map((n) => ({ ...n })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'research', research.map((r) => ({ ...r })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'aiMemory', aiMemory.map((m) => ({ ...m })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'notifications', notifications.map((n) => ({ ...n })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'quizzes', quizzes.map((q) => ({ ...q })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'flashcards', flashcards.map((f) => ({ ...f })));
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'annotations', annotations.map((a) => ({ ...a })));
+            offlineSyncService.enqueueUpsert(fUser.uid, 'metrics', 'current', { ...metrics });
+            const localConversations = StudyStorage.getConversations();
+            offlineSyncService.enqueueBatchUpsert(fUser.uid, 'conversations', localConversations.map((c) => ({ ...c })));
+            offlineSyncService.enqueueUpsert(fUser.uid, 'integrations', 'googleCalendar', calendarSync);
+            // First sign-in on this account: any local data already on
+            // the device was just pushed up — record it as synced so the
+            // diff-based effects don't re-queue it on the next edit.
+            markSynced('tasks', tasks);
+            markSynced('schedule', schedule);
+            markSynced('courses', courses);
+            markSynced('resources', resources);
+            markSynced('files', safeLocalFiles);
+            markSynced('notes', notes);
+            markSynced('research', research);
+            markSynced('aiMemory', aiMemory);
+            markSynced('notifications', notifications);
+            markSynced('quizzes', quizzes);
+            markSynced('flashcards', flashcards);
+            markSynced('annotations', annotations);
+            syncedSigsRef.current.set('metrics:current', itemSignature(metrics));
+            conversationsIdsRef.current = new Set(localConversations.map((c) => c.id));
           }
 
+          // Record what we just pulled from the cloud as already
+          // synced, so the diff-based sync effects only push items
+          // the user actually edits afterwards — never the whole
+          // restored dataset.
           if (cloudData.tasks && cloudData.tasks.length > 0) {
             setTasks(cloudData.tasks);
+            markSynced('tasks', cloudData.tasks);
           }
           if (cloudData.schedule && cloudData.schedule.length > 0) {
             setSchedule(cloudData.schedule);
+            markSynced('schedule', cloudData.schedule);
           }
           if (cloudData.courses && cloudData.courses.length > 0) {
             setCourses(cloudData.courses);
+            markSynced('courses', cloudData.courses);
           }
           if (cloudData.resources && cloudData.resources.length > 0) {
             setResources(cloudData.resources);
+            markSynced('resources', cloudData.resources);
+          }
+          if (cloudData.goals && cloudData.goals.length > 0) {
+            setGoals(cloudData.goals);
+            markSynced('goals', cloudData.goals);
+          }
+          if (cloudData.files && cloudData.files.length > 0) {
+            setFiles(cloudData.files);
+            // Match the signature the files effect uses (large base64
+            // payloads are stripped before they are ever synced).
+            const safeFiles = cloudData.files.map((f) =>
+              f.dataUrl && f.dataUrl.length > 700_000
+                ? { ...f, dataUrl: undefined }
+                : { ...f },
+            );
+            markSynced('files', safeFiles);
+          }
+          if (cloudData.notes && cloudData.notes.length > 0) {
+            setNotes(cloudData.notes);
+            markSynced('notes', cloudData.notes);
+          }
+          if (cloudData.research && cloudData.research.length > 0) {
+            setResearch(cloudData.research);
+            markSynced('research', cloudData.research);
+          }
+          if (cloudData.aiMemory && cloudData.aiMemory.length > 0) {
+            setAIMemory(cloudData.aiMemory);
+            markSynced('aiMemory', cloudData.aiMemory);
+          }
+          if (cloudData.notifications && cloudData.notifications.length > 0) {
+            setNotifications(cloudData.notifications);
+            markSynced('notifications', cloudData.notifications);
+          }
+          if (cloudData.quizzes && cloudData.quizzes.length > 0) {
+            setQuizzes(cloudData.quizzes);
+            markSynced('quizzes', cloudData.quizzes);
+          }
+          if (cloudData.flashcards && cloudData.flashcards.length > 0) {
+            setFlashcards(cloudData.flashcards);
+            markSynced('flashcards', cloudData.flashcards);
+          }
+          if (cloudData.annotations && cloudData.annotations.length > 0) {
+            setAnnotations(cloudData.annotations);
+            markSynced('annotations', cloudData.annotations);
+          }
+          if (cloudData.metrics) {
+            setMetrics(cloudData.metrics);
+            syncedSigsRef.current.set(
+              'metrics:current',
+              itemSignature(cloudData.metrics),
+            );
+          }
+          if (cloudData.conversations && cloudData.conversations.length > 0) {
+            StudyStorage.saveConversations(cloudData.conversations);
+            conversationsIdsRef.current = new Set(cloudData.conversations.map((c) => c.id));
           }
           if (cloudData.calendarSync) {
             setCalendarSync(cloudData.calendarSync);
@@ -430,51 +680,205 @@ export default function App() {
           console.warn('Sync load error:', e);
         } finally {
           setIsFirebaseSyncing(false);
+          restoreInFlightRef.current = false;
         }
+      } else {
+        // No authenticated account on this device. There is no local-only user
+        // mode: send the user to the login screen. Local data is deliberately
+        // left in place here and merged with the cloud copy after the next
+        // sign-in (the restore path above) — only the explicit logout action
+        // wipes the device.
+        setShowOnboarding(true);
       }
     });
     return () => unsub();
   }, []);
 
-  // Sync state to Firestore with resilient offline queuing
+  // Hide the onboarding/login flow whenever a Firebase user is signed in and
+  // their profile is already onboarded — whether that came from a cloud restore
+  // (onAuthChange listener) or from the local device. This covers every sign-in
+  // entry point (OnboardingFlow Google button, in-app Connect, redirect fallback)
+  // and prevents the user from being stuck on the onboarding screen after login.
   useEffect(() => {
-    if (firebaseUser) {
-      syncTasksToFirestore(firebaseUser.uid, tasks);
-      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'tasks', tasks);
+    if (firebaseUser && user.isOnboarded) {
+      setShowOnboarding(false);
+    }
+  }, [firebaseUser, user.isOnboarded]);
+
+  // Sync state to Firestore with resilient offline queuing
+  // NOTE: every sync effect below is gated by `!restoreInFlightRef.current`.
+  // During the cloud-restore pass the restored data is written straight into
+  // these state slices, which would otherwise fire these effects and re-queue
+  // the whole dataset back into the offline queue (a redundant flush on every
+  // app open). Pausing them for that window keeps syncs quiet and avoids
+  // re-writing data that is already in Firestore.
+  //
+  // changedItems() diff-checks each collection against the last-synced
+  // content signature, so editing one item only writes that item — adding a
+  // single task no longer re-uploads and re-writes the whole collection
+  // (which is what made the sync spinner run for a minute).
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('tasks', tasks);
+      if (changed.length > 0) {
+        syncTasksToFirestore(firebaseUser.uid, changed);
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'tasks', changed);
+      }
+      markSynced('tasks', tasks);
     }
   }, [tasks, firebaseUser]);
 
   useEffect(() => {
-    if (firebaseUser) {
-      syncScheduleToFirestore(firebaseUser.uid, schedule);
-      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'schedule', schedule);
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('schedule', schedule);
+      if (changed.length > 0) {
+        syncScheduleToFirestore(firebaseUser.uid, changed);
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'schedule', changed);
+      }
+      markSynced('schedule', schedule);
     }
   }, [schedule, firebaseUser]);
 
   useEffect(() => {
-    if (firebaseUser) {
-      syncCoursesToFirestore(firebaseUser.uid, courses);
-      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'courses', courses);
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('courses', courses);
+      if (changed.length > 0) {
+        syncCoursesToFirestore(firebaseUser.uid, changed);
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'courses', changed);
+      }
+      markSynced('courses', courses);
     }
   }, [courses, firebaseUser]);
 
   useEffect(() => {
-    if (firebaseUser) {
-      syncResourcesToFirestore(firebaseUser.uid, resources);
-      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'resources', resources);
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('resources', resources);
+      if (changed.length > 0) {
+        syncResourcesToFirestore(firebaseUser.uid, changed);
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'resources', changed);
+      }
+      markSynced('resources', resources);
     }
   }, [resources, firebaseUser]);
 
   useEffect(() => {
-    if (firebaseUser) {
-      offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'goals', goals);
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('goals', goals);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'goals', changed);
+      }
+      markSynced('goals', goals);
     }
   }, [goals, firebaseUser]);
 
   useEffect(() => {
-    if (firebaseUser) {
-      syncUserProfileToFirestore(firebaseUser.uid, user);
-      offlineSyncService.enqueueUpsert(firebaseUser.uid, 'profile', firebaseUser.uid, user);
+    if (firebaseUser && !restoreInFlightRef.current) {
+      // Firestore docs cap at 1MB — drop oversized inline base64 payloads but
+      // keep the IndexedDB key so the file entry itself still syncs.
+      const safeFiles = files.map((f) =>
+        f.dataUrl && f.dataUrl.length > 700_000
+          ? { ...f, dataUrl: undefined }
+          : { ...f },
+      );
+      const changed = changedItems('files', safeFiles);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'files', changed);
+      }
+      markSynced('files', safeFiles);
+    }
+  }, [files, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('notes', notes);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notes', changed.map((n) => ({ ...n })));
+      }
+      markSynced('notes', notes);
+    }
+  }, [notes, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('research', research);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'research', changed.map((r) => ({ ...r })));
+      }
+      markSynced('research', research);
+    }
+  }, [research, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('aiMemory', aiMemory);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'aiMemory', changed.map((m) => ({ ...m })));
+      }
+      markSynced('aiMemory', aiMemory);
+    }
+  }, [aiMemory, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('notifications', notifications);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notifications', changed.map((n) => ({ ...n })));
+      }
+      markSynced('notifications', notifications);
+    }
+  }, [notifications, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('quizzes', quizzes);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'quizzes', changed.map((q) => ({ ...q })));
+      }
+      markSynced('quizzes', quizzes);
+    }
+  }, [quizzes, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('flashcards', flashcards);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'flashcards', changed.map((f) => ({ ...f })));
+      }
+      markSynced('flashcards', flashcards);
+    }
+  }, [flashcards, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const changed = changedItems('annotations', annotations);
+      if (changed.length > 0) {
+        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'annotations', changed.map((a) => ({ ...a })));
+      }
+      markSynced('annotations', annotations);
+    }
+  }, [annotations, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      // Progress metrics live in a single "current" doc per user.
+      const key = 'metrics:current';
+      const sig = itemSignature(metrics);
+      if (syncedSigsRef.current.get(key) !== sig) {
+        syncedSigsRef.current.set(key, sig);
+        offlineSyncService.enqueueUpsert(firebaseUser.uid, 'metrics', 'current', { ...metrics });
+      }
+    }
+  }, [metrics, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      const key = 'profile:current';
+      const sig = itemSignature(user);
+      if (syncedSigsRef.current.get(key) !== sig) {
+        syncedSigsRef.current.set(key, sig);
+        syncUserProfileToFirestore(firebaseUser.uid, user);
+        offlineSyncService.enqueueUpsert(firebaseUser.uid, 'profile', firebaseUser.uid, user);
+      }
     }
   }, [user, firebaseUser]);
 
@@ -484,6 +888,7 @@ export default function App() {
       const fUser = await signInWithGoogle();
       if (fUser) {
         showToast(`Signed in with Google as ${fUser.displayName || fUser.email}`);
+        setShowOnboarding(false);
         setCurrentTab('home');
         setActiveSubScreen(null);
       }
@@ -503,21 +908,51 @@ export default function App() {
     }
   };
 
+  /**
+   * The single logout path for the whole app: end the Google/Firebase session
+   * (plus Puter and calendar), wipe the device copy of the account data, and
+   * drop the user on the login screen. Cloud-synced data stays in Firestore and
+   * is restored on the next sign-in, so "log out -> log in" brings everything
+   * back. When no account is signed in (defensive case) the local data is left
+   * untouched and the user is still sent to the login screen — there is no
+   * local-only session in this app.
+   */
   const handleSignOut = async () => {
-    try {
-      await signOutUser();
-      setFirebaseUser(null);
-      offlineSyncService.setActiveUser(null);
-      setUser((prev) => ({
-        ...prev,
-        isFirebaseSynced: false,
-        firebaseUid: undefined,
-        photoURL: undefined,
-      }));
-      showToast('Signed out of Google account.');
-    } catch (err) {
-      console.error(err);
+    const confirmed = window.confirm(
+      firebaseUser
+        ? 'Log out and clear all data stored on this device?\n\nAnything synced to your Google account will come back when you sign in again.'
+        : 'Log out and return to the login page?'
+    );
+    if (!confirmed) return;
+
+    if (firebaseUser) {
+      // Push any pending offline writes to Firestore before the session ends.
+      try {
+        await offlineSyncService.syncNow();
+      } catch (err) {
+        console.warn('Offline queue flush before logout failed:', err);
+      }
+
+      try {
+        await signOutUser();
+      } catch (err) {
+        console.error('Firebase sign-out failed:', err);
+      }
     }
+    try {
+      await AIService.signOutPuter();
+    } catch (err) {
+      console.warn('Puter sign-out failed:', err);
+    }
+    if (calendarSync.connected) {
+      void gcal.disconnect().catch(() => undefined);
+    }
+    setAIConfig((prev) => ({ ...prev, puterUser: null }));
+    setFirebaseUser(null);
+    offlineSyncService.setActiveUser(null);
+    // Only wipe the device when the data is backed up by the signed-in account.
+    if (firebaseUser) resetLocalAppState();
+    setShowOnboarding(true); // login page (OnboardingFlow, step 1)
   };
 
   // Sync to local storage
@@ -558,7 +993,7 @@ export default function App() {
   }, [calendarSync]);
 
   useEffect(() => {
-    if (firebaseUser) {
+    if (firebaseUser && !restoreInFlightRef.current) {
       syncGoogleCalendarStateToFirestore(firebaseUser.uid, calendarSync);
       offlineSyncService.enqueueUpsert(firebaseUser.uid, 'integrations', 'googleCalendar', calendarSync);
     }
@@ -2233,6 +2668,7 @@ export default function App() {
             user={user}
             aiConfigured={isAIProviderConfigured(aiConfig)}
             onAISetupRequired={() => setIsAISetupPromptOpen(true)}
+            onConversationsSaved={handleConversationsSaved}
           />
         );
 
@@ -2391,16 +2827,10 @@ export default function App() {
               </div>
             )}
 
-            {offlineSync.isOnline && offlineSync.isSyncing && (
-              <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-sm z-30 shrink-0 border-b border-indigo-700 animate-pulse">
-                <div className="flex items-center gap-2 truncate">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  <span className="truncate">
-                    Restoring connection — Synchronizing offline changes with Firestore ({offlineSync.pendingCount} remaining)...
-                  </span>
-                </div>
-              </div>
-            )}
+            {/* Cloud sync now runs silently in the background — no
+                "synchronizing" banner. The offline banner above still
+                appears when there's no connection and changes are
+                queued locally. */}
 
             {/* Scrollable Viewport Content */}
             <div

@@ -490,6 +490,14 @@ export type OfflineSyncCollection =
   | 'goals'
   | 'files'
   | 'notes'
+  | 'research'
+  | 'aiMemory'
+  | 'conversations'
+  | 'notifications'
+  | 'metrics'
+  | 'quizzes'
+  | 'flashcards'
+  | 'annotations'
   | 'profile'
   | 'integrations';
 
