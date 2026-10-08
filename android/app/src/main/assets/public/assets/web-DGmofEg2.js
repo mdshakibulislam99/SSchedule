@@ -1,1 +1,0 @@
-import{u as e}from"./index-CIVQZ1sR.js";var t=class extends e{async show(e){}async hide(e){}};export{t as SplashScreenWeb};

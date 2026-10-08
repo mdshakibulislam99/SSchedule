@@ -20,6 +20,7 @@ import {
   createAccountWithEmail,
   signInWithEmail,
   fetchUserDataFromFirestore,
+  syncUserProfileToFirestore,
 } from '../../lib/firebase';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -104,22 +105,21 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     );
   };
 
-  // After any successful sign-in (Google or email): a returning account that
-  // already completed onboarding skips the setup steps entirely and lands in
-  // the app with its cloud profile restored (tasks/courses/etc. are restored
-  // by App's auth listener). Brand-new accounts continue into the study setup
-  // steps. There is no guest path.
-  const proceedAfterAuth = async (fUser: FirebaseUser, message: string) => {
+  // After any successful sign-in (Google or email): a returning / old account that
+  // already completed onboarding or has an existing account skips the setup steps entirely
+  // and lands in the app with its cloud profile restored. Only genuinely NEW accounts
+  // continue into the study setup steps (3, 4, 5).
+  const proceedAfterAuth = async (
+    fUser: FirebaseUser,
+    message: string,
+    isNewSignup: boolean = false
+  ) => {
     setFirebaseUid(fUser.uid);
     if (fUser.email) setAuthEmail(fUser.email);
     if (fUser.displayName) setName(fUser.displayName);
     if (fUser.photoURL) setPhotoURL(fUser.photoURL);
     setAuthSuccessMsg(message);
 
-    // Does this account already have an onboarded profile — or any study data —
-    // in Firestore? Either signal means a returning user who should skip setup.
-    // We don't rely on isOnboarded alone: if it was ever lost or left unset, the
-    // presence of synced data still proves the account is established.
     let cloudProfile: Partial<UserProfile> | null = null;
     let hasCloudData = false;
     try {
@@ -134,39 +134,62 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
       console.warn('Could not load existing cloud profile:', err);
     }
 
-    const isReturning =
-      Boolean(cloudProfile?.isOnboarded) ||
-      hasCloudData ||
-      Boolean(cloudProfile && (cloudProfile.name || cloudProfile.studyField));
+    // Determine if this is an existing / old account vs brand new registration:
+    // 1. User logged in via the "Log in" tab (not signing up)
+    // 2. Profile already marked onboarded in Firestore
+    // 3. User has any saved study data in Firestore (tasks, courses, etc.)
+    // 4. Firestore profile document exists
+    // 5. Firebase Auth metadata proves the user was created prior to this session
+    const isCreationRecent =
+      fUser.metadata?.creationTime &&
+      Math.abs(Date.now() - new Date(fUser.metadata.creationTime).getTime()) < 60000;
 
-    if (isReturning) {
-      // Returning user — skip setup and restore their saved profile choices.
+    const isOldAccount =
+      !isNewSignup && (
+        Boolean(cloudProfile?.isOnboarded) ||
+        hasCloudData ||
+        Boolean(cloudProfile && (cloudProfile.name || cloudProfile.studyField || cloudProfile.university)) ||
+        Boolean(cloudProfile) ||
+        step === 1 ||
+        (fUser.metadata?.creationTime &&
+          fUser.metadata?.lastSignInTime &&
+          fUser.metadata.creationTime !== fUser.metadata.lastSignInTime) ||
+        !isCreationRecent
+      );
+
+    if (isOldAccount) {
+      // Old account: skip setup completely and restore their saved profile choices
       const restored: UserProfile = {
         ...initialUser,
-        ...cloudProfile,
-        id: cloudProfile?.id || initialUser.id,
-        name: cloudProfile?.name || fUser.displayName || initialUser.name,
+        ...(cloudProfile || {}),
+        id: cloudProfile?.id || fUser.uid,
+        name: cloudProfile?.name || fUser.displayName || initialUser.name || 'Student',
         email: cloudProfile?.email || fUser.email || initialUser.email,
         avatarUrl: cloudProfile?.avatarUrl || initialUser.avatarUrl,
-        university: cloudProfile?.university || initialUser.university,
-        studyField: cloudProfile?.studyField || initialUser.studyField,
-        year: cloudProfile?.year || initialUser.year,
+        university: cloudProfile?.university || initialUser.university || '',
+        studyField: cloudProfile?.studyField || initialUser.studyField || 'Computer Science',
+        year: cloudProfile?.year || initialUser.year || '1st Year',
         goals:
           cloudProfile?.goals && cloudProfile.goals.length > 0
             ? cloudProfile.goals
-            : initialUser.goals,
+            : initialUser.goals || ['Finish assignments'],
         energyLevel: cloudProfile?.energyLevel ?? initialUser.energyLevel,
         photoURL: cloudProfile?.photoURL || fUser.photoURL || undefined,
         firebaseUid: fUser.uid,
         isFirebaseSynced: true,
         isOnboarded: true,
       };
-      // Brief "Signed in!" feedback, then straight into the restored app.
-      window.setTimeout(() => onComplete(restored), 700);
+
+      // Ensure cloud has isOnboarded: true saved
+      void syncUserProfileToFirestore(fUser.uid, restored);
+
+      // Brief feedback, then directly into the app
+      window.setTimeout(() => onComplete(restored), 350);
       return;
     }
 
-    window.setTimeout(() => setStep(3), 700);
+    // Genuinely NEW account: proceed to onboarding steps (study field, goals, profile)
+    window.setTimeout(() => setStep(3), 500);
   };
 
   // Google Sign-In handler: Authentic Google Sign-In with Account Selection
@@ -177,7 +200,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     try {
       const fUser = await signInWithGoogle();
       if (fUser) {
-        await proceedAfterAuth(fUser, 'Signed in with Google!');
+        // If user was on Step 2 (Sign up tab), pass isSignup: true as potential new registration
+        const isSignup = step === 2;
+        await proceedAfterAuth(fUser, 'Signed in with Google!', isSignup);
       }
     } catch (err: any) {
       console.warn('Onboarding Google Auth error:', err);
@@ -215,7 +240,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
       const fUser = isSignup
         ? await createAccountWithEmail(authEmail.trim(), authPassword)
         : await signInWithEmail(authEmail.trim(), authPassword);
-      await proceedAfterAuth(fUser, isSignup ? 'Account created!' : 'Signed in!');
+      await proceedAfterAuth(fUser, isSignup ? 'Account created!' : 'Signed in!', isSignup);
     } catch (err: any) {
       console.warn('Email Auth error:', err);
       const code = String(err?.code || '');
@@ -233,8 +258,8 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     }
   };
 
-  const handleFinish = () => {
-    onComplete({
+  const handleFinish = async () => {
+    const completedUser: UserProfile = {
       ...initialUser,
       name: name.trim() || 'Student',
       email: authEmail.trim() || initialUser.email,
@@ -246,7 +271,14 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
       firebaseUid,
       photoURL,
       isFirebaseSynced: Boolean(firebaseUid),
-    });
+    };
+
+    if (firebaseUid) {
+      // Save completed onboarding profile to the cloud immediately
+      await syncUserProfileToFirestore(firebaseUid, completedUser);
+    }
+
+    onComplete(completedUser);
   };
 
   const switchAuthScreen = (target: 1 | 2) => {
@@ -400,7 +432,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                 <button
                   type="submit"
                   disabled={isAuthLoading}
-                  className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
+                  className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
                 >
                   {isAuthLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                   <span>{step === 1 ? 'Sign in' : 'Sign up'}</span>
@@ -426,7 +458,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
                   type="button"
                   onClick={handleGoogleAuth}
                   disabled={isAuthLoading}
-                  className="w-full py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold text-sm flex items-center justify-center gap-3 shadow-xs active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
+                  className="w-full py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold text-sm flex items-center justify-center gap-3 shadow-xs active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
                 >
                   {isAuthLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
@@ -657,7 +689,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         ) : step < 5 ? (
           <button
             onClick={() => setStep(step + 1)}
-            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer"
+            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
           >
             <span>Next</span>
             <ArrowRight className="w-4 h-4" />
@@ -665,7 +697,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         ) : (
           <button
             onClick={handleFinish}
-            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer"
+            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
           >
             <span>Start Studying with SSchedule</span>
             <Sparkles className="w-4 h-4" />

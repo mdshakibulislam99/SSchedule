@@ -498,41 +498,40 @@ export default function App() {
               cloudData.goals.length +
               cloudData.schedule.length > 0;
 
-          // A returning account is one whose profile is marked onboarded,
-          // that has any study data in the cloud, or has a profile document.
-          const isReturningUser =
-            cloudData.profile?.isOnboarded === true ||
-            hasCloudData ||
-            Boolean(cloudData.profile && (cloudData.profile.name || cloudData.profile.studyField)) ||
-            pendingCount > 0;
+          const isCreationRecent =
+            fUser.metadata?.creationTime &&
+            Math.abs(Date.now() - new Date(fUser.metadata.creationTime).getTime()) < 60000;
 
-          if (isReturningUser && cloudData.profile) {
+          // An existing / old account is one whose profile is marked onboarded,
+          // that has any study data in the cloud, has a profile document in Firestore,
+          // has pending offline operations, or was created prior to this session.
+          const isOldAccount =
+            cloudData.profile?.isOnboarded === true ||
+            Boolean(cloudData.profile) ||
+            hasCloudData ||
+            pendingCount > 0 ||
+            (fUser.metadata?.creationTime &&
+              fUser.metadata?.lastSignInTime &&
+              fUser.metadata.creationTime !== fUser.metadata.lastSignInTime) ||
+            !isCreationRecent;
+
+          if (isOldAccount) {
             const restoredProfile: UserProfile = {
               ...user,
-              ...cloudData.profile,
-              email: fUser.email || cloudData.profile.email || user.email,
-              name: fUser.displayName || cloudData.profile.name || user.name,
-              photoURL: fUser.photoURL || cloudData.profile.photoURL || undefined,
+              ...(cloudData.profile || {}),
+              email: fUser.email || cloudData.profile?.email || user.email,
+              name: fUser.displayName || cloudData.profile?.name || user.name || 'Student',
+              photoURL: fUser.photoURL || cloudData.profile?.photoURL || undefined,
               firebaseUid: fUser.uid,
               isFirebaseSynced: true,
               isOnboarded: true,
             };
             setUser(restoredProfile);
             StudyStorage.saveUser(restoredProfile);
-            void syncUserProfileToFirestore(fUser.uid, restoredProfile);
-          } else if (isReturningUser) {
-            // Study data exists but no profile doc — restore an onboarded profile.
-            const restoredProfile: UserProfile = {
-              ...user,
-              firebaseUid: fUser.uid,
-              isFirebaseSynced: true,
-              isOnboarded: true,
-            };
-            setUser(restoredProfile);
-            StudyStorage.saveUser(restoredProfile);
+            setShowOnboarding(false);
             void syncUserProfileToFirestore(fUser.uid, restoredProfile);
           } else {
-            const hasLocalData = tasks.length > 0 || courses.length > 0 || schedule.length > 0;
+            // Truly new account created during this active session
             const updatedProfile: UserProfile = {
               ...user,
               email: fUser.email || user.email,
@@ -540,25 +539,12 @@ export default function App() {
               photoURL: fUser.photoURL || undefined,
               firebaseUid: fUser.uid,
               isFirebaseSynced: true,
-              isOnboarded: user.isOnboarded || hasLocalData,
+              isOnboarded: false,
             };
             setUser(updatedProfile);
             StudyStorage.saveUser(updatedProfile);
-            await syncUserProfileToFirestore(fUser.uid, updatedProfile);
-
-            if (hasLocalData) {
-              await syncTasksToFirestore(fUser.uid, tasks);
-              await syncScheduleToFirestore(fUser.uid, schedule);
-              await syncCoursesToFirestore(fUser.uid, courses);
-              await syncResourcesToFirestore(fUser.uid, resources);
-              offlineSyncService.enqueueBatchUpsert(fUser.uid, 'goals', goals.map((g) => ({ ...g })));
-              markSynced('tasks', tasks);
-              markSynced('schedule', schedule);
-              markSynced('courses', courses);
-              markSynced('resources', resources);
-              markSynced('goals', goals);
-              setShowOnboarding(false);
-            }
+            setShowOnboarding(true);
+            void syncUserProfileToFirestore(fUser.uid, updatedProfile);
           }
 
           // Restore or merge tasks
@@ -694,8 +680,8 @@ export default function App() {
             StudyStorage.saveCalendarSync(cloudData.calendarSync);
           }
 
-          // For returning accounts with restored data, immediately dismiss onboarding
-          if (isReturningUser) {
+          // For returning / old accounts with restored data, immediately dismiss onboarding
+          if (isOldAccount) {
             setShowOnboarding(false);
           }
 
@@ -719,16 +705,12 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Hide the onboarding/login flow whenever a Firebase user is signed in and
-  // their profile is already onboarded — whether that came from a cloud restore
-  // (onAuthChange listener) or from the local device. This covers every sign-in
-  // entry point (OnboardingFlow Google button, in-app Connect, redirect fallback)
-  // and prevents the user from being stuck on the onboarding screen after login.
+  // Hide the onboarding flow whenever the user profile is marked as onboarded
   useEffect(() => {
-    if (firebaseUser && user.isOnboarded) {
+    if (user.isOnboarded) {
       setShowOnboarding(false);
     }
-  }, [firebaseUser, user.isOnboarded]);
+  }, [user.isOnboarded]);
 
   // Sync state to Firestore with resilient offline queuing
   // NOTE: every sync effect below is gated by `!restoreInFlightRef.current`.
@@ -2793,17 +2775,28 @@ export default function App() {
             <OnboardingFlow
               initialUser={user}
               onComplete={async (updatedUser) => {
-                setUser(updatedUser);
-                StudyStorage.saveUser(updatedUser);
+                const completeUser: UserProfile = {
+                  ...updatedUser,
+                  isOnboarded: true,
+                  isFirebaseSynced: Boolean(updatedUser.firebaseUid),
+                };
+                setUser(completeUser);
+                StudyStorage.saveUser(completeUser);
                 setShowOnboarding(false);
                 playChime('success');
-                if (updatedUser.firebaseUid) {
-                  await syncUserProfileToFirestore(updatedUser.firebaseUid, updatedUser);
-                  offlineSyncService.init(updatedUser.firebaseUid);
-                  if (tasks.length > 0) await syncTasksToFirestore(updatedUser.firebaseUid, tasks);
-                  if (schedule.length > 0) await syncScheduleToFirestore(updatedUser.firebaseUid, schedule);
-                  if (courses.length > 0) await syncCoursesToFirestore(updatedUser.firebaseUid, courses);
-                  if (resources.length > 0) await syncResourcesToFirestore(updatedUser.firebaseUid, resources);
+                if (completeUser.firebaseUid) {
+                  await syncUserProfileToFirestore(completeUser.firebaseUid, completeUser);
+                  offlineSyncService.init(completeUser.firebaseUid);
+                  offlineSyncService.enqueueUpsert(
+                    completeUser.firebaseUid,
+                    'profile',
+                    completeUser.firebaseUid,
+                    cleanForFirestore(completeUser)
+                  );
+                  if (tasks.length > 0) await syncTasksToFirestore(completeUser.firebaseUid, tasks);
+                  if (schedule.length > 0) await syncScheduleToFirestore(completeUser.firebaseUid, schedule);
+                  if (courses.length > 0) await syncCoursesToFirestore(completeUser.firebaseUid, courses);
+                  if (resources.length > 0) await syncResourcesToFirestore(completeUser.firebaseUid, resources);
                   void offlineSyncService.syncNow();
                 }
               }}
