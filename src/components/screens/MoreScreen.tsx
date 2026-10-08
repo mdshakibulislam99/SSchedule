@@ -54,7 +54,7 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
       </div>
 
       <p className="text-xs text-slate-400 dark:text-slate-500 pt-10">
-        SShedule v{CURRENT_APP_VERSION} (Build {CURRENT_BUILD_NUMBER})
+        SSchedule v{CURRENT_APP_VERSION} (Build {CURRENT_BUILD_NUMBER})
       </p>
     </div>
   );

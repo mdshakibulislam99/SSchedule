@@ -1,6 +1,6 @@
 {
   "name": "sschedule-functions",
-  "description": "SShedule backend: email OTP for in-app password reset",
+  "description": "SSchedule backend: email OTP for in-app password reset",
   "private": true,
   "main": "index.js",
   "engines": {

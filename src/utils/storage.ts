@@ -518,7 +518,7 @@ export const StudyStorage = {
 
   exportBackup(): string {
     const backup: Record<string, any> = {
-      app: 'SShedule',
+      app: 'SSchedule',
       version: '1.0',
       exportedAt: new Date().toISOString(),
     };

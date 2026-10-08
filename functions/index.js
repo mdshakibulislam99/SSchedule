@@ -1,5 +1,5 @@
 /**
- * SShedule — Cloud Functions
+ * SSchedule — Cloud Functions
  *
  * Email OTP for in-app password reset. The app flow is:
  *   1. requestPasswordResetOtp({ email })        -> generates a 6-digit code,
@@ -26,7 +26,7 @@ const CODE_TTL_MS = 10 * 60 * 1000; // code expires after 10 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // max 1 new code per email per minute
 const MAX_ATTEMPTS = 5; // max wrong guesses per code
 const TOKEN_TTL_MS = 5 * 60 * 1000; // verification token good for 5 minutes
-const APP_NAME = "SShedule";
+const APP_NAME = "SSchedule";
 const FROM_EMAIL = process.env.OTP_FROM_EMAIL || "onboarding@resend.dev";
 
 const sha256 = (value) =>

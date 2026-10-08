@@ -355,7 +355,7 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
                     Battery Optimization Exemption
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Tap to open Android settings and disable battery optimization for SShedule, so scheduled alarms fire even when the app is closed or the screen is off.
+                    Tap to open Android settings and disable battery optimization for SSchedule, so scheduled alarms fire even when the app is closed or the screen is off.
                   </div>
                 </div>
               </div>

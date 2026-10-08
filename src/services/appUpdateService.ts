@@ -248,7 +248,7 @@ export const AppUpdateService = {
         ? `Update Available (${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} left)`
         : config.title || 'New Update Available',
       message: isHardBlocked
-        ? `Your 7-day update grace period has ended. SShedule v${latest} is required to continue using the app.`
+        ? `Your 7-day update grace period has ended. SSchedule v${latest} is required to continue using the app.`
         : isGracePeriodActive
         ? `A new version (v${latest}) is available. You have ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'} remaining to update before this version stops working.`
         : config.message || 'A new version with performance improvements is available.',

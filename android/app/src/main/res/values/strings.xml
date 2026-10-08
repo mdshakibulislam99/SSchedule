@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">SShedule</string>
-    <string name="title_activity_main">SShedule</string>
+    <string name="app_name">SSchedule</string>
+    <string name="title_activity_main">SSchedule</string>
     <string name="package_name">com.sschedule.app</string>
     <string name="custom_url_scheme">com.sschedule.app</string>
 </resources>

@@ -74,10 +74,10 @@ function exportScheduleToICS(events: ScheduleEvent[]) {
   const icsLines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//SShedule//EN',
+    'PRODID:-//SSchedule//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:SShedule Schedule',
+    'X-WR-CALNAME:SSchedule Schedule',
   ];
 
   events.forEach((ev) => {

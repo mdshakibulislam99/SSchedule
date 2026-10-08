@@ -313,7 +313,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
               <MascotAvatar size={52} className="shrink-0" />
             </div>
             <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-              SShedule
+              SSchedule
             </h1>
           </div>
 
@@ -667,7 +667,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
             onClick={handleFinish}
             className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer"
           >
-            <span>Start Studying with SShedule</span>
+            <span>Start Studying with SSchedule</span>
             <Sparkles className="w-4 h-4" />
           </button>
         )}

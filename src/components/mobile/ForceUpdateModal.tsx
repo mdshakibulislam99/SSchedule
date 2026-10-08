@@ -170,7 +170,7 @@ export const ForceUpdateModal: React.FC<ForceUpdateModalProps> = ({
               />
             </div>
             <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-tight pt-0.5">
-              You can continue using SShedule right now. After {daysLeft} {daysLeft === 1 ? 'day' : 'days'}, updating will become mandatory.
+              You can continue using SSchedule right now. After {daysLeft} {daysLeft === 1 ? 'day' : 'days'}, updating will become mandatory.
             </p>
           </div>
         )}

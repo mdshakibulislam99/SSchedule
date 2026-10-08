@@ -1,11 +1,11 @@
 # Building the Android app
 
-ChronoPulse AI ships as a native Android app via [Capacitor](https://capacitorjs.com/).
+SSchedule ships as a native Android app via [Capacitor](https://capacitorjs.com/).
 The React/Vite web bundle is copied into the APK and served to the WebView from
 `https://localhost`, so the whole app works offline apart from the AI features.
 
 - **Application ID:** `com.sschedule.app`
-- **Display name:** ChronoPulse AI
+- **Display name:** SSchedule
 - **minSdk 24** (Android 7.0) · **target/compileSdk 36** (Android 16)
 
 ## Prerequisites

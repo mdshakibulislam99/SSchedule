@@ -1074,7 +1074,7 @@ export default function App() {
     const isQuiet = isWithinQuietHours(notificationSettings);
     const newNotif: NotificationItem = {
       id: `test-notif-${Date.now()}`,
-      title: '🔔 ChronoPulse Notification Test',
+      title: '🔔 SSchedule Notification Test',
       message: `Audio chimes: ${notificationSettings.soundEnabled ? 'Enabled' : 'Disabled'} · Notice: ${notificationSettings.advanceNoticeMinutes} min · System alerts: Active`,
       timestamp: 'Just now',
       read: false,
@@ -1280,7 +1280,7 @@ export default function App() {
         }
         // Prompt the user to exempt the app from battery optimization
         // so AlarmManager can wake the device for scheduled notifications
-        // even when SShedule is closed / swiped away / the phone is asleep
+        // even when SSchedule is closed / swiped away / the phone is asleep
         void requestBatteryOptimizationExemption();
       });
     }

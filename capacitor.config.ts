@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   // This id is also what the Firebase Android app + SHA-1 fingerprints are
   // registered against, so keep the three in sync.
   appId: 'com.sschedule.app',
-  appName: 'SShedule',
+  appName: 'SSchedule',
   // Vite outputs the production bundle here, and Capacitor copies it into
   // android/app/src/main/assets/public during `cap sync`.
   webDir: 'dist',

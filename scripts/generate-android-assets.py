@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ChronoPulse AI launcher icons and splash screens for Android.
+"""Generate SSchedule launcher icons and splash screens for Android.
 
 Dependency free: every asset is rasterised from signed-distance fields and
 encoded to PNG with zlib, so this runs on a stock macOS / CI machine without

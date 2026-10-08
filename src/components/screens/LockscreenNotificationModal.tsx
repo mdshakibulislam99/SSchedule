@@ -77,7 +77,7 @@ export const LockscreenNotificationModal: React.FC<LockscreenNotificationModalPr
                 <Sparkles className="w-3 h-3" />
               </div>
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                SShedule
+                SSchedule
               </span>
             </div>
             <span className="text-[10px] text-slate-400 font-mono">now</span>
@@ -103,7 +103,7 @@ export const LockscreenNotificationModal: React.FC<LockscreenNotificationModalPr
           }}
           className="text-xs font-semibold text-white/90 hover:text-white underline cursor-pointer"
         >
-          Swipe up or tap alert to open SShedule
+          Swipe up or tap alert to open SSchedule
         </button>
       </div>
     </div>

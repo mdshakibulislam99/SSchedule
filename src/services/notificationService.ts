@@ -60,7 +60,7 @@ export async function initNotifications(
       // Create high-priority reminder channel for Android 8.0+
       await LocalNotifications.createChannel({
         id: CHANNELS.REMINDERS,
-        name: 'SShedule Reminders',
+        name: 'SSchedule Reminders',
         description: 'High-priority alerts for study tasks, classes, and deadlines',
         importance: 5, // High importance (heads-up banner with sound & vibration)
         visibility: 1, // Public on lockscreen
@@ -72,7 +72,7 @@ export async function initNotifications(
       // Create general updates channel
       await LocalNotifications.createChannel({
         id: CHANNELS.GENERAL,
-        name: 'SShedule Updates & Briefings',
+        name: 'SSchedule Updates & Briefings',
         description: 'Daily briefings, AI recommendations, and summaries',
         importance: 4,
         visibility: 1,
@@ -360,7 +360,7 @@ export async function syncAllScheduledAlarms({
             upcomingNotifications.push({
               id: hashString(`task-dl-2h-${task.id}`),
               title: `⚠️ 2h Deadline Warning: ${task.title}`,
-              body: `This assignment is due in 2 hours! Open SShedule to wrap it up.`,
+              body: `This assignment is due in 2 hours! Open SSchedule to wrap it up.`,
               channelId: CHANNELS.REMINDERS,
               schedule: { at: new Date(twoHoursBefore), allowWhileIdle: true },
               extra: { type: 'task', taskId: task.id },
@@ -449,7 +449,7 @@ export async function syncAllScheduledAlarms({
         if (eveningMs > now) {
           upcomingNotifications.push({
             id: hashString(`evening-suggestion-${d.toDateString()}`),
-            title: `💡 SShedule AI: Evening Focus Wrap-up`,
+            title: `💡 SSchedule AI: Evening Focus Wrap-up`,
             body: `Review completed tasks, log focus streaks, and optimize tomorrow's plan.`,
             channelId: CHANNELS.GENERAL,
             schedule: { at: new Date(eveningMs), allowWhileIdle: true },
@@ -540,7 +540,7 @@ export async function areNotificationsSystemEnabled(): Promise<boolean> {
 
 /**
  * Open the Android system battery-optimization settings so the user can exempt
- * SShedule from Doze / app-standby restrictions.
+ * SSchedule from Doze / app-standby restrictions.
  *
  * Device manufacturers like Samsung, Xiaomi, Huawei, and Oppo apply aggressive
  * battery management that can silently kill AlarmManager wake-ups — preventing

@@ -1,5 +1,5 @@
 /**
- * SShedule - App Version and Semver Utility
+ * SSchedule - App Version and Semver Utility
  */
 
 export const CURRENT_APP_VERSION = '2.3.1';
