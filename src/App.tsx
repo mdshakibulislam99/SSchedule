@@ -61,6 +61,8 @@ import { MoreScreen } from './components/screens/MoreScreen';
 import { AIMemoryModal } from './components/screens/AIMemoryModal';
 import { AISetupPrompt } from './components/mobile/AISetupPrompt';
 import { ForceUpdateModal } from './components/mobile/ForceUpdateModal';
+import { LogoutConfirmModal } from './components/common/LogoutConfirmModal';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 import {
   UserProfile,
@@ -224,6 +226,8 @@ export default function App() {
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
   const [closeComposerSignal, setCloseComposerSignal] = useState(0);
   const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!user.isOnboarded);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -938,56 +942,58 @@ export default function App() {
    * untouched and the user is still sent to the login screen — there is no
    * local-only session in this app.
    */
-  const handleSignOut = async () => {
-    const confirmed = window.confirm(
-      firebaseUser
-        ? 'Log out and clear all data stored on this device?\n\nAnything synced to your Google account will come back when you sign in again.'
-        : 'Log out and return to the login page?'
-    );
-    if (!confirmed) return;
+  const handleSignOut = () => {
+    setIsLogoutModalOpen(true);
+  };
 
+  const executeSignOut = async () => {
+    setIsLoggingOut(true);
     isLoggingOutRef.current = true;
 
-    if (firebaseUser) {
-      // 1. Explicitly ensure all current state is pushed to Firestore before session terminates
-      try {
-        await syncUserProfileToFirestore(firebaseUser.uid, user);
-        if (tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
-        if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
-        if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
-        if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
-        await offlineSyncService.syncNow();
-      } catch (err) {
-        console.warn('Sync before logout failed:', err);
-      }
-
-      // 2. Clear pending offline queue for this user so no leftover delete operations execute later
-      offlineSyncService.clearQueue(firebaseUser.uid);
-
-      try {
-        await signOutUser();
-      } catch (err) {
-        console.error('Firebase sign-out failed:', err);
-      }
-    }
     try {
-      await AIService.signOutPuter();
-    } catch (err) {
-      console.warn('Puter sign-out failed:', err);
-    }
-    if (calendarSync.connected) {
-      void gcal.disconnect().catch(() => undefined);
-    }
-    setAIConfig((prev) => ({ ...prev, puterUser: null }));
-    setFirebaseUser(null);
-    offlineSyncService.setActiveUser(null);
-    // Wipe device copy only when backed up by the signed-in account
-    if (firebaseUser) resetLocalAppState();
-    setShowOnboarding(true); // return to login / auth page
+      if (firebaseUser) {
+        // 1. Explicitly ensure all current state is pushed to Firestore before session terminates
+        try {
+          await syncUserProfileToFirestore(firebaseUser.uid, user);
+          if (tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
+          if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
+          if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
+          if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
+          await offlineSyncService.syncNow();
+        } catch (err) {
+          console.warn('Sync before logout failed:', err);
+        }
 
-    setTimeout(() => {
-      isLoggingOutRef.current = false;
-    }, 600);
+        // 2. Clear pending offline queue for this user so no leftover delete operations execute later
+        offlineSyncService.clearQueue(firebaseUser.uid);
+
+        try {
+          await signOutUser();
+        } catch (err) {
+          console.error('Firebase sign-out failed:', err);
+        }
+      }
+      try {
+        await AIService.signOutPuter();
+      } catch (err) {
+        console.warn('Puter sign-out failed:', err);
+      }
+      if (calendarSync.connected) {
+        void gcal.disconnect().catch(() => undefined);
+      }
+      setAIConfig((prev) => ({ ...prev, puterUser: null }));
+      setFirebaseUser(null);
+      offlineSyncService.setActiveUser(null);
+      // Wipe device copy only when backed up by the signed-in account
+      if (firebaseUser) resetLocalAppState();
+      setShowOnboarding(true); // return to login / auth page
+      setIsLogoutModalOpen(false);
+    } finally {
+      setIsLoggingOut(false);
+      setTimeout(() => {
+        isLoggingOutRef.current = false;
+      }, 600);
+    }
   };
 
   // Sync to local storage
@@ -1290,10 +1296,6 @@ export default function App() {
             }
           });
         }
-        // Prompt the user to exempt the app from battery optimization
-        // so AlarmManager can wake the device for scheduled notifications
-        // even when SSchedule is closed / swiped away / the phone is asleep
-        void requestBatteryOptimizationExemption();
       });
     }
   }, []);
@@ -2787,24 +2789,26 @@ export default function App() {
       <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
-          <OnboardingFlow
-            initialUser={user}
-            onComplete={async (updatedUser) => {
-              setUser(updatedUser);
-              StudyStorage.saveUser(updatedUser);
-              setShowOnboarding(false);
-              playChime('success');
-              if (updatedUser.firebaseUid) {
-                await syncUserProfileToFirestore(updatedUser.firebaseUid, updatedUser);
-                offlineSyncService.init(updatedUser.firebaseUid);
-                if (tasks.length > 0) await syncTasksToFirestore(updatedUser.firebaseUid, tasks);
-                if (schedule.length > 0) await syncScheduleToFirestore(updatedUser.firebaseUid, schedule);
-                if (courses.length > 0) await syncCoursesToFirestore(updatedUser.firebaseUid, courses);
-                if (resources.length > 0) await syncResourcesToFirestore(updatedUser.firebaseUid, resources);
-                void offlineSyncService.syncNow();
-              }
-            }}
-          />
+          <ErrorBoundary fallbackTitle="Welcome Screen">
+            <OnboardingFlow
+              initialUser={user}
+              onComplete={async (updatedUser) => {
+                setUser(updatedUser);
+                StudyStorage.saveUser(updatedUser);
+                setShowOnboarding(false);
+                playChime('success');
+                if (updatedUser.firebaseUid) {
+                  await syncUserProfileToFirestore(updatedUser.firebaseUid, updatedUser);
+                  offlineSyncService.init(updatedUser.firebaseUid);
+                  if (tasks.length > 0) await syncTasksToFirestore(updatedUser.firebaseUid, tasks);
+                  if (schedule.length > 0) await syncScheduleToFirestore(updatedUser.firebaseUid, schedule);
+                  if (courses.length > 0) await syncCoursesToFirestore(updatedUser.firebaseUid, courses);
+                  if (resources.length > 0) await syncResourcesToFirestore(updatedUser.firebaseUid, resources);
+                  void offlineSyncService.syncNow();
+                }
+              }}
+            />
+          </ErrorBoundary>
         ) : (
           <div className="w-full flex-1 flex flex-col justify-between overflow-hidden">
             {/* In-app Toast Notification Banner */}
@@ -2967,6 +2971,19 @@ export default function App() {
           onCheckAgain={checkAppUpdates}
           onContinueWithGrace={() => setIsGraceModalDismissed(true)}
           onDismissOptional={() => setUpdateInfo(null)}
+        />
+
+        {/* Custom In-App Log Out Confirmation Popup */}
+        <LogoutConfirmModal
+          isOpen={isLogoutModalOpen}
+          onClose={() => {
+            if (!isLoggingOut) setIsLogoutModalOpen(false);
+          }}
+          onConfirm={executeSignOut}
+          isLoggingOut={isLoggingOut}
+          userName={user.name}
+          userEmail={firebaseUser?.email || user.email}
+          isCloudSynced={Boolean(firebaseUser)}
         />
       </div>
     </div>

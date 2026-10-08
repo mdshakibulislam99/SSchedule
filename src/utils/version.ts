@@ -8,8 +8,8 @@
  * together when shipping a release; no update-logic edits are ever needed.
  */
 
-export const CURRENT_APP_VERSION = '3.0.0';
-export const CURRENT_BUILD_NUMBER = 9;
+export const CURRENT_APP_VERSION = '3.1.0';
+export const CURRENT_BUILD_NUMBER = 10;
 
 /**
  * Compare two semver strings (e.g., '1.0.0' vs '1.0.1')

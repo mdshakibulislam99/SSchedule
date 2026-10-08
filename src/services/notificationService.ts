@@ -547,16 +547,7 @@ export async function areNotificationsSystemEnabled(): Promise<boolean> {
  * scheduled notifications from firing when the app is closed or the screen is off.
  */
 export async function requestBatteryOptimizationExemption(): Promise<boolean> {
-  if (!Capacitor.isNativePlatform()) return false;
-  if (Capacitor.getPlatform() !== 'android') return false;
-
-  try {
-    // intent:// URL intercepted by the Android WebView → opens system battery settings
-    window.open('intent://settings/actionRequestIgnoreBatteryOptimizations#Intent;scheme=package;end', '_blank');
-    return true;
-  } catch (err) {
-    console.warn('Failed to open battery optimization settings:', err);
-    return false;
-  }
+  // Do not invoke window.open with intent:// schemes in WebView as it causes blank screen overlay
+  return false;
 }
 

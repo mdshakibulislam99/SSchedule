@@ -34,12 +34,12 @@ import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleC
 
 // The verified Firebase project configuration provided by the user
 export const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAhuWqsgKLqmHshi34kez6yZ6UW7mvjcp8",
-  authDomain: "gen-lang-client-0201565741.firebaseapp.com",
-  projectId: "gen-lang-client-0201565741",
-  storageBucket: "gen-lang-client-0201565741.firebasestorage.app",
-  messagingSenderId: "830377325312",
-  appId: "1:830377325312:web:06a94ca286c4b1a8fc79e5",
+  apiKey: (firebaseConfigFile as any).apiKey || "AIzaSyAhuWqsgKLqmHshi34kez6yZ6UW7mvjcp8",
+  authDomain: (firebaseConfigFile as any).authDomain || "gen-lang-client-0201565741.firebaseapp.com",
+  projectId: (firebaseConfigFile as any).projectId || "gen-lang-client-0201565741",
+  storageBucket: (firebaseConfigFile as any).storageBucket || "gen-lang-client-0201565741.firebasestorage.app",
+  messagingSenderId: (firebaseConfigFile as any).messagingSenderId || "830377325312",
+  appId: (firebaseConfigFile as any).appId || "1:830377325312:web:06a94ca286c4b1a8fc79e5",
   firestoreDatabaseId: (firebaseConfigFile as any).firestoreDatabaseId || "ai-studio-chronopulseaisma-1e7ab4a8-1e54-4bf9-a7ac-a1fda5873d72",
   oAuthClientId: (firebaseConfigFile as any).oAuthClientId || "830377325312-6lfn62e4ev345tvd4u61cd4bc45l92ol.apps.googleusercontent.com",
 };
