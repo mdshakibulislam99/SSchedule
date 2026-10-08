@@ -39,6 +39,7 @@ export function useGoogleCalendarSync({
   const stateRef = useRef(calendarSync);
   const outboxRef = useRef<CalendarOutboxItem[]>(StudyStorage.getCalendarOutbox());
   const busyRef = useRef(false);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
     scheduleRef.current = schedule;
@@ -144,6 +145,22 @@ export function useGoogleCalendarSync({
     stateRef.current = next;
     setCalendarSync(next);
   }, [persistOutbox, setSchedule, setCalendarSync]);
+
+  useEffect(() => {
+    if (!calendarSync.connected || initializedRef.current) return;
+
+    const initSync = async () => {
+      initializedRef.current = true;
+      try {
+        // Silently restore the token cache without showing a popup.
+        await requestCalendarToken({ silent: true });
+      } catch {
+        // Token not available — user will see reconnect prompt on first sync attempt.
+      }
+      await syncNow();
+    };
+    void initSync();
+  }, [calendarSync.connected, syncNow]);
 
   useEffect(() => {
     if (!calendarSync.connected) return;

@@ -316,6 +316,7 @@ export interface GoogleCalendarEvent {
   updated?: string;
   colorId?: string;
   recurrence?: string[];
+  excludedDates?: { date: string }[];
   start?: { dateTime?: string; date?: string; timeZone?: string };
   end?: { dateTime?: string; date?: string; timeZone?: string };
   extendedProperties?: { private?: Record<string, string> };

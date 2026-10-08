@@ -42,6 +42,125 @@ const GOOGLE_COLOR_BY_TYPE: Record<ScheduleEventType, string> = {
   project: '7', // Peacock (blue)
 };
 
+/** Minimal RRULE parser for common recurrence patterns used by students. */
+interface RRuleRule {
+  freq: string;
+  interval: number;
+  count?: number;
+  until?: string;
+  byday?: string[];
+  dtstart: string;
+}
+
+const DAY_MAP: Record<string, number> = {
+  SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6,
+};
+
+function parseRRule(rrule: string): RRuleRule | null {
+  try {
+    const parts = rrule.split(';');
+    const result: Partial<RRuleRule> & { freq: string; dtstart: string } = { freq: '', dtstart: '' };
+    for (const part of parts) {
+      const [key, val] = part.split('=');
+      if (key === 'FREQ') result.freq = val;
+      if (key === 'INTERVAL') result.interval = parseInt(val, 10) || 1;
+      if (key === 'COUNT') result.count = parseInt(val, 10);
+      if (key === 'UNTIL') result.until = val;
+      if (key === 'BYDAY') result.byday = val.split(',');
+      if (key === 'DTSTART') result.dtstart = val;
+    }
+    if (!result.freq) return null;
+    return result as RRuleRule;
+  } catch {
+    return null;
+  }
+}
+
+function expandRRule(rule: RRuleRule, windowStart: Date, windowEnd: Date): Date[] {
+  const dtstart = new Date(rule.dtstart);
+  if (Number.isNaN(dtstart.getTime())) return [];
+  const occurrences: Date[] = [];
+  const interval = rule.interval || 1;
+  let current = new Date(dtstart);
+  const maxIterations = 2000; // safety cap
+  let iterations = 0;
+
+  while (iterations++ < maxIterations) {
+    if (current > windowEnd) break;
+    if (current >= windowStart) {
+      occurrences.push(new Date(current));
+      if (rule.count && occurrences.length >= rule.count) break;
+    }
+
+    if (rule.freq === 'DAILY') {
+      current.setDate(current.getDate() + interval);
+    } else if (rule.freq === 'WEEKLY') {
+      const daysToAdd = interval * 7;
+      current.setDate(current.getDate() + daysToAdd);
+    } else if (rule.freq === 'MONTHLY') {
+      current.setMonth(current.getMonth() + interval);
+    } else if (rule.freq === 'YEARLY') {
+      current.setFullYear(current.getFullYear() + interval);
+    } else {
+      break; // unsupported freq
+    }
+
+    if (rule.until) {
+      const untilDate = new Date(rule.until);
+      if (current > untilDate) break;
+    }
+  }
+  return occurrences;
+}
+
+function expandByDay(rule: RRuleRule, windowStart: Date, windowEnd: Date): Date[] {
+  // For WEEKLY with BYDAY, generate each day of the week within the window
+  const base = new Date(rule.dtstart);
+  const occurrences: Date[] = [];
+  const targetDays = (rule.byday || []).map((d) => DAY_MAP[d]).filter((d) => d !== undefined) as number[];
+  if (targetDays.length === 0) return expandRRule(rule, windowStart, windowEnd);
+
+  const interval = rule.interval || 1;
+  let currentWeek = 0;
+  const maxWeeks = 52 * interval * 4; // ~1 year at most
+
+  for (let w = 0; w < maxWeeks; w += interval) {
+    const weekStart = new Date(base);
+    weekStart.setDate(weekStart.getDate() + w * 7);
+    for (const dayOfWeek of targetDays) {
+      const candidate = new Date(weekStart);
+      candidate.setDate(weekStart.getDate() + dayOfWeek - weekStart.getDay());
+      // If BYDAY day is before the base day of the first week, it belongs to the next week
+      if (candidate < base && w === 0) continue;
+      if (candidate >= windowStart && candidate <= windowEnd) {
+        occurrences.push(new Date(candidate));
+      }
+    }
+    if (weekStart > windowEnd) break;
+  }
+  return occurrences;
+}
+
+function getRecurrenceDates(g: GoogleCalendarEvent, windowStart: Date, windowEnd: Date): Date[] {
+  if (!g.recurrence || g.recurrence.length === 0) return [];
+  const rrule = g.recurrence.find((r) => r.startsWith('RRULE:'));
+  if (!rrule) return [];
+  const rule = parseRRule(rrule.replace('RRULE:', ''));
+  if (!rule) return [];
+  rule.dtstart = g.start?.dateTime || g.start?.date || '';
+  if (rule.freq === 'WEEKLY' && rule.byday && rule.byday.length > 0) {
+    return expandByDay(rule, windowStart, windowEnd);
+  }
+  return expandRRule(rule, windowStart, windowEnd);
+}
+
+function isRecurrenceExcluded(g: GoogleCalendarEvent, date: Date): Date | null {
+  if (!g.excludedDates || g.excludedDates.length === 0) return null;
+  const dateKey = date.toISOString().slice(0, 10);
+  const excluded = g.excludedDates.find((ex) => ex.date === dateKey);
+  return excluded ? date : null;
+}
+
 const SOURCE_TAG = 'chrono';
 
 function localDateAndTime(iso?: string, fallbackTime = '00:00'): { date: string; time: string } {
@@ -82,7 +201,7 @@ export function toGoogleEventBody(ev: ScheduleEvent): Partial<GoogleCalendarEven
 }
 
 /** Maps a Google Calendar event into an app ScheduleEvent. */
-export function fromGoogleEvent(g: GoogleCalendarEvent, calendarId: string): ScheduleEvent {
+export function fromGoogleEvent(g: GoogleCalendarEvent, calendarId: string, occurrenceDate?: Date): ScheduleEvent {
   const priv = g.extendedProperties?.private || {};
   const rawType = priv[`${SOURCE_TAG}Type`] as ScheduleEventType | undefined;
   const type: ScheduleEventType =
@@ -96,6 +215,10 @@ export function fromGoogleEvent(g: GoogleCalendarEvent, calendarId: string): Sch
     startTime = '00:00';
     endTime = g.end?.date ? g.end.date : g.start.date;
     if (endTime === date) endTime = '23:59';
+  } else if (occurrenceDate) {
+    date = getLocalDateKey(occurrenceDate);
+    startTime = g.start?.dateTime ? new Date(g.start.dateTime).toTimeString().slice(0, 5) : '09:00';
+    endTime = g.end?.dateTime ? new Date(g.end.dateTime).toTimeString().slice(0, 5) : '10:00';
   } else {
     const s = localDateAndTime(g.start?.dateTime, '09:00');
     const e = localDateAndTime(g.end?.dateTime, '10:00');
@@ -217,8 +340,16 @@ async function applyPull(
     );
     result = result.filter((e) => e.source !== 'google');
     for (const g of items) {
-      if (!g.id || g.status === 'cancelled' || g.recurrence) continue;
+      if (!g.id || g.status === 'cancelled') continue;
       if (referenced.has(g.id)) continue;
+      if (g.recurrence && g.recurrence.length > 0) {
+        const dates = getRecurrenceDates(g, new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+        for (const d of dates) {
+          const instance = fromGoogleEvent(g, calendarId, d);
+          result.push(instance);
+        }
+        continue;
+      }
       result.push(fromGoogleEvent(g, calendarId));
     }
   } else {
@@ -231,7 +362,21 @@ async function applyPull(
         if (idx >= 0) result.splice(idx, 1);
         continue;
       }
-      if (g.recurrence) continue;
+      if (g.recurrence && g.recurrence.length > 0) {
+        const dates = getRecurrenceDates(g, new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+        for (const d of dates) {
+          const instance = fromGoogleEvent(g, calendarId, d);
+          const existingIdx = result.findIndex((e) => e.id === instance.id);
+          if (existingIdx >= 0) {
+            const existing = result[existingIdx];
+            if (existing.source !== 'google' && !isRemoteNewer(g, existing)) continue;
+            result[existingIdx] = { ...instance, id: existing.id };
+          } else {
+            result.push(instance);
+          }
+        }
+        continue;
+      }
       if (idx >= 0) {
         const existing = result[idx];
         // Last-write-wins: keep local edits that are newer than the remote change.
