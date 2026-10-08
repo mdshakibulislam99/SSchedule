@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "ChronoPulse AI - Smart Schedule & Productivity Optimizer",
-  "short_name": "ChronoPulse",
+  "name": "SSchedule - Smart Schedule & Productivity Optimizer",
+  "short_name": "SSchedule",
   "description": "An AI-powered time management app that analyzes daily schedules, prioritizes tasks with deadlines, generates subtasks, alerts in real-time, and optimizes productivity with Puter.js and multi-model AI.",
   "start_url": "/",
   "scope": "/",

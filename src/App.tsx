@@ -268,6 +268,18 @@ export default function App() {
     void checkAppUpdates();
   }, []);
 
+  // Re-check on every sign-in/app entry so the optional popup re-appears on
+  // each login during the grace window (Later dismisses the modal for that
+  // session only — the persisted first-detection timestamp never resets).
+  // Auth internals are untouched; this only re-runs the update check.
+  useEffect(() => {
+    if (firebaseUser) {
+      setIsGraceModalDismissed(false);
+      void checkAppUpdates();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseUser?.uid]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {

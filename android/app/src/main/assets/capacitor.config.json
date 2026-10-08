@@ -1,6 +1,6 @@
 {
 	"appId": "com.sschedule.app",
-	"appName": "SShedule",
+	"appName": "SSchedule",
 	"webDir": "dist",
 	"android": {
 		"backgroundColor": "#4F46E5"

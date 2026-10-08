@@ -22,6 +22,42 @@ import { CURRENT_APP_VERSION, CURRENT_BUILD_NUMBER, getActiveAppVersion, setSimu
 import { AppUpdateService } from '../../services/appUpdateService';
 import { GoogleIcon } from './OnboardingFlow';
 
+/**
+ * Derive a synthetic "next release" from the running build for the sandbox
+ * "simulate required update" button. Purely generic: bumps the minor segment
+ * of whatever version the app was built with, so no release number is ever
+ * hardcoded in the UI. Non-numeric versions fall back to appending ".1".
+ */
+function bumpMinorForSandbox(version: string): string {
+  const clean = (version || '').trim().replace(/^v/i, '');
+  const parts = clean.split('.').map((p) => Number.parseInt(p, 10));
+  if (parts.length >= 2 && parts.every((n) => Number.isFinite(n))) {
+    parts[1] += 1;
+    for (let i = 2; i < parts.length; i++) parts[i] = 0;
+    return parts.join('.');
+  }
+  return `${clean || '1.0'}.1`;
+}
+
+/**
+ * Derive a synthetic "old installed version" for the sandbox simulate-old
+ * button. Generic: decrements the patch of whatever build is running so the
+ * button works on every future version without hardcoding one.
+ */
+function sandboxOldVersion(version: string): string {
+  const clean = (version || '').trim().replace(/^v/i, '');
+  const parts = clean.split('.').map((p) => Number.parseInt(p, 10));
+  if (parts.length >= 1 && parts.every((n) => Number.isFinite(n))) {
+    const last = parts.length - 1;
+    if (parts[last] > 0) {
+      parts[last] -= 1;
+      return parts.join('.');
+    }
+    return `0.${parts[0] === 0 ? 9 : parts[0] - 1}.0`;
+  }
+  return '0.9.0';
+}
+
 interface SettingsScreenProps {
   user: UserProfile;
   config: AIProviderConfig;
@@ -106,7 +142,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   };
 
   const handleResetGracePeriod = async () => {
-    AppUpdateService.resetGracePeriod(updateInfo?.latestVersion || '2.0.0');
+    // Generic reset: targets whatever release the engine currently reports,
+    // falling back to the running build — never a hardcoded version number.
+    AppUpdateService.resetGracePeriod(updateInfo?.latestVersion || CURRENT_APP_VERSION);
     if (onCheckUpdates) {
       await onCheckUpdates();
     }
@@ -115,11 +153,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const handleToggleForcePolicy = async (force: boolean) => {
     setIsCheckingUpdate(true);
     if (force) {
-      // Local sandbox override: the packaged app reads GitHub Releases, so
-      // "a server requiring v2.0.0" is simulated on-device instead of POSTed.
+      // Local sandbox override: simulates a newer release requiring an update
+      // through the same 7-day window. The target is derived from the running
+      // build (bumped minor) so this self-tests the generic path generically.
       AppUpdateService.setPolicyOverride({
-        latestVersion: '2.0.0',
-        minRequiredVersion: '2.0.0',
+        latestVersion: bumpMinorForSandbox(CURRENT_APP_VERSION),
         forceUpdate: true,
         gracePeriodDays: 7,
       });
@@ -403,11 +441,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handleSimulateVersion('0.9.0')}
+                  onClick={() => handleSimulateVersion(sandboxOldVersion(activeVersion))}
                   className="py-2 px-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 font-medium text-[11px] flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <AlertTriangle className="w-3 h-3" />
-                  <span>Simulate Old (v0.9.0)</span>
+                  <span>Simulate Old (v{sandboxOldVersion(activeVersion)})</span>
                 </button>
 
                 <button
@@ -445,7 +483,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   className="py-1.5 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <DownloadCloud className="w-3 h-3" />
-                  <span>Require v2.0.0 (7-Day Grace)</span>
+                  <span>Require next release (7-Day Grace)</span>
                 </button>
                 <button
                   type="button"

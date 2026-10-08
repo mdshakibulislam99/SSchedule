@@ -459,6 +459,10 @@ export interface AppVersionConfig {
   forceUpdate: boolean;
   gracePeriodDays?: number; // Days the user is granted before being hard-blocked (default: 7)
   downloadUrl: string;
+  /** Browser URL of the GitHub release page (fallback when no APK asset exists). */
+  releasePageUrl?: string;
+  /** Name of the APK asset selected from the GitHub release (if any). */
+  apkAssetName?: string | null;
   title?: string;
   message?: string;
   releaseNotes?: string[];
