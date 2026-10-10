@@ -120,9 +120,9 @@ export const ForceUpdateModal: React.FC<ForceUpdateModalProps> = ({
               : 'A new version of SSchedule is available to install.'}
           </p>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-300">
-            <span>v{updateInfo?.currentVersion || '3.1.0'}</span>
+            <span>v{updateInfo?.currentVersion || '3.4.0'}</span>
             <span className="text-slate-400">→</span>
-            <span className="font-bold text-indigo-600 dark:text-indigo-400">v{updateInfo?.latestVersion || '3.1.0'}</span>
+            <span className="font-bold text-indigo-600 dark:text-indigo-400">v{updateInfo?.latestVersion || '3.4.0'}</span>
           </div>
         </div>
 

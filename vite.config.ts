@@ -5,6 +5,10 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Use relative asset paths so the bundle loads under Capacitor's
+    // capacitor:// scheme on iOS (absolute "/assets/..." 404s there and
+    // shows a blank/white screen). Relative paths also work on Android + web.
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

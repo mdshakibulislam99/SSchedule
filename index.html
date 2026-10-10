@@ -43,6 +43,38 @@
   </head>
   <body class="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased font-sans select-none overflow-x-hidden">
     <div id="root"></div>
+    <script>
+      // Global error trap. React's <ErrorBoundary> only catches errors thrown
+      // during render — it CANNOT catch failures that happen at module-load
+      // time (before createRoot().render() runs). On native WebViews that class
+      // of crash leaves a blank white screen, so we surface it here.
+      (function () {
+        var shown = false;
+        function show(label, detail) {
+          if (shown) return;
+          shown = true;
+          try {
+            var msg = label + ': ' + (detail && (detail.message || detail)) + '\n\n' +
+              (detail && detail.stack ? detail.stack : '(no stack)');
+            console.error(msg);
+            var pre = document.createElement('pre');
+            pre.setAttribute('data-global-error', '1');
+            pre.style.cssText =
+              'position:fixed;inset:0;z-index:99999;margin:0;padding:16px;overflow:auto;' +
+              'background:#7f1d1d;color:#fff;font:12px/1.5 monospace;white-space:pre-wrap;' +
+              'text-align:left;';
+            pre.textContent = msg;
+            (document.body || document.documentElement).appendChild(pre);
+          } catch (e) {}
+        }
+        window.addEventListener('error', function (e) {
+          show('window.onerror', e.error || e.message);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          show('unhandledrejection', e.reason);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -91,6 +91,7 @@ export const INITIAL_AI_CONFIG: AIProviderConfig = {
     gemini: 'gemini-3.8-flash',
     claude: 'claude-3-5-sonnet-20241022',
     custom: 'custom-model',
+    puter: 'openrouter:openrouter/free',
   },
   puterUser: null,
 };

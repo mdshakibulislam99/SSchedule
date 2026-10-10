@@ -119,9 +119,10 @@ The app includes an automated version check with a dismissible grace period:
 
 These are platform constraints of the embedded WebView, not build problems:
 
-- **Web push notifications do not exist in a WebView.** In-app toasts and the
-  reminder chime still fire while the app is open. Real background reminders
-  need `@capacitor/local-notifications`.
+- **Background reminders are delivered by Android itself.** `@capacitor/local-notifications`
+  registers each task/class/deadline alert with `AlarmManager` (`allowWhileIdle`),
+  so notifications fire while the app is closed and the screen is off; in-app
+  toasts and the reminder chime cover the case where the app is open.
 - **Google's web OAuth popup is blocked** in embedded WebViews. Google
   sign-in therefore uses the **native** SDK
   (`@capgo/capacitor-social-login`) rather than `signInWithPopup`; see

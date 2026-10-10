@@ -333,6 +333,8 @@ export default function App() {
 
   const isAIProviderConfigured = (config: AIProviderConfig) => {
     if (config.activeProvider === 'puter') {
+      // Token-based Puter (recommended for the APK/iOS app) needs no SDK session.
+      if (config.apiKeys.puter) return true;
       const puterSigned = typeof window !== 'undefined' && window.puter?.auth?.isSignedIn ? window.puter.auth.isSignedIn() : false;
       return Boolean(config.puterUser && puterSigned);
     }
@@ -369,6 +371,8 @@ export default function App() {
   // Ensure unauthenticated or mock Puter sessions are purged from state on load
   useEffect(() => {
     if (aiConfig.activeProvider === 'puter' && aiConfig.puterUser) {
+      // Token-based Puter is valid without an SDK session — never purge it.
+      if (aiConfig.apiKeys.puter) return;
       const puter = typeof window !== 'undefined' ? (window as any).puter : undefined;
       const isReallySignedIn = Boolean(
         puter &&
@@ -1110,7 +1114,11 @@ export default function App() {
 
       tasks.forEach((task) => {
         const baseDate = task.scheduledDate || (task.deadline ? getLocalDateKey(new Date(task.deadline)) : '');
-        if (task.completed || !task.reminder?.enabled || !baseDate) return;
+        if (task.completed || !baseDate) return;
+        const hasEarlyReminder = !!task.reminder?.enabled;
+        // Without an explicit early reminder, a task that has a chosen start
+        // time still alerts when that time arrives (matches the native alarm).
+        if (!hasEarlyReminder && !task.scheduledStartTime) return;
 
         const startsToday =
           baseDate === todayKey ||
@@ -1124,9 +1132,11 @@ export default function App() {
         const anchor = task.scheduledStartTime
           ? new Date(`${todayKey}T${task.scheduledStartTime}:00`)
           : new Date(`${todayKey}T23:59:59`);
-        const leadTime = task.reminder.minutesBefore || notificationSettings.advanceNoticeMinutes || 15;
+        const leadTime = hasEarlyReminder
+          ? task.reminder?.minutesBefore || notificationSettings.advanceNoticeMinutes || 15
+          : 0;
         const reminderAt = anchor.getTime() - leadTime * 60 * 1000;
-        if (now.getTime() < reminderAt || now.getTime() > anchor.getTime() + 60 * 1000) return;
+        if (isNaN(anchor.getTime()) || isNaN(reminderAt) || now.getTime() < reminderAt || now.getTime() > anchor.getTime() + 60 * 1000) return;
 
         const notificationId = `task-reminder-${task.id}-${todayKey}`;
         const message = task.scheduledStartTime
@@ -1156,7 +1166,10 @@ export default function App() {
             playChime('reminder');
           }
 
-          if (notificationSettings.browserNotifications && !isQuiet) {
+          if (notificationSettings.browserNotifications && !isQuiet && !Capacitor.isNativePlatform()) {
+            // On native Android the scheduled AlarmManager alarm delivers the
+            // system notification at this time — sending an immediate one here
+            // would show it twice.
             void sendSystemNotification({
               id: notificationId,
               title: `Reminder: ${task.title}`,
@@ -1183,6 +1196,18 @@ export default function App() {
       schedule,
       settings: notificationSettings,
     });
+
+    // Re-sync periodically so reminders that were out of the scheduling window
+    // (or dropped by the 64-alarm cap) get registered as they come closer.
+    const intervalId = window.setInterval(() => {
+      void syncAllScheduledAlarms({
+        tasks,
+        schedule,
+        settings: notificationSettings,
+      });
+    }, 6 * 60 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
   }, [tasks, schedule, notificationSettings]);
 
   // Re-sync alarms when the app resumes from the background.

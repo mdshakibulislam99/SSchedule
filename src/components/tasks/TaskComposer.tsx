@@ -36,7 +36,7 @@ const REPEAT_OPTIONS: { value: TaskRecurrence; label: string }[] = [
 ];
 
 const REMINDER_OPTIONS = [
-  { value: 'none', label: 'No reminder' },
+  { value: 'none', label: 'At the scheduled time' },
   { value: '10', label: '10 minutes before' },
   { value: '30', label: '30 minutes before' },
   { value: '60', label: '1 hour before' },
@@ -314,12 +314,15 @@ export const TaskComposer: React.FC<TaskComposerProps> = ({
                   </option>
                 ))}
               </select>
-              {reminderValue !== 'none' && (
-                <p className="text-[11px] text-slate-400 mt-1.5">
-                  You&apos;ll be notified {REMINDER_OPTIONS.find((o) => o.value === reminderValue)?.label.toLowerCase()}
-                  {recurrence !== 'none' ? ', for every repeat' : ''}.
-                </p>
-              )}
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                {reminderValue === 'none'
+                  ? time
+                    ? `You'll be notified on your device at ${formatTime12h(time)}.`
+                    : 'Set a time to get a device alert when the task starts.'
+                  : `You'll be notified ${REMINDER_OPTIONS.find((o) => o.value === reminderValue)?.label.toLowerCase()}${
+                      recurrence !== 'none' ? ', for every repeat' : ''
+                    }.`}
+              </p>
             </div>
           </div>
 

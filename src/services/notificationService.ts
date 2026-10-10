@@ -34,6 +34,42 @@ export interface SyncAlarmsOptions {
 
 export type PermissionStateResult = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
+/** How far ahead reminders are registered with Android AlarmManager. */
+const SCHEDULE_WINDOW_MS = 30 * 86400000;
+/** Android caps pending alarms — keep the closest ones and re-sync regularly. */
+const MAX_SCHEDULED_ALARMS = 64;
+const DAY_MS = 86400000;
+/** Ids registered by the last successful sync, so stale alarms can be cleared. */
+const SYNCED_ALARM_IDS_KEY = 'sschedule_synced_alarm_ids';
+
+/**
+ * Syncs are chained through this promise so two overlapping runs can never
+ * interleave cancel/schedule calls (which would wipe fresh alarms).
+ */
+let syncQueue: Promise<number> = Promise.resolve(0);
+
+function readSyncedAlarmIds(): number[] | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(SYNCED_ALARM_IDS_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((id): id is number => typeof id === 'number');
+  } catch {
+    return null;
+  }
+}
+
+function writeSyncedAlarmIds(ids: number[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(SYNCED_ALARM_IDS_KEY, JSON.stringify(ids));
+  } catch {
+    // ignore quota / private-mode failures — worst case we re-cancelAll once
+  }
+}
+
 let isInitialized = false;
 let notificationTapHandler: ((extra?: Record<string, unknown>) => void) | undefined;
 let notificationReceivedHandler: ((notification: { title?: string; body?: string; id?: number; extra?: Record<string, unknown> }) => void) | undefined;
@@ -57,27 +93,32 @@ export async function initNotifications(
 
   if (Capacitor.isNativePlatform()) {
     try {
-      // Create high-priority reminder channel for Android 8.0+
-      await LocalNotifications.createChannel({
-        id: CHANNELS.REMINDERS,
-        name: 'SSchedule Reminders',
-        description: 'High-priority alerts for study tasks, classes, and deadlines',
-        importance: 5, // High importance (heads-up banner with sound & vibration)
-        visibility: 1, // Public on lockscreen
-        vibration: true,
-        lights: true,
-        lightColor: '#4F46E5',
-      });
+      // Notification channels are Android-only — iOS implements createChannel
+      // as `unimplemented()` (it rejects), which would abort this block before
+      // the listeners are registered further below.
+      if (Capacitor.getPlatform() === 'android') {
+        // Create high-priority reminder channel for Android 8.0+
+        await LocalNotifications.createChannel({
+          id: CHANNELS.REMINDERS,
+          name: 'SSchedule Reminders',
+          description: 'High-priority alerts for study tasks, classes, and deadlines',
+          importance: 5, // High importance (heads-up banner with sound & vibration)
+          visibility: 1, // Public on lockscreen
+          vibration: true,
+          lights: true,
+          lightColor: '#4F46E5',
+        });
 
-      // Create general updates channel
-      await LocalNotifications.createChannel({
-        id: CHANNELS.GENERAL,
-        name: 'SSchedule Updates & Briefings',
-        description: 'Daily briefings, AI recommendations, and summaries',
-        importance: 4,
-        visibility: 1,
-        vibration: true,
-      });
+        // Create general updates channel
+        await LocalNotifications.createChannel({
+          id: CHANNELS.GENERAL,
+          name: 'SSchedule Updates & Briefings',
+          description: 'Daily briefings, AI recommendations, and summaries',
+          importance: 4,
+          visibility: 1,
+          vibration: true,
+        });
+      }
 
       // Handle tap on notifications
       LocalNotifications.addListener('localNotificationActionPerformed', (notificationAction) => {
@@ -238,7 +279,17 @@ export async function sendSystemNotification(payload: NotificationPayload): Prom
  * and the phone screen is off (Doze/sleep mode), the Android operating system
  * will wake up and alert the user for tasks, classes, deadlines, and briefings!
  */
-export async function syncAllScheduledAlarms({
+export function syncAllScheduledAlarms(options: SyncAlarmsOptions): Promise<number> {
+  // Serialize: overlapping syncs must never interleave cancel/schedule calls.
+  const run = syncQueue.then(
+    () => performSyncAlarms(options),
+    () => performSyncAlarms(options),
+  );
+  syncQueue = run.catch(() => 0);
+  return run;
+}
+
+async function performSyncAlarms({
   tasks,
   schedule,
   settings,
@@ -252,6 +303,7 @@ export async function syncAllScheduledAlarms({
     try {
       await LocalNotifications.cancelAll();
     } catch {}
+    writeSyncedAlarmIds([]);
     return 0;
   }
 
@@ -266,12 +318,10 @@ export async function syncAllScheduledAlarms({
   try {
     await initNotifications();
 
-    // Cancel previously scheduled alarms to avoid duplicates
-    try {
-      await LocalNotifications.cancelAll();
-    } catch (err) {
-      console.warn('Could not clear pending notifications:', err);
-    }
+    // Ids the previous successful sync registered. `null` means this is the
+    // first sync ever (or an upgrade from an older version) — clear whatever
+    // the old version left behind exactly once.
+    const previouslySyncedIds = readSyncedAlarmIds();
 
     const now = Date.now();
     const upcomingNotifications: Array<{
@@ -288,32 +338,37 @@ export async function syncAllScheduledAlarms({
     const advanceMs = (settings.advanceNoticeMinutes || 15) * 60 * 1000;
 
     // 1. SCHEDULE TASK REMINDERS
-    // Only tasks the user explicitly gave a reminder fire one (Google Tasks
-    // behavior). The reminder is anchored to the planned time when set,
-    // otherwise to the due date, and repeating tasks get one reminder per
-    // occurrence inside the 7-day scheduling window.
+    // A task with an explicit reminder leads its anchor by `minutesBefore`.
+    // Every other task that has a chosen start time still alerts the device
+    // exactly when that time arrives (Google-Calendar-style start alert), so
+    // a task is never silent just because "no early reminder" was picked.
+    // Repeating tasks get one alert per occurrence inside the window.
     if (settings.taskReminders) {
       const todayKey = getLocalDateKey();
       const todayMs = new Date(`${todayKey}T12:00:00`).getTime();
 
       tasks.forEach((task) => {
-        if (task.completed || !task.reminder?.enabled) return;
+        if (task.completed) return;
         try {
           const baseDate = task.scheduledDate || task.deadline?.slice(0, 10) || '';
           if (!baseDate) return;
           const baseMs = new Date(`${baseDate}T12:00:00`).getTime();
           if (isNaN(baseMs)) return;
 
-          const leadMs = (task.reminder.minutesBefore ?? settings.advanceNoticeMinutes ?? 15) * 60 * 1000;
+          const hasEarlyReminder = !!task.reminder?.enabled;
+          if (!hasEarlyReminder && !task.scheduledStartTime) return;
+          const leadMs = hasEarlyReminder
+            ? (task.reminder?.minutesBefore ?? settings.advanceNoticeMinutes ?? 15) * 60 * 1000
+            : 0;
           const recurrence = task.recurrence || 'none';
 
-          for (let offset = 0; offset <= 7; offset++) {
-            const dayKey = getLocalDateKey(new Date(todayMs + offset * 86400000));
+          for (let offset = 0; offset <= SCHEDULE_WINDOW_MS / DAY_MS; offset++) {
+            const dayKey = getLocalDateKey(new Date(todayMs + offset * DAY_MS));
             if (dayKey < baseDate) continue;
 
             const dayMs = new Date(`${dayKey}T12:00:00`).getTime();
             const weekday = new Date(`${dayKey}T12:00:00`).getDay();
-            const diffDays = Math.round((dayMs - baseMs) / 86400000);
+            const diffDays = Math.round((dayMs - baseMs) / DAY_MS);
             const occursOnDay =
               recurrence === 'daily' ||
               (recurrence === 'weekdays' && weekday > 0 && weekday < 6) ||
@@ -324,15 +379,26 @@ export async function syncAllScheduledAlarms({
             const anchorMs = task.scheduledStartTime
               ? new Date(`${dayKey}T${task.scheduledStartTime}:00`).getTime()
               : new Date(`${dayKey}T23:59:59`).getTime();
+            if (isNaN(anchorMs)) {
+              // A malformed time (e.g. "2:30 PM" instead of "14:30") would
+              // otherwise poison the whole schedule() batch with an Invalid
+              // Date and silently drop EVERY alarm on the device.
+              console.warn(`Skipping reminders for task ${task.id}: invalid scheduledStartTime "${task.scheduledStartTime}".`);
+              return;
+            }
             const reminderTime = anchorMs - leadMs;
-            if (reminderTime <= now || reminderTime >= now + 7 * 86400000) continue;
+            if (isNaN(reminderTime) || reminderTime <= now || reminderTime >= now + SCHEDULE_WINDOW_MS) continue;
 
             upcomingNotifications.push({
               id: hashString(`task-rem-${task.id}-${dayKey}`),
-              title: `📌 Task Reminder: ${task.title}`,
-              body: task.scheduledStartTime
-                ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m duration`
-                : `Due ${new Date(dayMs).toLocaleDateString([], { month: 'short', day: 'numeric' })}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m estimated`,
+              title: leadMs === 0
+                ? `⏰ Time to Start: ${task.title}`
+                : `📌 Task Reminder: ${task.title}`,
+              body: leadMs === 0
+                ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m focus block`
+                : task.scheduledStartTime
+                  ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m duration`
+                  : `Due ${new Date(dayMs).toLocaleDateString([], { month: 'short', day: 'numeric' })}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m estimated`,
               channelId: CHANNELS.REMINDERS,
               schedule: { at: new Date(reminderTime), allowWhileIdle: true },
               extra: { type: 'task', taskId: task.id },
@@ -356,7 +422,7 @@ export async function syncAllScheduledAlarms({
 
           // 2 Hours Before Deadline
           const twoHoursBefore = deadlineMs - 2 * 3600 * 1000;
-          if (twoHoursBefore > now && twoHoursBefore < now + 7 * 86400000) {
+          if (twoHoursBefore > now && twoHoursBefore < now + SCHEDULE_WINDOW_MS) {
             upcomingNotifications.push({
               id: hashString(`task-dl-2h-${task.id}`),
               title: `⚠️ 2h Deadline Warning: ${task.title}`,
@@ -371,7 +437,7 @@ export async function syncAllScheduledAlarms({
 
           // 30 Minutes Before Deadline
           const thirtyMinsBefore = deadlineMs - 30 * 60 * 1000;
-          if (thirtyMinsBefore > now && thirtyMinsBefore < now + 7 * 86400000) {
+          if (thirtyMinsBefore > now && thirtyMinsBefore < now + SCHEDULE_WINDOW_MS) {
             upcomingNotifications.push({
               id: hashString(`task-dl-30m-${task.id}`),
               title: `🚨 Final Deadline Alert: ${task.title}`,
@@ -395,9 +461,10 @@ export async function syncAllScheduledAlarms({
         if (event.isCompleted || event.isMissed) return;
         try {
           const classStartMs = new Date(`${event.date}T${event.startTime}:00`).getTime();
+          if (isNaN(classStartMs)) return;
           const classReminderMs = classStartMs - advanceMs;
 
-          if (classReminderMs > now && classReminderMs < now + 7 * 86400000) {
+          if (classReminderMs > now && classReminderMs < now + SCHEDULE_WINDOW_MS) {
             upcomingNotifications.push({
               id: hashString(`class-${event.id}-${event.date}`),
               title: `🎓 Class Reminder: ${event.title}`,
@@ -461,14 +528,41 @@ export async function syncAllScheduledAlarms({
       }
     }
 
-    // Limit to 64 top priority alarms to stay well below Android OS quotas
-    const finalBatch = upcomingNotifications.slice(0, 64);
+    // Nearest alerts first, then cap to stay well below Android OS quotas.
+    upcomingNotifications.sort((a, b) => a.schedule.at.getTime() - b.schedule.at.getTime());
+    const finalBatch = upcomingNotifications.slice(0, MAX_SCHEDULED_ALARMS);
+    const batchIds = new Set(finalBatch.map((notification) => notification.id));
 
+    // One-time cleanup of alarms registered by older app versions.
+    if (previouslySyncedIds === null) {
+      try {
+        await LocalNotifications.cancelAll();
+      } catch (err) {
+        console.warn('Could not clear legacy pending notifications:', err);
+      }
+    }
+
+    // Schedule BEFORE cancelling anything: if scheduling fails (permission
+    // revoked, exact-alarm prompt pending, …) the alarms already registered on
+    // the device stay intact instead of leaving the user with none at all.
     if (finalBatch.length > 0) {
       await LocalNotifications.schedule({
         notifications: finalBatch,
       });
     }
+
+    // Cancel only the alarms the previous sync registered that this run no
+    // longer wants (deleted/completed tasks, moved times, …).
+    const staleIds = (previouslySyncedIds ?? []).filter((id) => !batchIds.has(id));
+    if (staleIds.length > 0) {
+      try {
+        await LocalNotifications.cancel({ notifications: staleIds.map((id) => ({ id })) });
+      } catch (err) {
+        console.warn('Could not clear stale scheduled alarms:', err);
+      }
+    }
+
+    writeSyncedAlarmIds(finalBatch.map((notification) => notification.id));
 
     return finalBatch.length;
   } catch (err) {

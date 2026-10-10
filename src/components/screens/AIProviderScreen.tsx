@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Sparkles, Check, Key, LogIn, LogOut, CheckCircle2, ShieldCheck, Globe } from 'lucide-react';
+import { ChevronLeft, ChevronDown, Check, CheckCircle2, Loader2, X } from 'lucide-react';
 import { AIProviderConfig, AIProviderType } from '../../types';
-import { AIService } from '../../services/aiService';
 import { playChime } from '../../utils/audio';
+import { apiUrl } from '../../lib/api';
 
 interface AIProviderScreenProps {
   config: AIProviderConfig;
   onSaveConfig: (config: AIProviderConfig) => void;
   onBack: () => void;
+}
+
+interface PuterModel {
+  value: string; // model id passed to the API
+  label: string; // human-readable name
+  provider: string; // e.g. "openrouter", "google"
+  free: boolean; // zero-cost on Puter's free plan
 }
 
 export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
@@ -19,37 +26,51 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
   const [useHybridMode, setUseHybridMode] = useState<boolean>(config.useHybridMode);
   const [apiKeys, setApiKeys] = useState(config.apiKeys || {});
 
-  // Strictly verify if Puter has a real active authToken on the client
-  const isPuterTrulyConnected = () => {
-    if (typeof window === 'undefined') return false;
-    const puter = (window as any).puter;
-    const hasToken = Boolean(puter?.authToken);
-    const signedIn = typeof puter?.auth?.isSignedIn === 'function' ? puter.auth.isSignedIn() : false;
-    return Boolean(hasToken && signedIn);
-  };
+  // Per-provider connection-test state, so users can confirm a key/token works.
+  const [testState, setTestState] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'error'>>({});
+  const [testMsg, setTestMsg] = useState<Record<string, string>>({});
 
-  // Only initialize puterUser if genuinely authenticated with an active session
-  const [puterUser, setPuterUser] = useState<{ username: string; email?: string } | null>(() => {
-    if (!isPuterTrulyConnected()) {
-      return null;
-    }
-    return config.puterUser;
-  });
+  // Puter model catalogue (fetched live from Puter's free /models endpoint).
+  // We split it into "free" (zero cost) and "all" so users can pick either.
+  const [puterModels, setPuterModels] = useState<{ free: PuterModel[]; all: PuterModel[] }>({ free: [], all: [] });
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [selectedPuterModel, setSelectedPuterModel] = useState<string>(config.models.puter || 'openrouter:openrouter/free');
 
-  const [isSigningInPuter, setIsSigningInPuter] = useState(false);
-  const [puterStatusMsg, setPuterStatusMsg] = useState<string | null>(null);
-
-  // If a mock or demo user was previously stored without a real token, purge it immediately
   useEffect(() => {
-    if (!isPuterTrulyConnected()) {
-      setPuterUser(null);
-      if (config.puterUser) {
-        onSaveConfig({
-          ...config,
-          puterUser: null,
+    let cancelled = false;
+    const load = async () => {
+      setModelsLoading(true);
+      try {
+        const res = await fetch('https://api.puter.com/puterai/chat/models/details', {
+          headers: { 'Content-Type': 'application/json' },
         });
+        if (!res.ok) throw new Error('catalog fetch failed');
+        const data = await res.json();
+        const list: any[] = Array.isArray(data?.models) ? data.models : [];
+        const isFree = (m: any): boolean => {
+          const costs = m?.costs || {};
+          const rates = Object.entries(costs).filter(([k]) => k !== 'tokens');
+          return rates.length > 0 && rates.every(([, v]) => Number(v) === 0);
+        };
+        const toModel = (m: any): PuterModel => {
+          // The API accepts the model `id` (or puterId). Prefer id, fall back to puterId.
+          const value = m?.id || m?.puterId || '';
+          const provider = (m?.puterId || value).split(':')[0] || 'other';
+          return { value, label: m?.name || value, provider, free: isFree(m) };
+        };
+        const all = list.map(toModel).filter((m) => m.value);
+        const free = all.filter((m) => m.free);
+        if (!cancelled) setPuterModels({ free, all });
+      } catch {
+        if (!cancelled) setPuterModels({ free: [], all: [] });
+      } finally {
+        if (!cancelled) setModelsLoading(false);
       }
-    }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const providers: {
@@ -76,7 +97,7 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
     {
       id: 'puter',
       name: 'Puter.js',
-      description: 'Open source, free zero-key cloud AI access via your Puter login.',
+      description: 'Open-source, free AI using your own Puter API token.',
       tag: 'Free AI',
       icon: '🚀',
     },
@@ -94,46 +115,120 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
     },
   ];
 
-  const handlePuterSignIn = async () => {
-    setIsSigningInPuter(true);
-    setPuterStatusMsg(null);
-    try {
-      const user = await AIService.signInPuter();
-      const isReal = isPuterTrulyConnected();
+  // Send a tiny real request through the same path the app uses, so the user
+  // can confirm a key/token actually works before saving.
+  const testApiKey = async (providerId: AIProviderType, puterModel?: string) => {
+    const key = ((apiKeys as Record<string, string | undefined>)[providerId] || '').trim();
+    if (!key) {
+      setTestState((s) => ({ ...s, [providerId]: 'error' }));
+      setTestMsg((m) => ({ ...m, [providerId]: 'Enter a key or token first.' }));
+      return;
+    }
+    setTestState((s) => ({ ...s, [providerId]: 'testing' }));
+    setTestMsg((m) => ({ ...m, [providerId]: '' }));
 
-      if (user && isReal) {
-        setPuterUser(user);
-        setActiveProvider('puter');
-        setPuterStatusMsg(null);
-        playChime('success');
-      } else {
-        setPuterUser(null);
-        setPuterStatusMsg('Connection closed without completing login. Not connected.');
+    const fail = (message: string) => {
+      setTestState((s) => ({ ...s, [providerId]: 'error' }));
+      setTestMsg((m) => ({ ...m, [providerId]: message }));
+    };
+    const ok = () => {
+      setTestState((s) => ({ ...s, [providerId]: 'ok' }));
+      setTestMsg((m) => ({ ...m, [providerId]: 'Connected — this key works.' }));
+      playChime('success');
+    };
+
+    try {
+      if (providerId === 'puter') {
+        // Use Puter's free `/drivers/call` RPC (same path as puter.ai.chat()),
+        // NOT the paid OpenAI-compatible endpoint.
+        const res = await fetch('https://api.puter.com/drivers/call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            interface: 'puter-chat-completion',
+            method: 'complete',
+            args: {
+              model: puterModel || config.models.puter || 'openrouter:openrouter/free',
+              messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
+            },
+          }),
+        });
+        if (!res.ok) {
+          let detail = '';
+          let code = '';
+          try {
+            const b = await res.json();
+            detail = b?.error?.message || b?.message || '';
+            code = b?.code || '';
+          } catch {
+            detail = await res.text().catch(() => '');
+          }
+          if (res.status === 401 || res.status === 403 || code === 'token_missing') {
+            fail('Token rejected — check it in your Puter dashboard.');
+          } else if (res.status === 402 || code === 'insufficient_funds') {
+            fail('Free monthly allowance used up. Pick a “Free” model or wait for reset.');
+          } else {
+            fail(`Puter error (${res.status}). ${detail}`);
+          }
+          return;
+        }
+        const data = await res.json();
+        // /drivers/call wraps: { success, result: { message: { content } } }
+        const result = data?.result ?? data;
+        const content = result?.message?.content;
+        const hasText =
+          (typeof content === 'string' && content.trim().length > 0) ||
+          (Array.isArray(content) && content.length > 0);
+        if (!hasText) {
+          fail('Connected, but this model returned no text. Try another model.');
+          return;
+        }
+        ok();
+        return;
       }
-    } catch (e: any) {
-      setPuterUser(null);
-      setPuterStatusMsg('Connection closed without connecting. Not connected.');
-    } finally {
-      setIsSigningInPuter(false);
+
+      if (providerId === 'gemini') {
+        const res = await fetch(apiUrl('/api/ai/gemini'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-gemini-key': key },
+          body: JSON.stringify({ prompt: 'Reply with the single word: OK' }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          fail(data.error || `Gemini error (${res.status}).`);
+          return;
+        }
+        ok();
+        return;
+      }
+
+      if (providerId === 'openai' || providerId === 'claude') {
+        const res = await fetch(apiUrl('/api/ai/proxy'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ provider: providerId, prompt: 'Reply with the single word: OK' }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          fail(data.error || `${providerId === 'openai' ? 'OpenAI' : 'Claude'} error (${res.status}).`);
+          return;
+        }
+        ok();
+        return;
+      }
+    } catch (err: any) {
+      fail(err?.message || 'Connection test failed.');
     }
   };
 
-  const handlePuterSignOut = async () => {
-    await AIService.signOutPuter();
-    setPuterUser(null);
-    setPuterStatusMsg(null);
-  };
-
   const handleSave = () => {
-    const isReal = isPuterTrulyConnected();
-    const verifiedUser = isReal ? puterUser : null;
-
     onSaveConfig({
       ...config,
       activeProvider,
       useHybridMode,
-      apiKeys,
-      puterUser: verifiedUser,
+      apiKeys: { ...apiKeys, puter: (apiKeys.puter || '').trim() || undefined },
+      models: { ...config.models, puter: selectedPuterModel },
+      puterUser: null,
     });
     playChime('success');
     onBack();
@@ -207,70 +302,126 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
                 </div>
               </div>
 
-              {/* Puter Specific Sign In Button */}
-              {p.id === 'puter' && isSelected && (
-                <div className="mt-3 pt-3 border-t border-indigo-100 dark:border-indigo-900/60" onClick={(e) => e.stopPropagation()}>
-                  {puterUser && isPuterTrulyConnected() ? (
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Connected as @{puterUser.username}</span>
+              {/* API key / token entry + connection test (OpenAI, Gemini, Claude, Puter) */}
+              {(p.id === 'openai' || p.id === 'claude' || p.id === 'gemini' || p.id === 'puter') && isSelected && (
+                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      {p.id === 'puter' ? 'Puter API Token' : `${p.name} API Key`}
+                    </label>
+                    {testState[p.id] === 'ok' && (
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Connected
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePuterSignOut();
-                        }}
-                        className="text-xs text-rose-500 hover:text-rose-600 font-semibold hover:underline cursor-pointer"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500" />
-                          <span>Status: Not connected</span>
-                        </span>
-                        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Authentication required</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePuterSignIn();
-                        }}
-                        disabled={isSigningInPuter}
-                        className="w-full py-2.5 px-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs active:scale-95 cursor-pointer"
-                      >
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>{isSigningInPuter ? 'Connecting to Puter...' : 'Connect Puter.js Account'}</span>
-                      </button>
-                      {puterStatusMsg && (
-                        <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">
-                          {puterStatusMsg}
-                        </p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder={p.id === 'puter' ? 'Paste your Puter API token' : 'Paste your API key'}
+                      value={apiKeys[p.id] || ''}
+                      onChange={(e) => {
+                        setApiKeys({ ...apiKeys, [p.id]: e.target.value });
+                        setTestState((s) => ({ ...s, [p.id]: 'idle' }));
+                        setTestMsg((m) => ({ ...m, [p.id]: '' }));
+                      }}
+                      className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void testApiKey(p.id, p.id === 'puter' ? selectedPuterModel : undefined);
+                      }}
+                      disabled={testState[p.id] === 'testing'}
+                      className={`shrink-0 px-4 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 ${
+                        testState[p.id] === 'ok'
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
+                      }`}
+                    >
+                      {testState[p.id] === 'testing' ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing
+                        </>
+                      ) : testState[p.id] === 'ok' ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" /> Works
+                        </>
+                      ) : (
+                        'Test'
                       )}
+                    </button>
+                  </div>
+
+                  {/* Puter model selector — free models first, then all models */}
+                  {p.id === 'puter' && (
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Model
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={selectedPuterModel}
+                          onChange={(e) => {
+                            setSelectedPuterModel(e.target.value);
+                            setTestState((s) => ({ ...s, puter: 'idle' }));
+                            setTestMsg((m) => ({ ...m, puter: '' }));
+                          }}
+                          disabled={modelsLoading && puterModels.all.length === 0}
+                          className="w-full appearance-none px-3.5 py-2.5 pr-9 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
+                        >
+                          {modelsLoading && puterModels.all.length === 0 && (
+                            <option>Loading models…</option>
+                          )}
+                          {puterModels.free.length > 0 && (
+                            <optgroup label={`✅ Free models (${puterModels.free.length})`}>
+                              {puterModels.free.map((m) => (
+                                <option key={m.value} value={m.value}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {puterModels.all.length > 0 && (
+                            <optgroup label={`All models (${puterModels.all.length})`}>
+                              {puterModels.all.map((m) => (
+                                <option key={`all-${m.value}`} value={m.value}>
+                                  {m.label} {m.free ? '· free' : ''}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {!modelsLoading && puterModels.all.length === 0 && (
+                            <option value={selectedPuterModel}>{selectedPuterModel}</option>
+                          )}
+                        </select>
+                        <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed">
+                        Pick a <span className="font-semibold text-emerald-600 dark:text-emerald-400">Free</span> model
+                        to use Puter at no cost. Paid models need a Puter subscription.
+                      </p>
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* API Key Input for external models */}
-              {(p.id === 'openai' || p.id === 'claude' || p.id === 'gemini') && isSelected && (
-                <div className="mt-3 pt-3 border-t border-indigo-100 dark:border-indigo-900/60" onClick={(e) => e.stopPropagation()}>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    {p.name} API Key
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="Enter your API key (Stored locally)..."
-                    value={apiKeys[p.id] || ''}
-                    onChange={(e) => setApiKeys({ ...apiKeys, [p.id]: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                  />
+                  {testState[p.id] === 'error' && testMsg[p.id] && (
+                    <p className="flex items-start gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 leading-relaxed">
+                      <X className="w-3.5 h-3.5 shrink-0 mt-px" /> {testMsg[p.id]}
+                    </p>
+                  )}
+
+                  {p.id === 'puter' ? (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Free token from{' '}
+                      <span className="font-semibold text-slate-600 dark:text-slate-300">puter.com/dashboard#account</span>{' '}
+                      → Create token. Works free in the app and on the website.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">Stored locally on this device.</p>
+                  )}
                 </div>
               )}
             </div>

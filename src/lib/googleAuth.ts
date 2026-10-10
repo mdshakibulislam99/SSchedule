@@ -13,6 +13,7 @@ import {
 import { loadGis } from './googleCalendar';
 
 const GOOGLE_WEB_CLIENT_ID = FIREBASE_CONFIG.oAuthClientId;
+const GOOGLE_IOS_CLIENT_ID = FIREBASE_CONFIG.iosClientId || '';
 
 let initPromise: Promise<void> | null = null;
 
@@ -57,6 +58,11 @@ function ensureNativeGoogleInit(): Promise<void> {
   initPromise = SocialLogin.initialize({
     google: {
       webClientId: GOOGLE_WEB_CLIENT_ID,
+      // iOS needs its own OAuth client id (Google Cloud Console → iOS type,
+      // bundle id com.sschedule.app) — see firebase-applet-config.json.
+      ...(GOOGLE_IOS_CLIENT_ID
+        ? { iOSClientId: GOOGLE_IOS_CLIENT_ID, iOSServerClientId: GOOGLE_WEB_CLIENT_ID }
+        : {}),
       mode: 'online',
     },
   }).catch((err) => {
@@ -362,7 +368,21 @@ export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
  */
 export async function signInWithGooglePlatform(): Promise<FirebaseUser> {
   if (Capacitor.isNativePlatform()) {
-    return signInWithGoogleNative();
+    // Native Google sign-in is used where it is configured: Android
+    // (google-services.json + SHA-1 fingerprints) and iOS once `iosClientId`
+    // is set in firebase-applet-config.json. Until then iOS falls back to the
+    // web chain — its popup attempts fail harmlessly inside the WKWebView and
+    // land on the full-page redirect, which `completeGoogleRedirect()`
+    // completes when the WebView returns to https://localhost.
+    const nativeConfigured = Capacitor.getPlatform() === 'android' || GOOGLE_IOS_CLIENT_ID;
+    if (nativeConfigured) {
+      try {
+        return await signInWithGoogleNative();
+      } catch (err) {
+        if (Capacitor.getPlatform() === 'android' || isUserCancellation(err)) throw err;
+        console.warn('Native Google sign-in unavailable on iOS — using redirect flow:', err);
+      }
+    }
   }
   return signInWithGoogleWeb();
 }

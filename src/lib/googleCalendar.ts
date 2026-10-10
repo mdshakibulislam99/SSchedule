@@ -1,9 +1,12 @@
-import { getAuth, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { app } from './firebase';
+import { getAuth, signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
+import { app, auth } from './firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 const TOKEN_CACHE_KEY = 'chrono_gcal_token';
+/** Set before a native redirect OAuth and cleared once the connect resumes. */
+export const GCAL_CONNECT_PENDING_KEY = 'sschedule_gcal_connect_pending';
 
 export const GOOGLE_CALENDAR_SCOPES = [
   'openid',
@@ -152,6 +155,16 @@ export function clearCachedToken() {
 }
 
 /**
+ * Caches an OAuth access token that was obtained outside this module.
+ * Used by `completeGoogleRedirect()` (firebase.ts): the native redirect flow
+ * finishes after a page reload, where `requestCalendarToken` is no longer
+ * waiting, so the token is handed back through here.
+ */
+export function cacheCalendarToken(token: string, expiresInSeconds = 3600): void {
+  writeCachedToken(token, expiresInSeconds);
+}
+
+/**
  * Requests a Google OAuth access token for the Calendar API.
  * 1. Checks memory, localStorage, and sessionStorage cache.
  * 2. Attempts Firebase Auth Google sign-in popup (uses Firebase auth domain, avoiding origin_mismatch).
@@ -166,6 +179,40 @@ export async function requestCalendarToken(opts: { silent?: boolean } = {}): Pro
   if (opts.silent) {
     if (cached?.token) return cached.token;
     throw new GoogleAuthError('silent_token_unavailable', 'No valid Google access token available.');
+  }
+
+  // Native Android/iOS: OAuth popups cannot work inside the WebView — the OS
+  // opens an external browser tab that can never postMessage the result back,
+  // and Google rejects the WebView origin with `Error 400: origin_mismatch`.
+  // Run consent as a full-page redirect INSIDE the WebView instead: the page
+  // navigates away to Google, and `completeGoogleRedirect()` (called on load)
+  // caches the access token when it comes back.
+  if (Capacitor.isNativePlatform()) {
+    // Just landed back from an OAuth redirect — give completeGoogleRedirect()
+    // a moment to cache the token so a quick re-tap doesn't bounce through
+    // Google a second time.
+    const pageAgeMs = typeof performance !== 'undefined' ? performance.now() : Number.MAX_SAFE_INTEGER;
+    if (pageAgeMs < 20_000) {
+      for (let i = 0; i < 25 && !readCachedToken(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const fresh = readCachedToken();
+      if (fresh) return fresh.token;
+    }
+
+    const provider = new GoogleAuthProvider();
+    GOOGLE_CALENDAR_SCOPES.forEach((scope) => provider.addScope(scope));
+    provider.setCustomParameters({ prompt: 'consent' });
+    try {
+      localStorage.setItem(GCAL_CONNECT_PENDING_KEY, 'true');
+      // The WebView navigates to Google here and never returns from this call.
+      await signInWithRedirect(auth, provider);
+    } catch (err) {
+      localStorage.removeItem(GCAL_CONNECT_PENDING_KEY);
+      throw new GoogleAuthError('redirect_failed', (err as Error)?.message || 'Google redirect failed.');
+    }
+    // Only reached if navigation never started — don't hang the caller.
+    throw new GoogleAuthError('redirect_pending', 'Google sign-in is opening — reconnect once it returns.');
   }
 
   // 1. First attempt: Firebase Auth GoogleAuthProvider popup
@@ -232,7 +279,8 @@ export async function requestCalendarToken(opts: { silent?: boolean } = {}): Pro
             reject(
               new GoogleAuthError(
                 'origin_mismatch',
-                'Google Cloud OAuth origin mismatch: Please register this origin in Google Cloud Console or authorize OAuth in AI Studio.',
+                `Google OAuth rejected this origin (${typeof window !== 'undefined' ? window.location.origin : 'unknown'}). ` +
+                  'Add it under "Authorized JavaScript origins" of the Web OAuth client in Google Cloud Console → APIs & Services → Credentials.',
               ),
             );
           } else {

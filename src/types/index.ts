@@ -385,6 +385,14 @@ export interface AIProviderConfig {
     gemini?: string;
     claude?: string;
     custom?: string;
+    /**
+     * Puter API token (puter.com/dashboard#account → "Create token").
+     * Stored and used exactly like the other provider keys. This is the
+     * reliable way to connect Puter in the packaged APK/iOS app AND on the
+     * web: Puter's normal popup `auth.signIn()` shows a blank page in mobile
+     * WebViews, but a token calls Puter's OpenAI-compatible endpoint directly.
+     */
+    puter?: string;
   };
   customEndpoint?: string;
   models: {
@@ -392,6 +400,7 @@ export interface AIProviderConfig {
     gemini: string;
     claude: string;
     custom: string;
+    puter?: string;
   };
   puterUser: {
     username: string;

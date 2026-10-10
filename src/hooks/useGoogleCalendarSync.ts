@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { CalendarOutboxItem, GoogleCalendarSyncState, ScheduleEvent } from '../types';
 import { StudyStorage } from '../utils/storage';
 import {
   clearCachedToken,
   fetchGoogleEmail,
+  GCAL_CONNECT_PENDING_KEY,
   requestCalendarToken,
   revokeCalendarToken,
 } from '../lib/googleCalendar';
@@ -145,6 +147,46 @@ export function useGoogleCalendarSync({
     stateRef.current = next;
     setCalendarSync(next);
   }, [persistOutbox, setSchedule, setCalendarSync]);
+
+  // Native: the calendar connect runs as a full-page Google redirect, which
+  // reloads the WebView and kills the original `connect()` call. The flag set
+  // before leaving + the token cached by completeGoogleRedirect() let us
+  // finish the connection automatically once the app comes back.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    if (!localStorage.getItem(GCAL_CONNECT_PENDING_KEY)) return;
+
+    let cancelled = false;
+
+    const resume = async () => {
+      // 1. Wait for completeGoogleRedirect() to cache the token on app load.
+      let hasToken = false;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        try {
+          await requestCalendarToken({ silent: true });
+          hasToken = true;
+          break;
+        } catch {
+          if (cancelled) return;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+      localStorage.removeItem(GCAL_CONNECT_PENDING_KEY);
+      if (!hasToken || cancelled || stateRef.current.connected) return;
+
+      // 2. Finish what the redirect started.
+      try {
+        await connect();
+      } catch (err) {
+        console.warn('Automatic calendar reconnect failed:', err);
+      }
+    };
+
+    void resume();
+    return () => {
+      cancelled = true;
+    };
+  }, [connect]);
 
   useEffect(() => {
     if (!calendarSync.connected || initializedRef.current) return;

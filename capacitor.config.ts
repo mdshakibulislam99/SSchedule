@@ -17,6 +17,10 @@ const config: CapacitorConfig = {
     // Serves the bundled assets over https://localhost inside the WebView so the
     // app gets a secure origin (required for service workers, crypto, etc.).
     androidScheme: 'https',
+    // iOS must match: the default `capacitor://` scheme breaks the CORS check
+    // for Vite's `crossorigin` module scripts, so the bundle silently fails to
+    // execute and the app renders a blank white screen. https://localhost fixes it.
+    iosScheme: 'https',
   },
   plugins: {
     // Only Google is needed; disabling the rest keeps the native APK smaller.

@@ -6,7 +6,8 @@
 		"backgroundColor": "#4F46E5"
 	},
 	"server": {
-		"androidScheme": "https"
+		"androidScheme": "https",
+		"iosScheme": "https"
 	},
 	"plugins": {
 		"SocialLogin": {

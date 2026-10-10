@@ -130,7 +130,7 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
     onUpdateSettings(() => ({
       inAppBanners: true,
       soundEnabled: true,
-      browserNotifications: false,
+      browserNotifications: true,
       taskReminders: true,
       classReminders: true,
       deadlineAlerts: true,

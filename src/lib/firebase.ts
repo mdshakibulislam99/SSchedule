@@ -42,6 +42,9 @@ export const FIREBASE_CONFIG = {
   appId: (firebaseConfigFile as any).appId || "1:830377325312:web:06a94ca286c4b1a8fc79e5",
   firestoreDatabaseId: (firebaseConfigFile as any).firestoreDatabaseId || "ai-studio-chronopulseaisma-1e7ab4a8-1e54-4bf9-a7ac-a1fda5873d72",
   oAuthClientId: (firebaseConfigFile as any).oAuthClientId || "830377325312-6lfn62e4ev345tvd4u61cd4bc45l92ol.apps.googleusercontent.com",
+  // iOS OAuth client (Google Cloud Console → iOS type, bundle id com.sschedule.app).
+  // Empty until configured — native sign-in then falls back to the redirect flow.
+  iosClientId: (firebaseConfigFile as any).iosClientId || "",
 };
 
 // Initialize Firebase App
@@ -189,6 +192,21 @@ export async function resetPasswordWith(email: string): Promise<void> {
 export async function completeGoogleRedirect(): Promise<FirebaseUser | null> {
   try {
     const result = await getRedirectResult(auth);
+    // The Google provider also requests Calendar scopes — when the redirect
+    // result carries an access token, cache it so calendar sync can use it
+    // without a second consent prompt (this is how the native calendar
+    // connect resumes after the WebView reloads).
+    if (result) {
+      try {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          const { cacheCalendarToken } = await import('./googleCalendar');
+          cacheCalendarToken(credential.accessToken);
+        }
+      } catch {
+        // Best-effort: calendar sync falls back to its own flow if this fails.
+      }
+    }
     return result?.user ?? null;
   } catch (error: any) {
     console.error('Google redirect sign-in failed:', error?.code || error?.message, error);

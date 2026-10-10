@@ -46,8 +46,32 @@ export interface IAIProvider {
 // 1. Puter Provider
 export class PuterAIProvider implements IAIProvider {
   type: AIProviderType = 'puter';
+  private token?: string;
+  private model?: string;
 
+  constructor(token?: string, model?: string) {
+    this.token = token;
+    this.model = model;
+  }
+
+  /**
+   * Generate text via Puter.
+   *
+   * Two paths:
+   *  1. Token path (recommended for the packaged APK/iOS app): when a Puter
+   *     API token is configured we call Puter's OpenAI-compatible endpoint
+   *     directly with a plain HTTPS fetch + Bearer token. This works inside the
+   *     mobile WebView, where the SDK's popup `auth.signIn()` cannot complete.
+   *  2. SDK popup path (browser/desktop fallback): when no token is set we fall
+   *     back to `puter.ai.chat()` using the interactive sign-in session.
+   */
   async generateText(prompt: string, systemInstruction?: string): Promise<string> {
+    // --- Path 1: token-based direct REST call -------------------------------
+    if (this.token) {
+      return this.generateWithToken(prompt, systemInstruction);
+    }
+
+    // --- Path 2: SDK popup session (browser only) ---------------------------
     const puter = typeof window !== 'undefined' ? (window as any).puter : undefined;
     const hasValidToken = Boolean(
       puter &&
@@ -66,11 +90,94 @@ export class PuterAIProvider implements IAIProvider {
 
     try {
       const fullPrompt = systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt;
-      const res = await puter.ai.chat(fullPrompt, { model: 'gpt-4o-mini' });
+      const res = await puter.ai.chat(fullPrompt, { model: this.model || 'gpt-4o-mini' });
       if (typeof res === 'string') return res;
       if (res?.message?.content) return res.message.content;
       return JSON.stringify(res);
     } catch (err: any) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Call Puter's chat driver via the `/drivers/call` RPC endpoint using the
+   * user's dashboard API token.
+   *
+   * IMPORTANT: we deliberately use `/drivers/call` (the same internal path the
+   * Puter.js SDK's `puter.ai.chat()` uses) instead of the OpenAI-compatible
+   * `/puterai/openai/v1/chat/completions` endpoint. The latter is gated behind
+   * a PAID subscription (`requireSubscription: true`), whereas `/drivers/call`
+   * works on Puter's FREE plan and accepts a full-access dashboard token
+   * (`allowFullAccessToken: true`). This is what makes free, in-app Puter work.
+   *
+   * CORS is open for the app's origin, so a plain fetch works in the WebView.
+   */
+  private async generateWithToken(prompt: string, systemInstruction?: string): Promise<string> {
+    const messages: { role: string; content: string }[] = [];
+    if (systemInstruction) {
+      messages.push({ role: 'system', content: systemInstruction });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    try {
+      const res = await fetch('https://api.puter.com/drivers/call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          interface: 'puter-chat-completion',
+          method: 'complete',
+          args: {
+            model: this.model || 'openrouter:openrouter/free',
+            messages,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        let detail = '';
+        let code = '';
+        try {
+          const errBody = await res.json();
+          detail = errBody?.error?.message || errBody?.message || JSON.stringify(errBody);
+          code = errBody?.code || '';
+        } catch {
+          detail = await res.text().catch(() => '');
+        }
+        if (res.status === 401 || res.status === 403 || code === 'token_missing') {
+          throw new Error(`Puter token rejected (${res.status}). Check your token in Settings. ${detail}`);
+        }
+        if (res.status === 402 || code === 'insufficient_funds') {
+          throw new Error(`Puter free allowance used up this month (${detail || 'insufficient_funds'}).`);
+        }
+        throw new Error(`Puter API error (${res.status}). ${detail}`);
+      }
+
+      const data = await res.json();
+      // `/drivers/call` wraps the driver result: { success, result, service }.
+      // The chat driver returns { message: { content }, usage, ... }, and the
+      // Puter.js SDK reads the text via `result.message.content`.
+      const result = data?.result ?? data;
+      const content = result?.message?.content;
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        // content may be an array of blocks like [{ type: 'text', text }]
+        return content
+          .map((c: any) => (typeof c === 'string' ? c : c?.text || ''))
+          .filter(Boolean)
+          .join('\n');
+      }
+      if (typeof result?.text === 'string') return result.text;
+      // Last resort: stringify so the UI shows something rather than nothing.
+      return typeof content === 'undefined' ? JSON.stringify(data) : String(content);
+    } catch (err: any) {
+      // Re-throw with a friendlier message but keep the setup event so the
+      // user is guided to Settings if their token is wrong/expired.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('studyai:open-ai-setup'));
       }
@@ -83,6 +190,9 @@ export class PuterAIProvider implements IAIProvider {
 export function isAIConfigured(config?: AIProviderConfig | null): boolean {
   if (!config) return false;
   if (config.activeProvider === 'puter') {
+    // Token path: a Puter API token is enough (works in the APK/iOS WebView).
+    if (config.apiKeys.puter) return true;
+    // SDK popup path: requires a live interactive sign-in session (browser only).
     const puter = typeof window !== 'undefined' ? (window as any).puter : undefined;
     const hasPuterToken = Boolean(
       puter &&
@@ -195,13 +305,13 @@ export const AIOrchestrator = {
         chosen = 'gemini';
       } else if (taskType === 'file_analysis' && config.apiKeys.claude) {
         chosen = 'claude';
-      } else if (config.puterUser) {
+      } else if (config.apiKeys.puter || config.puterUser) {
         chosen = 'puter';
       }
     }
 
     if (chosen === 'puter') {
-      return new PuterAIProvider();
+      return new PuterAIProvider(config.apiKeys.puter, config.models.puter);
     }
     if (chosen === 'gemini') {
       return new GeminiAIProvider(config.apiKeys.gemini);
