@@ -88,10 +88,12 @@ import {
   GoogleCalendarSyncState,
   AppUpdateCheckResult,
   AIConversation,
+  DocumentStructure,
 } from './types';
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
-import { extractTextFromFile } from './utils/fileExtractor';
+import { extractDocumentFromFile } from './utils/fileExtractor';
+import { saveExtractedText } from './utils/fileStorage';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
@@ -1625,9 +1627,27 @@ export default function App() {
   };
 
   /** Shared by the Files screen and the course workspace so uploads land in one place. */
-  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string }) => {
+  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure }) => {
+    const fileId = `file-${Date.now()}`;
+
+    // Rewrite chapter keys to absolute IndexedDB keys and persist
+    // every chapter's complete text alongside the full document text.
+    let structure = newF.structure;
+    const chapterSaves: Promise<string>[] = [];
+    if (structure && newF.extractedContent) {
+      structure = {
+        ...structure,
+        chapters: structure.chapters.map((chapter) => {
+          const absoluteKey = `text-${fileId}-${chapter.textKey}`;
+          const chapterText = newF.extractedContent!.slice(chapter.startChar, chapter.endChar);
+          if (chapterText.trim()) chapterSaves.push(saveExtractedText(absoluteKey, chapterText));
+          return { ...chapter, textKey: absoluteKey };
+        }),
+      };
+    }
+
     const f: StudyFile = {
-      id: `file-${Date.now()}`,
+      id: fileId,
       name: newF.name || 'Document.pdf',
       size: newF.size || '1.5 MB',
       type: newF.type || 'pdf',
@@ -1638,6 +1658,9 @@ export default function App() {
       courseCode: newF.courseCode,
       dataUrl: newF.dataUrl,
       fileStorageKey: newF.fileStorageKey,
+      extractedTextKey: newF.extractedContent?.trim() ? `text-${fileId}` : undefined,
+      extractedChars: newF.extractedContent?.length || 0,
+      structure,
       aiContext: {
         status: 'analyzing',
         summary: 'AI is analyzing and indexing document context…',
@@ -1648,6 +1671,14 @@ export default function App() {
     setFiles((prev) => [f, ...prev]);
     playChime('success');
 
+    // Persist the FULL extracted text so the complete document context
+    // stays available for AI learning sessions (IndexedDB, not localStorage).
+    if (f.extractedTextKey && newF.extractedContent) {
+      saveExtractedText(f.extractedTextKey, newF.extractedContent)
+        .then(() => Promise.all(chapterSaves))
+        .catch((err) => console.warn('Full-text persistence failed:', err));
+    }
+
     // Auto-send to AI for deep background analysis and permanent context caching
     AIOrchestrator.analyzeAndIndexMaterial(
       {
@@ -1655,6 +1686,7 @@ export default function App() {
         type: f.type,
         content: newF.extractedContent || f.summary,
         courseCode: f.courseCode,
+        structure,
       },
       aiConfig
     )
@@ -1684,12 +1716,13 @@ export default function App() {
    */
   const handleAttachFileToChat = async (file: File) => {
     try {
-      const extracted = await extractTextFromFile(file, file.name);
+      const { text: extracted, structure } = await extractDocumentFromFile(file, file.name);
       handleUploadFile({
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
         extractedContent: extracted,
+        structure: structure ?? undefined,
         summary: `Document attached for AI chat: ${file.name}.`,
       });
       setIncomingChatMaterial({ name: file.name, content: extracted });

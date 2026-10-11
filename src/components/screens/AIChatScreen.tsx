@@ -39,10 +39,11 @@ import {
   Course,
   CourseResource,
   AIConversation,
+  DocumentStructure,
 } from '../../types';
 import { AIOrchestrator, AIExecutionContext } from '../../services/aiOrchestrator';
 import { getLocalDateKey } from '../../utils/dates';
-import { extractTextFromFile } from '../../utils/fileExtractor';
+import { extractDocumentFromFile } from '../../utils/fileExtractor';
 import { StudyStorage } from '../../utils/storage';
 
 interface AIChatScreenProps {
@@ -369,12 +370,13 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
     if (!file) return;
 
     try {
-      const extracted = await extractTextFromFile(file, file.name);
-      const newStudyFile: Partial<StudyFile> & { extractedContent?: string } = {
+      const { text: extracted, structure } = await extractDocumentFromFile(file, file.name);
+      const newStudyFile: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure } = {
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
         extractedContent: extracted,
+        structure: structure ?? undefined,
         courseCode: focusedCourse?.code,
         summary: `Document uploaded during study chat: ${file.name}.`,
       };
@@ -446,7 +448,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       // Add attached material text into the prompt context if present
       let messageToSend = text;
       if (attachedMaterial?.content) {
-        messageToSend = `[ATTACHED STUDY MATERIAL: "${attachedMaterial.name}"]\n${attachedMaterial.content.slice(0, 3000)}\n\nStudent Query: ${text}`;
+        messageToSend = `[ATTACHED STUDY MATERIAL: "${attachedMaterial.name}"]\n${attachedMaterial.content.slice(0, 20000)}\n\nStudent Query: ${text}`;
       }
 
       const aiResponse = await AIOrchestrator.chatWithContext(messageToSend, messages, context, config);

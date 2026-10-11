@@ -91,6 +91,41 @@ export interface ResourceAnnotation {
   updatedAt: string;
 }
 
+/**
+ * One chapter / section / slide of an uploaded document.
+ * The complete chapter text lives in IndexedDB under `textKey`
+ * so any chapter can be reloaded for learning without re-uploading.
+ */
+export interface DocumentChapter {
+  /** 1-based position in the document. */
+  index: number;
+  title: string;
+  /** IndexedDB key holding this chapter's complete text. */
+  textKey: string;
+  /** Character count of the stored chapter text. */
+  charCount: number;
+  /** PDF page range (1-based) when known. */
+  startPage?: number;
+  endPage?: number;
+  /** Slide number when the document is a presentation. */
+  slide?: number;
+  /** Character offsets into the full extracted text (App slices & persists from these). */
+  startChar: number;
+  endChar: number;
+  /** AI digest of just this chapter. */
+  digest?: string;
+  keyConcepts?: string[];
+}
+
+/** Structural map of an uploaded document (chapters, sections, slides). */
+export interface DocumentStructure {
+  /** What one "chapter" represents in this document. */
+  unit: 'chapter' | 'section' | 'slide' | 'page-range';
+  fileName: string;
+  totalChars: number;
+  chapters: DocumentChapter[];
+}
+
 export interface ResourceAIContext {
   status: 'pending' | 'analyzing' | 'ready' | 'error';
   analyzedAt?: string;
@@ -103,6 +138,8 @@ export interface ResourceAIContext {
     priority: 'high' | 'medium' | 'low';
     estimatedMinutes: number;
   }>;
+  /** Per-chapter digests when the document was structurally indexed. */
+  chapters?: DocumentChapter[];
 }
 
 export interface CourseResource {
@@ -310,6 +347,15 @@ export interface StudyFile {
   dataUrl?: string;
   /** IndexedDB key for larger files that cannot fit in localStorage. */
   fileStorageKey?: string;
+  /**
+   * IndexedDB key for the FULL extracted text of this file, so the entire
+   * document context is preserved and can be reloaded for AI learning.
+   */
+  extractedTextKey?: string;
+  /** Number of characters of text extracted from the file (0 = nothing extractable). */
+  extractedChars?: number;
+  /** Chapter/section/slide map of the document for targeted learning. */
+  structure?: DocumentStructure;
   aiContext?: ResourceAIContext;
 }
 

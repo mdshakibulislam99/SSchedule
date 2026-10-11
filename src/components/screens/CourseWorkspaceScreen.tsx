@@ -38,7 +38,7 @@ import {
 import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 import { TaskComposer } from '../tasks/TaskComposer';
 import { saveFileBlob } from '../../utils/fileStorage';
-import { extractTextFromFile } from '../../utils/fileExtractor';
+import { extractDocumentFromFile } from '../../utils/fileExtractor';
 import { FileViewer } from '../course/FileViewer';
 
 /** Which panel of the "Add resource" flow is showing. */
@@ -615,8 +615,11 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
     const mime = file.type || undefined;
     const fileStorageKey = await saveFileBlob(file, `file-${crypto.randomUUID()}`);
 
-    // Automatically extract textual context for instant AI understanding & permanent context caching
-    const extractedText = await extractTextFromFile(file, file.name);
+    // Automatically extract textual context for instant AI understanding & permanent context caching.
+    // The FULL text is persisted with the file record (IndexedDB); the resource
+    // reader keeps a generous excerpt so huge textbooks cannot exhaust the
+    // localStorage quota.
+    const { text: extractedText, structure } = await extractDocumentFromFile(file, file.name);
 
     onUploadFile?.({
       name: file.name,
@@ -625,11 +628,12 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       courseCode: course.code,
       fileStorageKey,
       extractedContent: extractedText,
+      structure: structure ?? undefined,
     });
     onAddResource({
       title: file.name,
       type,
-      content: extractedText,
+      content: extractedText.slice(0, 200000),
       fileName: file.name,
       mime,
       fileStorageKey,

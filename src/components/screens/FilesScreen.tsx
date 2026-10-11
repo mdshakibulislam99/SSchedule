@@ -3,7 +3,7 @@ import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Cale
 import { CourseResource, StudyFile, StudyNote, Task } from '../../types';
 import { FileViewer } from '../course/FileViewer';
 import { saveFileBlob } from '../../utils/fileStorage';
-import { extractTextFromFile } from '../../utils/fileExtractor';
+import { extractDocumentFromFile } from '../../utils/fileExtractor';
 
 function createViewerResource(file: StudyFile): CourseResource {
   const lower = file.name.toLowerCase();
@@ -105,8 +105,9 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       fileStorageKey = undefined;
     }
 
-    // Extract text content automatically so AI gets rich material context
-    const extractedContent = await extractTextFromFile(uploaded, uploaded.name);
+    // Extract the complete text + chapter structure so AI gets
+    // rich material context and per-chapter learning works.
+    const { text: extractedContent, structure } = await extractDocumentFromFile(uploaded, uploaded.name);
 
     onUploadFile({
       name: uploaded.name,
@@ -114,6 +115,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       type,
       fileStorageKey,
       extractedContent,
+      structure: structure ?? undefined,
     });
     setUploadNotice(`${uploaded.name} added · AI Auto-Indexing in background…`);
     window.setTimeout(() => setUploadNotice(null), 4000);
@@ -499,6 +501,62 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
                       {selectedFile.aiContext?.denseContext || 'Knowledge digest prepared for AI learning sessions.'}
                     </p>
                   </div>
+
+                  {/* Chapter / Section Map — stored for targeted learning */}
+                  {(() => {
+                    const chapters = selectedFile.structure?.chapters?.length
+                      ? selectedFile.structure.chapters
+                      : selectedFile.aiContext?.chapters;
+                    if (!chapters || chapters.length === 0) return null;
+                    const unit = selectedFile.structure?.unit || 'chapter';
+                    return (
+                      <div className="p-4 rounded-2xl bg-sky-50/50 dark:bg-sky-950/30 border border-sky-100 dark:border-sky-900/50 space-y-2">
+                        <h4 className="text-xs font-bold text-sky-950 dark:text-sky-200 flex items-center gap-1.5">
+                          <BookOpen className="w-3.5 h-3.5 text-sky-600" />
+                          {unit === 'slide' ? 'Slide Map' : 'Chapter Map'} · {chapters.length} {chapters.length === 1 ? unit : unit + 's'} stored
+                        </h4>
+                        <p className="text-[10px] text-sky-700/80 dark:text-sky-400">
+                          Ask AI "tell me about {unit} 3" in chat — the full chapter text is loaded instantly, no re-upload.
+                        </p>
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-0.5">
+                          {chapters.map((chapter) => (
+                            <button
+                              key={chapter.index}
+                              type="button"
+                              onClick={() => {
+                                setSelectedFile(null);
+                                onAskAIAboutFile(selectedFile);
+                              }}
+                              className="w-full text-left p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-sky-100/80 dark:border-sky-800/40 hover:border-sky-400 cursor-pointer transition-all group"
+                              title={`Ask AI about ${unit} ${chapter.index}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                  <span className="text-sky-600 dark:text-sky-400 font-mono mr-1.5">
+                                    {unit === 'slide' ? `S${chapter.slide ?? chapter.index}` : `${chapter.index}.`}
+                                  </span>
+                                  {chapter.title}
+                                </span>
+                                <span className="text-[9px] font-bold text-sky-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  Ask →
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-[9px] text-slate-400">
+                                {chapter.startPage != null && (
+                                  <span>
+                                    p. {chapter.startPage}
+                                    {chapter.endPage && chapter.endPage !== chapter.startPage ? `–${chapter.endPage}` : ''}
+                                  </span>
+                                )}
+                                <span>{(chapter.charCount / 1000).toFixed(1)}k chars</span>
+                                {chapter.digest && <span className="text-emerald-500 font-bold">● indexed</span>}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Comprehension Questions */}
                   {selectedFile.aiContext?.studyQuestions && selectedFile.aiContext.studyQuestions.length > 0 && (

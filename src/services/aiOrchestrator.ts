@@ -16,9 +16,12 @@ import {
   CourseQuizQuestion,
   CourseKeyTerm,
   ResourceAIContext,
+  DocumentStructure,
+  DocumentChapter,
 } from '../types';
 import { getLocalDateKey } from '../utils/dates';
 import { apiUrl } from '../lib/api';
+import { loadExtractedText } from '../utils/fileStorage';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -295,6 +298,137 @@ export class ExternalProxyAIProvider implements IAIProvider {
 }
 
 // Central AI Orchestration Layer
+
+/**
+ * Splits a document into chunks aligned to sentence boundaries so the
+ * AI can reason over the ENTIRE file, not just its first few pages.
+ */
+function splitIntoChunks(text: string, chunkSize = 12000): string[] {
+  const clean = (text || '').trim();
+  if (clean.length <= chunkSize) return clean ? [clean] : [];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < clean.length) {
+    let end = Math.min(start + chunkSize, clean.length);
+    if (end < clean.length) {
+      // Prefer breaking at a sentence or line boundary.
+      let breakAt = clean.lastIndexOf('. ', end);
+      if (breakAt <= start) breakAt = clean.lastIndexOf('\n', end);
+      if (breakAt <= start) breakAt = clean.lastIndexOf(' ', end);
+      if (breakAt > start) end = breakAt + 1;
+    }
+    const chunk = clean.slice(start, end).trim();
+    if (chunk) chunks.push(chunk);
+    start = end;
+  }
+  return chunks;
+}
+
+/**
+ * When a collection has more items than we can afford to send, sample
+ * evenly across the whole set so the beginning, middle and end are
+ * all represented instead of only analyzing the first items.
+ */
+function sampleArray<T>(items: T[], maxItems: number): T[] {
+  if (items.length <= maxItems) return items;
+  const stride = items.length / maxItems;
+  const picked: T[] = [];
+  for (let i = 0; i < maxItems; i++) {
+    picked.push(items[Math.min(Math.floor(i * stride), items.length - 1)]);
+  }
+  return picked;
+}
+
+interface ChunkAnalysis {
+  summary: string;
+  keyConcepts: string[];
+  sectionDigest: string;
+  studyQuestions: string[];
+  suggestedTasks: Array<{ title: string; priority: 'high' | 'medium' | 'low'; estimatedMinutes: number }>;
+}
+
+function dedupeStrings(items: string[]): string[] {
+  return Array.from(new Set(items.map((s) => s.trim()).filter(Boolean)));
+}
+
+/** Deterministically merges per-chunk analyses into one ResourceAIContext. */
+function mergeChunkAnalyses(
+  chunkResults: ChunkAnalysis[],
+  material: { title: string; courseCode?: string }
+): ResourceAIContext {
+  const keyConcepts = dedupeStrings(chunkResults.flatMap((r) => r.keyConcepts)).slice(0, 14);
+  const studyQuestions = dedupeStrings(chunkResults.flatMap((r) => r.studyQuestions)).slice(0, 8);
+  const seenTasks = new Set<string>();
+  const suggestedTasks: ChunkAnalysis['suggestedTasks'] = [];
+  for (const result of chunkResults) {
+    for (const task of result.suggestedTasks) {
+      if (!task.title || seenTasks.has(task.title)) continue;
+      seenTasks.add(task.title);
+      suggestedTasks.push(task);
+      if (suggestedTasks.length >= 6) break;
+    }
+    if (suggestedTasks.length >= 6) break;
+  }
+  const denseContext = chunkResults
+    .map((r) => r.sectionDigest)
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 9000);
+  const summary = chunkResults
+    .map((r) => r.summary)
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 1200);
+
+  return {
+    status: 'ready',
+    analyzedAt: new Date().toISOString(),
+    summary: summary || `Academic resource covering ${material.title} for ${material.courseCode || 'course study'}.`,
+    keyConcepts,
+    denseContext,
+    studyQuestions,
+    suggestedTasks,
+  };
+}
+
+/**
+ * Finds the chapter/section/slide/page a student message
+ * references ("chapter 6", "slide 12", "page 30") across the
+ * files available in the current chat context.
+ */
+function findReferencedChapter(
+  message: string,
+  files: StudyFile[]
+): { file: StudyFile; chapter: DocumentChapter } | null {
+  const ref = message.match(/\b(chapters?|sections?|units?|modules?|lessons?|slides?|pages?)\s+([0-9]+(?:\.[0-9]+)?)\b/i);
+  if (!ref) return null;
+  const refWord = ref[1].toLowerCase();
+  const refNum = parseInt(ref[2], 10);
+  const refToken = ref[2];
+  const numPattern = new RegExp(`(^|[^0-9])${refToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^0-9]|$)`);
+  const isPageRef = refWord.startsWith('page');
+  const isSlideRef = refWord.startsWith('slide');
+
+  for (const file of files) {
+    const chapters = file.structure?.chapters?.length
+      ? file.structure.chapters
+      : file.aiContext?.chapters;
+    if (!chapters || chapters.length === 0) continue;
+    const chapter = chapters.find((c) => {
+      if (isSlideRef) return c.slide === refNum;
+      if (isPageRef) {
+        const start = c.startPage ?? 0;
+        const end = c.endPage ?? c.startPage ?? 0;
+        return start <= refNum && end >= refNum;
+      }
+      return c.index === refNum || numPattern.test(c.title);
+    });
+    if (chapter) return { file, chapter };
+  }
+  return null;
+}
+
 export const AIOrchestrator = {
   getProvider(config: AIProviderConfig, taskType: 'routine' | 'deep_research' | 'file_analysis' = 'routine'): IAIProvider {
     let chosen = config.activeProvider;
@@ -414,14 +548,34 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     }
 
     const todayDateKey = getLocalDateKey();
+
+    // Chapter-aware retrieval: when the student references a specific
+    // chapter/section/slide/page of an uploaded document, load its
+    // COMPLETE stored text from IndexedDB as the primary context.
+    let chapterContext = '';
+    const referenced = findReferencedChapter(userMessage, [
+      ...(context.currentFile ? [context.currentFile] : []),
+      ...(context.courseFiles || []),
+    ]);
+    if (referenced) {
+      const { file, chapter } = referenced;
+      const chapterText = await loadExtractedText(chapter.textKey);
+      if (chapterText && chapterText.trim()) {
+        const unit = file.structure?.unit || 'chapter';
+        chapterContext = `The student is asking specifically about ${unit} ${chapter.index} of "${file.name}" — "${chapter.title}". This is the COMPLETE stored text of that ${unit} (${chapter.charCount} characters). Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 80000)}\n"""\n\n`;
+      }
+    }
+
     const recentHistory = history
       .filter((message) => !message.isError && (message.sender === 'user' || (message.sender === 'ai' && message.id.startsWith('ai-'))))
       .slice(-12)
       .map((message) => `${message.sender === 'user' ? 'Student' : 'StudyAI'}: ${message.text.slice(0, 2000)}`)
       .join('\n');
-    const conversationPrompt = recentHistory
-      ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
-      : userMessage;
+    const conversationPrompt =
+      chapterContext +
+      (recentHistory
+        ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
+        : userMessage);
     const systemInstruction = `${contextPrompt}
 Today's Date: ${todayDateKey}.
 Use the recent conversation history to understand references and follow-up questions. Continue the established topic unless the student clearly changes subjects. Answer the specific question first; do not redirect to scheduling or generic study suggestions unless requested. Keep replies consistent with prior explanations, and ask a brief clarifying question only when the thread does not provide enough context.
@@ -1299,78 +1453,172 @@ Return valid JSON only in this format:
 
   // 15. Auto-analyze and index a newly added file or resource to persist ready context
   async analyzeAndIndexMaterial(
-    material: { title: string; type: string; content?: string; courseCode?: string },
+    material: { title: string; type: string; content?: string; courseCode?: string; structure?: DocumentStructure },
     config: AIProviderConfig
   ): Promise<ResourceAIContext> {
     const provider = this.getProvider(config, 'routine');
-    const contentSample = (material.content || '').slice(0, 6500);
+    const fullContent = (material.content || '').trim();
+    const courseLabel = material.courseCode || 'General study';
 
-    const prompt = `STRICT COURSE INDIVIDUALITY RULE:
-Perform an in-depth academic indexing analysis of this newly added learning material specifically for the course "${material.courseCode || 'General study'}".
+    if (!fullContent) {
+      return this.buildFallbackIndex(material, courseLabel);
+    }
+
+    // Analyze the ENTIRE document: split into sentence-aligned chunks and
+    // reason over each one (sampling evenly across very long documents so
+    // the beginning, middle and end are all covered).
+    const chunks = sampleArray(splitIntoChunks(fullContent), 6);
+
+    const analyzeChunk = async (chunk: string, index: number, total: number): Promise<ChunkAnalysis | null> => {
+      const isSection = total > 1;
+      const prompt = `STRICT COURSE INDIVIDUALITY RULE:
+Perform an in-depth academic indexing analysis of this ${isSection ? `section` : 'newly added learning material'}${isSection ? ` (part ${index + 1} of ${total} of the document)` : ''} specifically for the course "${courseLabel}".
 Title: "${material.title}"
 Type: ${material.type}
-Course: ${material.courseCode || 'General study'}
-Content preview:
+Course: ${courseLabel}
+${isSection ? `Document section ${index + 1}/${total}:` : 'Full document content:'}
 """
-${contentSample || `Material: ${material.title} (${material.type}).`}
+${chunk}
 """
 
 Analyze and return valid JSON only with this exact shape:
 {
-  "summary": "2-3 crisp sentences explaining exactly what this document covers in the context of ${material.courseCode || 'this course'} and why it matters.",
+  "summary": "1-2 crisp sentences explaining exactly what this ${isSection ? 'section' : 'document'} covers in the context of ${courseLabel}.",
   "keyConcepts": ["Concept 1", "Concept 2", "Concept 3", "Concept 4"],
-  "denseContext": "A comprehensive 150-250 word study knowledge digest capturing the fundamental theorems, formulas, definitions, key arguments, and takeaways of this material for ${material.courseCode || 'this course'}. This will be preserved as the permanent pre-indexed context for future AI learning sessions.",
+  "sectionDigest": "A comprehensive study knowledge digest ${isSection ? 'of this section' : 'of this document'} capturing the fundamental theorems, formulas, definitions, key arguments, and takeaways for ${courseLabel}. This will be preserved as the permanent pre-indexed context for future AI learning sessions.",
   "studyQuestions": [
-    "Thought-provoking comprehension question 1 for ${material.courseCode || 'this course'}?",
-    "Question 2?",
-    "Question 3?"
+    "Thought-provoking comprehension question for ${courseLabel}?",
+    "Question 2?"
   ],
   "suggestedTasks": [
     {
-      "title": "Actionable task title derived from this material for ${material.courseCode || 'this course'}",
+      "title": "Actionable task title derived from this material for ${courseLabel}",
       "priority": "high",
       "estimatedMinutes": 30
     }
   ]
 }`;
 
-    try {
-      const raw = await provider.generateText(
-        prompt,
-        `You are an expert research librarian and academic indexer. MANDATORY: Focus strictly on the individual course "${material.courseCode || 'General study'}". Do NOT blend with concepts from other courses.`
-      );
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.summary && parsed.denseContext) {
-          return {
-            status: 'ready',
-            analyzedAt: new Date().toISOString(),
-            summary: String(parsed.summary),
-            keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map(String) : [],
-            denseContext: String(parsed.denseContext),
-            studyQuestions: Array.isArray(parsed.studyQuestions) ? parsed.studyQuestions.map(String) : [],
-            suggestedTasks: Array.isArray(parsed.suggestedTasks)
-              ? parsed.suggestedTasks.map((t: any) => ({
-                  title: String(t.title || 'Study document'),
-                  priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
-                  estimatedMinutes: Number(t.estimatedMinutes) || 30,
-                }))
-              : [],
-          };
+      try {
+        const raw = await provider.generateText(
+          prompt,
+          `You are an expert research librarian and academic indexer. MANDATORY: Focus strictly on the individual course "${courseLabel}". Do NOT blend with concepts from other courses.`
+        );
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed) {
+            return {
+              summary: String(parsed.summary || ''),
+              keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map(String) : [],
+              sectionDigest: String(parsed.sectionDigest || ''),
+              studyQuestions: Array.isArray(parsed.studyQuestions) ? parsed.studyQuestions.map(String) : [],
+              suggestedTasks: Array.isArray(parsed.suggestedTasks)
+                ? parsed.suggestedTasks.map((t: any) => ({
+                    title: String(t.title || 'Study document'),
+                    priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
+                    estimatedMinutes: Number(t.estimatedMinutes) || 30,
+                  }))
+                : [],
+            };
+          }
         }
+      } catch (err) {
+        console.warn(`analyzeAndIndexMaterial: chunk ${index + 1} failed:`, err);
+      }
+      return null;
+    };
+
+    try {
+      const chunkResults: ChunkAnalysis[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const result = await analyzeChunk(chunks[i], i, chunks.length);
+        if (result) chunkResults.push(result);
+      }
+      if (chunkResults.length > 0) {
+        const merged = mergeChunkAnalyses(chunkResults, material);
+        merged.chapters = await this.analyzeChapters(material, fullContent, provider, courseLabel);
+        return merged;
       }
     } catch (err) {
       console.warn('analyzeAndIndexMaterial fallback used:', err);
     }
 
-    // High quality deterministic fallback
+    return this.buildFallbackIndex(material, courseLabel);
+  },
+
+  /**
+   * Produces a digest + key concepts for every chapter of a
+   * structurally indexed document, so each chapter's context is
+   * stored and ready for targeted learning.
+   */
+  async analyzeChapters(
+    material: { title: string; structure?: DocumentStructure },
+    fullContent: string,
+    provider: IAIProvider,
+    courseLabel: string
+  ): Promise<DocumentChapter[] | undefined> {
+    const chapters = material.structure?.chapters;
+    if (!chapters || chapters.length === 0) return undefined;
+    const unit = material.structure?.unit || 'chapter';
+
+    // Skip tiny chapters (title slides etc.) and cap API calls by sampling.
+    const substantial = chapters.filter((c) => c.endChar - c.startChar > 200);
+    const toAnalyze = new Set(sampleArray(substantial, 8).map((c) => c.index));
+
+    const analyzed: DocumentChapter[] = [];
+    for (const chapter of chapters) {
+      if (!toAnalyze.has(chapter.index)) {
+        analyzed.push(chapter);
+        continue;
+      }
+      const chapterText = fullContent.slice(chapter.startChar, chapter.endChar).slice(0, 24000);
+      const label = unit === 'slide' ? `Slide ${chapter.slide}` : `${unit === 'page-range' ? 'Page range' : 'Chapter'} ${chapter.index}`;
+      try {
+        const raw = await provider.generateText(
+          `You are indexing ONE ${unit} of the document "${material.title}" for the course "${courseLabel}".
+${label}: "${chapter.title}"
+Complete text of this ${unit}:
+"""
+${chapterText}
+"""
+
+Return valid JSON only with this exact shape:
+{
+  "digest": "A 100-150 word study digest covering ONLY this ${unit} — its key definitions, theorems, formulas, arguments and takeaways for ${courseLabel}.",
+  "keyConcepts": ["Concept from this ${unit}", "Another concept"]
+}`,
+          `You are an expert research librarian indexing study material for "${courseLabel}". Digest ONLY this ${unit}, never other parts of the document.`
+        );
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          analyzed.push({
+            ...chapter,
+            digest: parsed.digest ? String(parsed.digest) : undefined,
+            keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map(String) : undefined,
+          });
+          continue;
+        }
+      } catch (err) {
+        console.warn(`analyzeChapters: chapter ${chapter.index} failed:`, err);
+      }
+      analyzed.push(chapter);
+    }
+    return analyzed;
+  },
+
+  /** Deterministic high-quality fallback when AI analysis cannot run. */
+  buildFallbackIndex(
+    material: { title: string; type: string; content?: string; courseCode?: string },
+    courseLabel: string
+  ): ResourceAIContext {
     return {
       status: 'ready',
       analyzedAt: new Date().toISOString(),
-      summary: `Academic resource covering ${material.title}. Essential reference material for ${material.courseCode || 'course study'}.`,
+      summary: `Academic resource covering ${material.title}. Essential reference material for ${courseLabel}.`,
       keyConcepts: [material.title, 'Key principles', 'Application methods'],
-      denseContext: `Pre-indexed study digest for "${material.title}". This document provides reference material, practical examples, and core concepts relevant to ${material.courseCode || 'course curriculum'}.`,
+      denseContext: `Pre-indexed study digest for "${material.title}". This document provides reference material, practical examples, and core concepts relevant to ${courseLabel}.`,
       studyQuestions: [
         `What are the core arguments and premises presented in "${material.title}"?`,
         `How does this material connect to other course modules and assignments?`,
