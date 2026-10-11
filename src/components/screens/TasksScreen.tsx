@@ -16,12 +16,14 @@ import {
   RefreshCw,
   Clock,
   Pencil,
+  FileText,
 } from 'lucide-react';
 import { Task, TaskCategory, ScheduleEvent, AIProviderConfig, AIActionProposal } from '../../types';
 import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
 import { TaskComposer } from '../tasks/TaskComposer';
 import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
+import { extractTextFromFile } from '../../utils/fileExtractor';
 
 interface TasksScreenProps {
   tasks: Task[];
@@ -37,6 +39,8 @@ interface TasksScreenProps {
   onComposerStateChange?: (isOpen: boolean) => void;
   /** Increment to request that the composer closes (used by the Android back button). */
   closeComposerSignal?: number;
+  /** Opens a file picker; the file's text is attached to the AI chat. */
+  onAttachFileToChat?: (file: File) => void;
 }
 
 const AREA_CHOICES: { id: 'all' | TaskCategory; label: string }[] = [
@@ -61,6 +65,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   onExecuteAction,
   onComposerStateChange,
   closeComposerSignal,
+  onAttachFileToChat,
 }) => {
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'overdue' | 'finished'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,12 +77,17 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
   const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
+  const attachFileInputRef = useRef<HTMLInputElement>(null);
 
   // Quick AI Task Assistant state
   const [aiInput, setAiInput] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [proposedAction, setProposedAction] = useState<AIActionProposal | null>(null);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  // File attached to the AI Task Assistant — its extracted text is
+  // sent with every assistant query so the AI works from the file data.
+  const [assistantMaterial, setAssistantMaterial] = useState<{ name: string; content?: string } | null>(null);
+  const assistantFileInputRef = useRef<HTMLInputElement>(null);
 
   // Lets the Android hardware back button dismiss the composer instead of
   // dropping the user straight out of the app.
@@ -105,8 +115,13 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     setAiFeedback(null);
 
     try {
+      // Prepend attached file data so the AI answers from the material.
+      const messageToSend = assistantMaterial?.content
+        ? `[ATTACHED STUDY MATERIAL: "${assistantMaterial.name}"]\n${assistantMaterial.content.slice(0, 3000)}\n\nStudent Query: ${textToSend}`
+        : textToSend;
+
       const res = await AIOrchestrator.chatWithContext(
-        textToSend,
+        messageToSend,
         [],
         { tasks, schedule },
         configToUse
@@ -280,6 +295,30 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             </button>
           )}
 
+          {onAttachFileToChat && (
+            <>
+              <input
+                ref={attachFileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0];
+                  if (picked) onAttachFileToChat(picked);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => attachFileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer shrink-0"
+                aria-label="Attach file to AI chat"
+                title="Attach file to AI chat"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">Attach to AI</span>
+              </button>
+            </>
+          )}
+
           <button
             onClick={() => setIsAddModalOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer shrink-0"
@@ -425,6 +464,24 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           </span>
         </div>
 
+        {/* Attached file pill (file data is sent with every assistant query) */}
+        {assistantMaterial && (
+          <div className="flex items-center gap-1.5 text-xs animate-fade-in">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-medium text-[11px]">
+              <FileText className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="truncate max-w-[180px]">{assistantMaterial.name}</span>
+              <button
+                type="button"
+                onClick={() => setAssistantMaterial(null)}
+                className="hover:text-rose-500 ml-0.5 cursor-pointer"
+                aria-label="Remove attached file"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {/* Input row */}
         <form
           onSubmit={(e) => {
@@ -433,6 +490,35 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           }}
           className="flex items-center gap-2"
         >
+          {/* + Attach file for AI */}
+          <div className="relative shrink-0">
+            <input
+              ref={assistantFileInputRef}
+              type="file"
+              className="hidden"
+              onChange={async (e) => {
+                const picked = e.target.files?.[0];
+                e.target.value = '';
+                if (!picked) return;
+                try {
+                  const extracted = await extractTextFromFile(picked, picked.name);
+                  setAssistantMaterial({ name: picked.name, content: extracted });
+                } catch (err) {
+                  console.warn('Attach file to AI assistant failed:', err);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => assistantFileInputRef.current?.click()}
+              className="w-8 h-8 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200/80 dark:border-emerald-800/80 text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-400 dark:hover:border-emerald-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              title="Attach file for AI (its content is sent with your question)"
+              aria-label="Attach file for AI"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
           <div className="relative flex-1">
             <input
               type="text"

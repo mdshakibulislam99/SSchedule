@@ -26,7 +26,18 @@ import {
   checkNotificationPermission,
   requestNotificationPermission,
   requestBatteryOptimizationExemption,
+  getExactAlarmStatus,
+  openExactAlarmSettings,
+  ExactAlarmStatus,
 } from '../../services/notificationService';
+import {
+  getWebPushStatus,
+  enableWebPush,
+  disableWebPush,
+  sendTestPush,
+  WebPushStatus,
+} from '../../services/webPushService';
+import { auth } from '../../lib/firebase';
 
 interface NotificationSettingsScreenProps {
   settings: NotificationSettings;
@@ -45,6 +56,61 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
   const [testNotificationSent, setTestNotificationSent] = useState(false);
   const [soundTested, setSoundTested] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<string>('default');
+  // Android 12+ exact-alarm capability. When missing, timed reminders
+  // degrade to inexact alarms that Doze defers — they fire late or not
+  // at all while the phone is locked.
+  const [exactAlarmStatus, setExactAlarmStatus] = useState<ExactAlarmStatus>('not_required');
+  const [pushStatus, setPushStatus] = useState<WebPushStatus | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushTestState, setPushTestState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+
+  // Web Push (iPhone Home-Screen PWA) status — only meaningful on the web.
+  useEffect(() => {
+    if (isNative) return;
+    let cancelled = false;
+    const refresh = () =>
+      getWebPushStatus().then((s) => {
+        if (!cancelled) setPushStatus(s);
+      });
+    refresh();
+    const unsub = auth.onAuthStateChanged(() => refresh());
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [isNative]);
+
+  const handleEnablePush = async () => {
+    setPushBusy(true);
+    try {
+      await enableWebPush();
+      setPushStatus(await getWebPushStatus());
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      await disableWebPush();
+      setPushStatus(await getWebPushStatus());
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setPushTestState('sending');
+    try {
+      await sendTestPush();
+      setPushTestState('sent');
+    } catch (err) {
+      console.warn('Test push failed:', err);
+      setPushTestState('error');
+    }
+    setTimeout(() => setPushTestState('idle'), 4000);
+  };
 
   useEffect(() => {
     checkNotificationPermission().then((status) => {
@@ -54,6 +120,35 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
       }
     });
   }, []);
+
+  // Exact-alarm capability (Android 12+). Re-checked on focus /
+  // visibility change so granting it in the system screen the app
+  // opened reflects immediately.
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+    const refresh = () => {
+      void getExactAlarmStatus().then((s) => {
+        if (!cancelled) setExactAlarmStatus(s);
+      });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [isNative]);
+
+  const handleFixExactAlarm = async () => {
+    await openExactAlarmSettings();
+    // Re-check shortly after the user returns from the system screen.
+    setTimeout(() => {
+      void getExactAlarmStatus().then(setExactAlarmStatus);
+    }, 800);
+  };
 
   const handleBatteryOptimization = async () => {
     await requestBatteryOptimizationExemption();
@@ -344,6 +439,56 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
             </div>
           )}
 
+          {/* Exact alarms (Android 12+) — required for on-time lockscreen reminders */}
+          {isNative && (
+            <div className="p-4 flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                  exactAlarmStatus === 'needs_user_grant'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
+                    : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                }`}>
+                  {exactAlarmStatus === 'needs_user_grant' ? (
+                    <AlertTriangle className="w-4 h-4" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
+                    <span>Exact Alarms</span>
+                    {exactAlarmStatus === 'needs_user_grant' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        Needs Fix
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        On Time
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {exactAlarmStatus === 'needs_user_grant'
+                      ? 'Android is blocking on-time alarms. Without this, task reminders fire late or not at all while the phone is locked.'
+                      : 'Task and class reminders fire at the exact planned minute, even with the screen off or the phone locked.'}
+                  </div>
+                </div>
+              </div>
+
+              {exactAlarmStatus === 'needs_user_grant' && (
+                <button
+                  type="button"
+                  onClick={handleFixExactAlarm}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-colors shrink-0 shadow-xs"
+                >
+                  Fix Now
+                </button>
+              )}
+            </div>
+          )}
+
           {isNative && (
             <div className="p-4 flex items-center justify-between gap-4">
               <div className="flex items-start gap-3 min-w-0">
@@ -371,6 +516,107 @@ export const NotificationSettingsScreen: React.FC<NotificationSettingsScreenProp
           )}
         </div>
       </div>
+
+      {/* SECTION 1.5: Web Push (iPhone Home-Screen PWA) */}
+      {!isNative && pushStatus && pushStatus.supported && (
+        <div className="space-y-3">
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">
+            Push Notifications (iPhone / Web)
+          </h2>
+
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="p-4 flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
+                    <span>Reliable Background Push</span>
+                    {pushStatus.registered ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Enabled
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        Off
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Get task, class, and deadline alerts even when SSchedule is closed — delivered through your browser's push service.
+                  </div>
+                </div>
+              </div>
+
+              {pushStatus.registered ? (
+                <button
+                  type="button"
+                  onClick={handleDisablePush}
+                  disabled={pushBusy}
+                  className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-colors shrink-0 disabled:opacity-50"
+                >
+                  Disable
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleEnablePush}
+                  disabled={pushBusy}
+                  className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors shrink-0 disabled:opacity-50"
+                >
+                  {pushBusy ? 'Enabling…' : 'Enable Push'}
+                </button>
+              )}
+            </div>
+
+            {/* iOS Home-Screen requirement */}
+            {pushStatus.needsHomeScreen && (
+              <div className="p-3.5 border-t border-slate-100 dark:border-slate-800 bg-amber-50/60 dark:bg-amber-950/30 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-800 dark:text-amber-200">
+                  <span className="font-bold">Add to Home Screen required.</span> On iPhone, open this app in <span className="font-semibold">Safari</span>, tap <span className="font-semibold">Share → Add to Home Screen</span>, then launch it from the new icon and enable push here.
+                </div>
+              </div>
+            )}
+
+            {/* Signed-out hint */}
+            {!auth.currentUser && (
+              <div className="p-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-start gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  Sign in to your account to enable push notifications on this device.
+                </div>
+              </div>
+            )}
+
+            {/* Test push */}
+            {pushStatus.registered && (
+              <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  {pushTestState === 'sent' && (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Test push sent — check your device.</span>
+                  )}
+                  {pushTestState === 'error' && (
+                    <span className="text-rose-600 dark:text-rose-400 font-semibold">Couldn't send test push. Try again.</span>
+                  )}
+                  {pushTestState !== 'sent' && pushTestState !== 'error' && 'Send a push right now to confirm delivery.'}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTestPush}
+                  disabled={pushTestState === 'sending'}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors shrink-0 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {pushTestState === 'sending' ? 'Sending…' : 'Send Test Push'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* SECTION 2: Notification Categories */}
       <div className="space-y-3">

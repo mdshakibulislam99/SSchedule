@@ -1,21 +1,18 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, PermissionStatus } from '@capacitor/local-notifications';
 import { Task, ScheduleEvent, NotificationSettings } from '../types';
-import { getLocalDateKey } from '../utils/dates';
+import {
+  CHANNELS,
+  hashString,
+  MAX_SCHEDULED_ALARMS,
+  buildUpcomingNotifications,
+  NOTIFICATION_SMALL_ICON,
+} from './reminderBuilder';
+import { syncWebPushQueue } from './webPushService';
+import { CURRENT_APP_VERSION } from '../utils/version';
 
-export const CHANNELS = {
-  REMINDERS: 'chronopulse_reminders',
-  GENERAL: 'chronopulse_general',
-} as const;
-
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
-  }
-  return Math.abs(hash) % 2147483647 || 1;
-}
+// Re-exported so existing importers (App.tsx, settings screen) keep working.
+export { CHANNELS };
 
 export interface NotificationPayload {
   id?: string | number;
@@ -34,11 +31,50 @@ export interface SyncAlarmsOptions {
 
 export type PermissionStateResult = 'granted' | 'denied' | 'prompt' | 'unsupported';
 
-/** How far ahead reminders are registered with Android AlarmManager. */
-const SCHEDULE_WINDOW_MS = 30 * 86400000;
-/** Android caps pending alarms — keep the closest ones and re-sync regularly. */
-const MAX_SCHEDULED_ALARMS = 64;
-const DAY_MS = 86400000;
+/**
+ * Last time we told the OS to open the exact-alarm ("Alarms & reminders")
+ * settings screen, so we never bounce the user out of the app repeatedly in one
+ * session. Persisted so the anti-spam survives an app restart too.
+ */
+const EXACT_ALARM_PROMPT_TS_KEY = 'sschedule_exact_alarm_prompt_ts';
+const EXACT_ALARM_PROMPT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // at most once a day
+
+function shouldPromptExactAlarm(): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    const raw = localStorage.getItem(EXACT_ALARM_PROMPT_TS_KEY);
+    const last = raw ? Number(raw) : 0;
+    return !Number.isFinite(last) || Date.now() - last > EXACT_ALARM_PROMPT_COOLDOWN_MS;
+  } catch {
+    return true;
+  }
+}
+
+function markExactAlarmPrompted(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(EXACT_ALARM_PROMPT_TS_KEY, String(Date.now()));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Status of Android's exact-alarm capability (API 31+).
+ * - `granted`  → setExactAndAllowWhileIdle is allowed → alarms fire on time.
+ * - `needs_user_grant` → SCHEDULE_EXACT_ALARM is declared but the user has
+ *   not granted "Alarms & reminders". The app must open the system settings
+ *   screen; scheduling would otherwise silently degrade to inexact alarms.
+ * - `not_required` → pre-Android-12 / exact alarms need no special grant.
+ * - `unknown` → the check threw (older plugin / unsupported build).
+ */
+export type ExactAlarmStatus = 'granted' | 'needs_user_grant' | 'not_required' | 'unknown';
+
+/** Deferred grants: resolved on the next launch, so a first-run denial cannot
+ * permanently silence the device. Keyed per-version so a new release with a
+ * better explanation re-prompts once. */
+const PENDING_GRANT_KEY = 'sschedule_pending_grant_version';
+
 /** Ids registered by the last successful sync, so stale alarms can be cleared. */
 const SYNCED_ALARM_IDS_KEY = 'sschedule_synced_alarm_ids';
 
@@ -71,6 +107,7 @@ function writeSyncedAlarmIds(ids: number[]): void {
 }
 
 let isInitialized = false;
+let isBackgroundResyncActive = false;
 let notificationTapHandler: ((extra?: Record<string, unknown>) => void) | undefined;
 let notificationReceivedHandler: ((notification: { title?: string; body?: string; id?: number; extra?: Record<string, unknown> }) => void) | undefined;
 
@@ -170,43 +207,209 @@ export async function checkNotificationPermission(): Promise<PermissionStateResu
   return 'unsupported';
 }
 
+export interface RequestPermissionResult {
+  /** POST_NOTIFICATIONS runtime permission (Android 13+) was granted. */
+  granted: boolean;
+  /** Exact-alarm capability after the request; used to decide whether we must
+   *  open the "Alarms & reminders" system screen so timed alerts actually fire. */
+  exactAlarm: ExactAlarmStatus;
+  /** True only when we actually displayed a system consent dialog this call
+   *  (the prior OS state was `prompt`). Lets the caller enable the in-app
+   *  reminder toggle on a fresh grant without clobbering a deliberate user
+   *  choice to keep reminders off while OS permission stays granted. */
+  prompted: boolean;
+}
+
+/**
+ * Query Android's exact-alarm capability without changing anything.
+ * Returns `not_required` off Android / on web / when the check is unavailable.
+ */
+export async function getExactAlarmStatus(): Promise<ExactAlarmStatus> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+    return 'not_required';
+  }
+  try {
+    const setting = await LocalNotifications.checkExactNotificationSetting();
+    const state = setting?.exact_alarm;
+    if (state === 'granted') return 'granted';
+    if (state === 'denied') return 'needs_user_grant';
+    // 'prompt' or unknown → treat as needing a user grant so we open settings.
+    return state === undefined ? 'unknown' : 'needs_user_grant';
+  } catch {
+    return 'unknown';
+  }
+}
+
 /**
  * Prompt the user for notification permissions on Native Android (POST_NOTIFICATIONS) or Web.
+ *
+ * Retained for backward compatibility with existing callers that only need the
+ * boolean. New code should prefer {@link requestNotificationPermissionEx}.
  */
 export async function requestNotificationPermission(): Promise<boolean> {
+  return (await requestNotificationPermissionEx()).granted;
+}
+
+/**
+ * Request notification permission and report both the runtime grant and the
+ * exact-alarm capability so the caller can react (e.g. guide the user to the
+ * "Alarms & reminders" settings screen on Android 12+).
+ *
+ * NOTE: we deliberately do NOT auto-open the exact-alarm settings screen here.
+ * Yanking the user out of the app mid-consent is jarring and, when they return,
+ * the launch code must re-run scheduling (see App.tsx). Instead we surface the
+ * status so the UI can explain it and offer a one-tap "Fix" action, and the
+ * app re-syncs on every resume.
+ */
+export async function requestNotificationPermissionEx(): Promise<RequestPermissionResult> {
   if (Capacitor.isNativePlatform()) {
     try {
       // Ensure channels exist first
       await initNotifications();
+      // Capture the pre-request OS state so we know whether we actually showed
+      // a consent dialog (only true when the prior state was `prompt`).
+      const prior = await checkNotificationPermission();
       const status = await LocalNotifications.requestPermissions();
-      // On Android 12+ (API 31+), check exact alarm setting for background notifications
-      try {
-        const exactSetting = await LocalNotifications.checkExactNotificationSetting();
-        if (exactSetting && exactSetting.exact_alarm !== 'granted') {
-          await LocalNotifications.changeExactNotificationSetting();
-        }
-      } catch {
-        // Non-blocking exact alarm setting check
+      const exactAlarm = await getExactAlarmStatus();
+      if (exactAlarm === 'needs_user_grant') {
+        console.warn(
+          '[Notifications] Exact alarms are not granted — reminders may fire late ' +
+          'until the user enables "Alarms & reminders" in system settings.',
+        );
       }
-      return status.display === 'granted';
+      return {
+        granted: status.display === 'granted',
+        exactAlarm,
+        prompted: prior === 'prompt',
+      };
     } catch (err) {
       console.error('Error requesting native notification permissions:', err);
-      return false;
+      return { granted: false, exactAlarm: 'unknown', prompted: false };
     }
   }
 
   if (typeof window !== 'undefined' && 'Notification' in window) {
     try {
+      // The browser only shows its prompt when the current state is `default`
+      // (= our `prompt`); a repeat call otherwise resolves silently.
+      const prior: PermissionStateResult =
+        Notification.permission === 'granted'
+          ? 'granted'
+          : Notification.permission === 'denied'
+            ? 'denied'
+            : 'prompt';
       const result = await Notification.requestPermission();
-      return result === 'granted';
+      return {
+        granted: result === 'granted',
+        exactAlarm: 'not_required',
+        prompted: prior === 'prompt',
+      };
     } catch (err) {
       console.warn('Error requesting web notification permissions:', err);
-      return false;
+      return { granted: false, exactAlarm: 'not_required', prompted: false };
     }
   }
 
-  return false;
+  return { granted: false, exactAlarm: 'not_required', prompted: false };
 }
+
+/**
+ * Open Android's exact-alarm ("Alarms & reminders") system settings screen so the
+ * user can grant SCHEDULE_EXACT_ALARM on Android 12+ (API 31+). On Android 13+
+ * this permission is revoked by default for apps targeting API 33+, and without
+ * it timed reminders fall back to inexact windows (often tens of minutes late or
+ * deferred by Doze). Safe no-op on web/iOS / older Android where the plugin
+ * method is unavailable.
+ *
+ * Returns true when the settings screen was opened successfully.
+ */
+export async function openExactAlarmSettings(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+    return false;
+  }
+  try {
+    await LocalNotifications.changeExactNotificationSetting();
+    return true;
+  } catch (err) {
+    console.warn('[Notifications] Could not open exact-alarm settings:', err);
+    return false;
+  }
+}
+
+/**
+ * Pure decision for the version-gated deferred-grant re-prompt (Phase 2B/2E).
+ *
+ * A first-run denial must not permanently silence the device, but we must not
+ * nag on every launch either. Rule:
+ *   - `prompt`   → ask now (the OS still shows the dialog).
+ *   - `denied`   → ask once per app version, so a release carrying a clearer
+ *                  explanation gets exactly one fresh attempt; stay quiet on
+ *                  the same build afterwards.
+ *   - `granted` / `unsupported` → never prompt.
+ *
+ * `lastPromptedVersion` is the version recorded the last time we auto-prompted
+ * (`null` if never). Kept pure so it can be unit-tested without Capacitor.
+ */
+export function shouldAutoPromptPermission(
+  status: PermissionStateResult,
+  currentVersion: string,
+  lastPromptedVersion: string | null,
+): boolean {
+  if (status === 'granted' || status === 'unsupported') return false;
+  if (status === 'prompt') return true;
+  // status === 'denied'
+  return lastPromptedVersion !== currentVersion;
+}
+
+function readPendingGrantVersion(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    return localStorage.getItem(PENDING_GRANT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writePendingGrantVersion(version: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(PENDING_GRANT_KEY, version);
+  } catch {
+    // ignore quota / private-mode failures — worst case we re-prompt once more
+  }
+}
+
+/**
+ * Launch-time permission gate (Phase 2B/2E).
+ *
+ * Unlike the first-run `'prompt'` path, this also grants ONE more attempt after
+ * a previous denial whenever the app has been upgraded (the new build may carry
+ * a better explanation). It records the prompted version BEFORE prompting, so a
+ * dismissal or "don't allow" can never loop, and reports the resulting grant +
+ * exact-alarm state so the caller can immediately re-sync alarms on grant.
+ *
+ * No-op (returns current state) when auto-prompting isn't warranted.
+ */
+export async function ensureNotificationPermissionOnLaunch(): Promise<RequestPermissionResult> {
+  const status = await checkNotificationPermission();
+  if (!shouldAutoPromptPermission(status, CURRENT_APP_VERSION, readPendingGrantVersion())) {
+    const exactAlarm = status === 'granted' ? await getExactAlarmStatus() : 'not_required';
+    // No dialog was shown this launch, so nothing about the user's intent
+    // changed — report `prompted: false` so the caller preserves the stored
+    // in-app reminder preference instead of clobbering it.
+    return { granted: status === 'granted', exactAlarm, prompted: false };
+  }
+  // Record before prompting so a denial can't cause a per-launch loop.
+  writePendingGrantVersion(CURRENT_APP_VERSION);
+  if (status === 'denied') {
+    console.info(
+      `[Notifications] Re-prompting for permission after an update to v${CURRENT_APP_VERSION} ` +
+      '(previously denied; one attempt per version).',
+    );
+  }
+  return requestNotificationPermissionEx();
+}
+
 
 /**
  * Send an immediate or scheduled system notification.
@@ -235,7 +438,7 @@ export async function sendSystemNotification(payload: NotificationPayload): Prom
               ? { at: scheduleAt, allowWhileIdle: true }
               : undefined,
             extra: extra || {},
-            smallIcon: 'ic_launcher_round',
+            smallIcon: NOTIFICATION_SMALL_ICON,
             iconColor: '#4F46E5',
           },
         ],
@@ -289,13 +492,55 @@ export function syncAllScheduledAlarms(options: SyncAlarmsOptions): Promise<numb
   return run;
 }
 
+/**
+ * How often the background self-healing loop re-syncs alarms while the app is
+ * open. Chosen conservatively so reminders that come into the scheduling
+ * window, permissions granted later, or alarms dropped by the OS cap are
+ * re-registered without hammering the plugin. The native path relies on
+ * AlarmManager once alarms are registered, so this only needs to top them up.
+ */
+const BACKGROUND_RESYNC_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * Start a low-frequency background loop that re-runs {@link syncAllScheduledAlarms}.
+ *
+ * Why this exists: `performSyncAlarms` only registers reminders that fall inside
+ * the scheduling window and the exact-alarm grant may only arrive *after* the
+ * first launch sync. Without a periodic top-up, a task whose reminder crosses
+ * into range while the app sits open (or after the user grants permission from
+ * the system screen) would never be registered with Android. This loop is a
+ * no-op on web (the FCM queue path already runs inside every sync) and is
+ * idempotent — calling it twice does nothing.
+ */
+export function startBackgroundResync(getOptions: () => SyncAlarmsOptions): void {
+  if (isBackgroundResyncActive) return;
+  if (typeof window === 'undefined' || typeof window.setInterval !== 'function') return;
+
+  isBackgroundResyncActive = true;
+  window.setInterval(() => {
+    try {
+      void syncAllScheduledAlarms(getOptions());
+    } catch {
+      // never let a background top-up crash the app
+    }
+  }, BACKGROUND_RESYNC_INTERVAL_MS);
+}
+
+/** Stop the background self-healing loop (used on sign-out / teardown). */
+export function stopBackgroundResync(): void {
+  isBackgroundResyncActive = false;
+}
+
 async function performSyncAlarms({
   tasks,
   schedule,
   settings,
 }: SyncAlarmsOptions): Promise<number> {
   if (!Capacitor.isNativePlatform()) {
-    return 0;
+    // On the web (including the iOS Home-Screen PWA) there is no AlarmManager.
+    // Instead we push the same reminder list to Firestore, where a scheduled
+    // Cloud Function fans it out over FCM Web Push at the right moment.
+    return syncWebPushQueue({ tasks, schedule, settings });
   }
 
    // If user explicitly disabled notifications, cancel pending alarms
@@ -323,214 +568,10 @@ async function performSyncAlarms({
     // the old version left behind exactly once.
     const previouslySyncedIds = readSyncedAlarmIds();
 
-    const now = Date.now();
-    const upcomingNotifications: Array<{
-      id: number;
-      title: string;
-      body: string;
-      channelId: string;
-      schedule: { at: Date; allowWhileIdle: boolean };
-      extra: Record<string, unknown>;
-      smallIcon: string;
-      iconColor: string;
-    }> = [];
-
-    const advanceMs = (settings.advanceNoticeMinutes || 15) * 60 * 1000;
-
-    // 1. SCHEDULE TASK REMINDERS
-    // A task with an explicit reminder leads its anchor by `minutesBefore`.
-    // Every other task that has a chosen start time still alerts the device
-    // exactly when that time arrives (Google-Calendar-style start alert), so
-    // a task is never silent just because "no early reminder" was picked.
-    // Repeating tasks get one alert per occurrence inside the window.
-    if (settings.taskReminders) {
-      const todayKey = getLocalDateKey();
-      const todayMs = new Date(`${todayKey}T12:00:00`).getTime();
-
-      tasks.forEach((task) => {
-        if (task.completed) return;
-        try {
-          const baseDate = task.scheduledDate || task.deadline?.slice(0, 10) || '';
-          if (!baseDate) return;
-          const baseMs = new Date(`${baseDate}T12:00:00`).getTime();
-          if (isNaN(baseMs)) return;
-
-          const hasEarlyReminder = !!task.reminder?.enabled;
-          if (!hasEarlyReminder && !task.scheduledStartTime) return;
-          const leadMs = hasEarlyReminder
-            ? (task.reminder?.minutesBefore ?? settings.advanceNoticeMinutes ?? 15) * 60 * 1000
-            : 0;
-          const recurrence = task.recurrence || 'none';
-
-          for (let offset = 0; offset <= SCHEDULE_WINDOW_MS / DAY_MS; offset++) {
-            const dayKey = getLocalDateKey(new Date(todayMs + offset * DAY_MS));
-            if (dayKey < baseDate) continue;
-
-            const dayMs = new Date(`${dayKey}T12:00:00`).getTime();
-            const weekday = new Date(`${dayKey}T12:00:00`).getDay();
-            const diffDays = Math.round((dayMs - baseMs) / DAY_MS);
-            const occursOnDay =
-              recurrence === 'daily' ||
-              (recurrence === 'weekdays' && weekday > 0 && weekday < 6) ||
-              (recurrence === 'weekly' && diffDays % 7 === 0) ||
-              (recurrence === 'none' && diffDays === 0);
-            if (!occursOnDay) continue;
-
-            const anchorMs = task.scheduledStartTime
-              ? new Date(`${dayKey}T${task.scheduledStartTime}:00`).getTime()
-              : new Date(`${dayKey}T23:59:59`).getTime();
-            if (isNaN(anchorMs)) {
-              // A malformed time (e.g. "2:30 PM" instead of "14:30") would
-              // otherwise poison the whole schedule() batch with an Invalid
-              // Date and silently drop EVERY alarm on the device.
-              console.warn(`Skipping reminders for task ${task.id}: invalid scheduledStartTime "${task.scheduledStartTime}".`);
-              return;
-            }
-            const reminderTime = anchorMs - leadMs;
-            if (isNaN(reminderTime) || reminderTime <= now || reminderTime >= now + SCHEDULE_WINDOW_MS) continue;
-
-            upcomingNotifications.push({
-              id: hashString(`task-rem-${task.id}-${dayKey}`),
-              title: leadMs === 0
-                ? `⏰ Time to Start: ${task.title}`
-                : `📌 Task Reminder: ${task.title}`,
-              body: leadMs === 0
-                ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m focus block`
-                : task.scheduledStartTime
-                  ? `Planned for ${task.scheduledStartTime}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m duration`
-                  : `Due ${new Date(dayMs).toLocaleDateString([], { month: 'short', day: 'numeric' })}${task.courseCode ? ` (${task.courseCode})` : ''} · ${task.estimatedMinutes}m estimated`,
-              channelId: CHANNELS.REMINDERS,
-              schedule: { at: new Date(reminderTime), allowWhileIdle: true },
-              extra: { type: 'task', taskId: task.id },
-              smallIcon: 'ic_launcher_round',
-              iconColor: '#4F46E5',
-            });
-          }
-        } catch {
-          // ignore date parse errors
-        }
-      });
-    }
-
-    // 2. SCHEDULE TASK DEADLINES
-    if (settings.deadlineAlerts) {
-      tasks.forEach((task) => {
-        if (task.completed || !task.deadline) return;
-        try {
-          const deadlineMs = new Date(task.deadline).getTime();
-          if (isNaN(deadlineMs)) return;
-
-          // 2 Hours Before Deadline
-          const twoHoursBefore = deadlineMs - 2 * 3600 * 1000;
-          if (twoHoursBefore > now && twoHoursBefore < now + SCHEDULE_WINDOW_MS) {
-            upcomingNotifications.push({
-              id: hashString(`task-dl-2h-${task.id}`),
-              title: `⚠️ 2h Deadline Warning: ${task.title}`,
-              body: `This assignment is due in 2 hours! Open SSchedule to wrap it up.`,
-              channelId: CHANNELS.REMINDERS,
-              schedule: { at: new Date(twoHoursBefore), allowWhileIdle: true },
-              extra: { type: 'task', taskId: task.id },
-              smallIcon: 'ic_launcher_round',
-              iconColor: '#4F46E5',
-            });
-          }
-
-          // 30 Minutes Before Deadline
-          const thirtyMinsBefore = deadlineMs - 30 * 60 * 1000;
-          if (thirtyMinsBefore > now && thirtyMinsBefore < now + SCHEDULE_WINDOW_MS) {
-            upcomingNotifications.push({
-              id: hashString(`task-dl-30m-${task.id}`),
-              title: `🚨 Final Deadline Alert: ${task.title}`,
-              body: `Due in 30 minutes! Make sure your work is submitted on time.`,
-              channelId: CHANNELS.REMINDERS,
-              schedule: { at: new Date(thirtyMinsBefore), allowWhileIdle: true },
-              extra: { type: 'task', taskId: task.id },
-              smallIcon: 'ic_launcher_round',
-              iconColor: '#4F46E5',
-            });
-          }
-        } catch {
-          // ignore
-        }
-      });
-    }
-
-    // 3. SCHEDULE COURSE & CLASS REMINDERS
-    if (settings.classReminders) {
-      schedule.forEach((event) => {
-        if (event.isCompleted || event.isMissed) return;
-        try {
-          const classStartMs = new Date(`${event.date}T${event.startTime}:00`).getTime();
-          if (isNaN(classStartMs)) return;
-          const classReminderMs = classStartMs - advanceMs;
-
-          if (classReminderMs > now && classReminderMs < now + SCHEDULE_WINDOW_MS) {
-            upcomingNotifications.push({
-              id: hashString(`class-${event.id}-${event.date}`),
-              title: `🎓 Class Reminder: ${event.title}`,
-              body: `${event.courseCode ? `[${event.courseCode}] ` : ''}${event.location ? `Room: ${event.location} · ` : ''}Starts in ${settings.advanceNoticeMinutes || 15}m (${event.startTime})`,
-              channelId: CHANNELS.REMINDERS,
-              schedule: { at: new Date(classReminderMs), allowWhileIdle: true },
-              extra: { type: 'class', eventId: event.id },
-              smallIcon: 'ic_launcher_round',
-              iconColor: '#4F46E5',
-            });
-          }
-        } catch {
-          // ignore
-        }
-      });
-    }
-
-    // 4. SCHEDULE DAILY MORNING BRIEFING
-    if (settings.dailyBriefing) {
-      for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
-        const d = new Date();
-        d.setDate(d.getDate() + dayOffset);
-        d.setHours(8, 0, 0, 0); // 8:00 AM local time
-        const morningMs = d.getTime();
-
-        if (morningMs > now) {
-          upcomingNotifications.push({
-            id: hashString(`morning-brief-${d.toDateString()}`),
-            title: `☀️ Good Morning! Your Daily Plan is Ready`,
-            body: `Check today's schedule, key study slots, and high-priority goals.`,
-            channelId: CHANNELS.GENERAL,
-            schedule: { at: new Date(morningMs), allowWhileIdle: true },
-            extra: { type: 'briefing' },
-            smallIcon: 'ic_launcher_round',
-            iconColor: '#4F46E5',
-          });
-        }
-      }
-    }
-
-    // 5. SCHEDULE AI EVENING STUDY SUGGESTION & REVIEW
-    if (settings.aiSuggestions) {
-      for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
-        const d = new Date();
-        d.setDate(d.getDate() + dayOffset);
-        d.setHours(19, 30, 0, 0); // 7:30 PM local time
-        const eveningMs = d.getTime();
-
-        if (eveningMs > now) {
-          upcomingNotifications.push({
-            id: hashString(`evening-suggestion-${d.toDateString()}`),
-            title: `💡 SSchedule AI: Evening Focus Wrap-up`,
-            body: `Review completed tasks, log focus streaks, and optimize tomorrow's plan.`,
-            channelId: CHANNELS.GENERAL,
-            schedule: { at: new Date(eveningMs), allowWhileIdle: true },
-            extra: { type: 'suggestion' },
-            smallIcon: 'ic_launcher_round',
-            iconColor: '#4F46E5',
-          });
-        }
-      }
-    }
-
-    // Nearest alerts first, then cap to stay well below Android OS quotas.
-    upcomingNotifications.sort((a, b) => a.schedule.at.getTime() - b.schedule.at.getTime());
-    const finalBatch = upcomingNotifications.slice(0, MAX_SCHEDULED_ALARMS);
+    // Build the reminder list once. This is the single source of truth shared
+    // by the native Android alarm path and the FCM web-push queue.
+    const finalBatch = buildUpcomingNotifications({ tasks, schedule, settings })
+      .slice(0, MAX_SCHEDULED_ALARMS);
     const batchIds = new Set(finalBatch.map((notification) => notification.id));
 
     // One-time cleanup of alarms registered by older app versions.

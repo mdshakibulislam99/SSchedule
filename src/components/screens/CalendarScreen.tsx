@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronLeft,
@@ -19,12 +19,14 @@ import {
   Zap,
   CheckCircle2,
   Download,
+  FileText,
 } from 'lucide-react';
 import { GoogleCalendarSyncState, ScheduleEvent, ScheduleEventType, Task, AIProviderConfig, AIActionProposal } from '../../types';
 import { getLocalDateKey, parseNaturalDate, parseNaturalTime } from '../../utils/dates';
 import { SCHEDULE_EVENT_COLORS, SCHEDULE_EVENT_EMOJI } from '../../services/calendarSync';
 import { AIOrchestrator } from '../../services/aiOrchestrator';
 import { INITIAL_AI_CONFIG } from '../../utils/storage';
+import { extractTextFromFile } from '../../utils/fileExtractor';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { TimePickerSheet, formatTime12h } from '../common/TimePickerSheet';
 
@@ -43,6 +45,8 @@ interface CalendarScreenProps {
   onSyncNow: () => void;
   onOpenSyncSettings: () => void;
   onOpenAIChat?: (prompt?: string) => void;
+  /** Opens a file picker; the file's text is attached to the AI chat. */
+  onAttachFileToChat?: (file: File) => void;
 }
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -127,6 +131,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   onSyncNow,
   onOpenSyncSettings,
   onOpenAIChat,
+  onAttachFileToChat,
 }) => {
   const todayKey = getLocalDateKey();
   const [selectedDate, setSelectedDate] = useState(todayKey);
@@ -140,12 +145,17 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ScheduleEvent | null>(null);
   const [eventToDelete, setEventToDelete] = useState<ScheduleEvent | null>(null);
+  const attachFileInputRef = useRef<HTMLInputElement>(null);
 
   // Quick AI Assistant in Calendar
   const [aiInput, setAiInput] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [proposedAction, setProposedAction] = useState<AIActionProposal | null>(null);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  // File attached to the AI Calendar Assistant — its extracted text is
+  // sent with every assistant query so the AI works from the file data.
+  const [assistantMaterial, setAssistantMaterial] = useState<{ name: string; content?: string } | null>(null);
+  const assistantFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAskAIInCalendar = async (queryText?: string) => {
     const textToSend = (queryText || aiInput).trim();
@@ -155,11 +165,16 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
     setProposedAction(null);
     setAiFeedback(null);
 
+    // Prepend attached file data so the AI answers from the material.
+    const messageToSend = assistantMaterial?.content
+      ? `[ATTACHED STUDY MATERIAL: "${assistantMaterial.name}"]\n${assistantMaterial.content.slice(0, 3000)}\n\nStudent Query: ${textToSend}`
+      : textToSend;
+
     try {
       const configToUse = aiConfig || INITIAL_AI_CONFIG;
 
       const res = await AIOrchestrator.chatWithContext(
-        textToSend,
+        messageToSend,
         [],
         { schedule, tasks },
         configToUse
@@ -569,6 +584,29 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           >
             <Plus className="w-4 h-4" />
           </button>
+
+          {onAttachFileToChat && (
+            <>
+              <input
+                ref={attachFileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0];
+                  if (picked) onAttachFileToChat(picked);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => attachFileInputRef.current?.click()}
+                title="Attach file to AI chat"
+                aria-label="Attach file to AI chat"
+                className="w-8 h-8 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -726,6 +764,24 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           </span>
         </div>
 
+        {/* Attached file pill (file data is sent with every assistant query) */}
+        {assistantMaterial && (
+          <div className="flex items-center gap-1.5 text-xs animate-fade-in">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-medium text-[11px]">
+              <FileText className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="truncate max-w-[180px]">{assistantMaterial.name}</span>
+              <button
+                type="button"
+                onClick={() => setAssistantMaterial(null)}
+                className="hover:text-rose-500 ml-0.5 cursor-pointer"
+                aria-label="Remove attached file"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {/* Input row */}
         <form
           onSubmit={(e) => {
@@ -734,6 +790,35 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
           }}
           className="flex items-center gap-2"
         >
+          {/* + Attach file for AI */}
+          <div className="relative shrink-0">
+            <input
+              ref={assistantFileInputRef}
+              type="file"
+              className="hidden"
+              onChange={async (e) => {
+                const picked = e.target.files?.[0];
+                e.target.value = '';
+                if (!picked) return;
+                try {
+                  const extracted = await extractTextFromFile(picked, picked.name);
+                  setAssistantMaterial({ name: picked.name, content: extracted });
+                } catch (err) {
+                  console.warn('Attach file to AI assistant failed:', err);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => assistantFileInputRef.current?.click()}
+              className="w-8 h-8 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800/80 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-400 dark:hover:border-indigo-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              title="Attach file for AI (its content is sent with your question)"
+              aria-label="Attach file for AI"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
           <div className="relative flex-1">
             <input
               type="text"

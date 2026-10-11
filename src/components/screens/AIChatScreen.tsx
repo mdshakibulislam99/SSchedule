@@ -48,6 +48,10 @@ import { StudyStorage } from '../../utils/storage';
 interface AIChatScreenProps {
   contextTask?: Task | null;
   contextFile?: StudyFile | null;
+  /** Material attached from Tasks / Calendar "+" buttons, applied on open. */
+  incomingMaterial?: { name: string; content?: string } | null;
+  /** Called once the incoming material has been applied to the chat. */
+  onConsumeIncomingMaterial?: () => void;
   courses?: Course[];
   resources?: CourseResource[];
   files?: StudyFile[];
@@ -72,6 +76,8 @@ interface AIChatScreenProps {
 export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   contextTask,
   contextFile,
+  incomingMaterial,
+  onConsumeIncomingMaterial,
   courses = [],
   resources = [],
   files = [],
@@ -134,6 +140,29 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       }
     }
   }, [contextTask, contextFile, courses]);
+
+  // Apply material attached from Tasks / Calendar: pin it as chat context
+  // so every prompt includes the file data, then notify the caller.
+  useEffect(() => {
+    if (!incomingMaterial) return;
+    setAttachedMaterial(incomingMaterial);
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const confirmMsg: AIMessage = {
+      id: `attach-${Date.now()}`,
+      sender: 'ai',
+      text: `📎 Attached **${incomingMaterial.name}**. I've extracted its content and can now answer questions, summarize key concepts, or quiz you based on this material.`,
+      timestamp: nowTime,
+      suggestedChips: [
+        `📖 Summarize ${incomingMaterial.name}`,
+        `🧠 Quiz me on this material`,
+        `📋 Extract study tasks and deadlines`,
+        `💡 Explain key concepts`,
+      ],
+    };
+    setMessages((prev) => [...prev, confirmMsg]);
+    onConsumeIncomingMaterial?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingMaterial]);
 
   // Click outside listener for plus menu
   useEffect(() => {

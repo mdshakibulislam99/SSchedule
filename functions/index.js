@@ -20,6 +20,10 @@ const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
+const {
+  Timestamp,
+} = require("firebase-admin/firestore");
+
 admin.initializeApp();
 
 const CODE_TTL_MS = 10 * 60 * 1000; // code expires after 10 minutes
@@ -153,4 +157,147 @@ exports.verifyPasswordResetOtp = functions.https.onCall(async (data) => {
   await ref.update({ consumed: true, verifiedAt: now });
 
   return { ok: true, email, token };
+
+/**
+ * ---------------------------------------------------------------------------
+ * Web Push (FCM) — powers iPhone Home-Screen PWA notifications.
+ * ---------------------------------------------------------------------------
+ * The client mirrors its computed reminder list into the top-level
+ * `scheduledPushes` collection (doc id `{uid}_{reminderId}`). A scheduled
+ * function below fires each reminder at its `fireAt` time over FCM Web Push,
+ * so notifications arrive even when the PWA is closed (iOS gives no background
+ * execution to web apps — only the OS push service can wake it).
+ */
+
+const SCHEDULED_PUSHES = "scheduledPushes";
+const FCM_TOKENS = "fcmTokens";
+// Web Push payloads must be flat string maps for FCM data messages.
+const toStringMap = (obj) => {
+  const out = {};
+  if (obj && typeof obj === "object") {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined || v === null) continue;
+      out[k] = typeof v === "string" ? v : JSON.stringify(v);
+    }
+  }
+  return out;
+};
+
+/**
+ * Send one data-only FCM message to a set of registration tokens. Data-only is
+ * deliberate: iOS WebKit requires the service worker's own `push` handler to
+ * call showNotification(), which our public/sw.js does.
+ * Returns the MessagingResult so the caller can prune dead tokens.
+ */
+async function sendWebPush(tokens, { title, body, data }) {
+  if (!tokens.length) return null;
+  return admin.messaging().sendEachForMulticast({
+    tokens,
+    data: {
+      title,
+      body,
+      url: "/",
+      ...toStringMap(data),
+    },
+  });
+}
+
+// Remove tokens FCM reports as invalid so we stop targeting dead installs.
+async function pruneInvalidTokens(uid, tokens, responses) {
+  const dead = [];
+  responses.forEach((res, i) => {
+    const code = res.error && res.error.code;
+    if (
+      code === "messaging/registration-token-not-registered" ||
+      code === "messaging/invalid-registration-token"
+    ) {
+      dead.push(tokens[i]);
+    }
+  });
+  if (!dead.length) return;
+  const snap = await admin.firestore().collection("users").doc(uid).collection(FCM_TOKENS).get();
+  const toDelete = snap.docs.filter((d) => dead.includes(d.data().token));
+  await Promise.all(toDelete.map((d) => d.ref.delete()));
+}
+
+async function tokensForUser(uid) {
+  const snap = await admin.firestore().collection("users").doc(uid).collection(FCM_TOKENS).get();
+  return snap.docs.map((d) => d.data().token).filter(Boolean);
+}
+
+/**
+ * Callable: send a one-off test push to the signed-in user's devices.
+ * Lets the settings screen verify the whole pipeline immediately.
+ */
+exports.sendTestPush = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Sign in to send a test push.");
+  }
+  const uid = context.auth.uid;
+  const tokens = await tokensForUser(uid);
+  if (!tokens.length) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "No registered device. Enable push notifications on your device first."
+    );
+  }
+
+  const result = await sendWebPush(tokens, {
+    title: "✅ SSchedule Push Test",
+    body: "Push notifications are working on this device.",
+    data: { tag: "test-push" },
+  });
+  await pruneInvalidTokens(uid, tokens, result.responses || []);
+  return { sent: result.successCount || 0 };
+});
+
+/**
+ * Scheduled: every minute, fire any due reminders over FCM Web Push.
+ * Query is a single-field range on `fireAt` (auto-indexed); `sent === false` is
+ * filtered in memory so no composite index is required.
+ */
+exports.dispatchDuePushes = functions.pubsub
+  .schedule("every 1 minutes")
+  .onRun(async () => {
+    const db = admin.firestore();
+    const now = Timestamp.now();
+
+    const due = await db
+      .collection(SCHEDULED_PUSHES)
+      .where("fireAt", "<=", now)
+      .limit(500)
+      .get();
+
+    const pending = due.docs.filter((d) => d.data().sent === false);
+    if (pending.empty) return null;
+
+    // Group by user so we fetch each user's tokens once.
+    const byUser = new Map();
+    for (const docSnap of pending) {
+      const d = docSnap.data();
+      if (!d.uid) continue;
+      if (!byUser.has(d.uid)) byUser.set(d.uid, []);
+      byUser.get(d.uid).push({ ref: docSnap.ref, data: d });
+    }
+
+    for (const [uid, items] of byUser) {
+      const tokens = await tokensForUser(uid);
+      if (!tokens.length) {
+        // No devices — mark as sent so we don't retry forever.
+        await Promise.all(items.map((it) => it.ref.update({ sent: true, sentAt: now })));
+        continue;
+      }
+      for (const item of items) {
+        const result = await sendWebPush(tokens, {
+          title: item.data.title || "SSchedule",
+          body: item.data.body || "",
+          data: { ...(item.data.extra || {}), reminderId: String(item.data.reminderId ?? "") },
+        });
+        await pruneInvalidTokens(uid, tokens, result.responses || []);
+        await item.ref.update({ sent: true, sentAt: now });
+      }
+    }
+    return null;
+  });
+
 });

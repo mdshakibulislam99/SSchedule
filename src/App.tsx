@@ -91,6 +91,7 @@ import {
 } from './types';
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
+import { extractTextFromFile } from './utils/fileExtractor';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
@@ -102,10 +103,14 @@ import {
   sendSystemNotification,
   scheduleTaskSystemReminder,
   syncAllScheduledAlarms,
+  startBackgroundResync,
+  stopBackgroundResync,
   checkNotificationPermission,
   requestNotificationPermission,
   requestBatteryOptimizationExemption,
+  ensureNotificationPermissionOnLaunch,
   CHANNELS,
+  getExactAlarmStatus,
 } from './services/notificationService';
 
 function getEndTime(startTime: string, durationMinutes: number): string {
@@ -192,6 +197,8 @@ export default function App() {
   const [courseTutorCardsResourceId, setCourseTutorCardsResourceId] = useState<string | undefined>();
   const [courseTutorTab, setCourseTutorTab] = useState<'learn' | 'tutor' | 'quiz' | 'cards' | undefined>();
   const [selectedFileForChat, setSelectedFileForChat] = useState<StudyFile | null>(null);
+  // Material attached from Tasks / Calendar "+" buttons, consumed by the AI chat on open.
+  const [incomingChatMaterial, setIncomingChatMaterial] = useState<{ name: string; content?: string } | null>(null);
 
   /**
    * Sub-screen navigation with a small history stack, so every settings/option
@@ -225,6 +232,10 @@ export default function App() {
   const [isAIMemoryOpen, setIsAIMemoryOpen] = useState(false);
   const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
   const [closeComposerSignal, setCloseComposerSignal] = useState(0);
+  // True while the on-screen soft keyboard is open. When active, the bottom
+  // navigation is hidden so chat input boxes (AI Study, Course Tutor, etc.)
+  // stay fully visible above the keyboard instead of being covered by the nav.
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [isAISetupPromptOpen, setIsAISetupPromptOpen] = useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -320,6 +331,7 @@ export default function App() {
     setSelectedResourceId(null);
     setSelectedFileForChat(null);
     setChatAttachedTask(null);
+    setIncomingChatMaterial(null);
     setTaskCourseFilter(undefined);
     setCurrentTab('home');
     setActiveSubScreen(null); // also clears the sub-screen back stack
@@ -393,6 +405,41 @@ export default function App() {
       const code = String(err?.code || err?.message || 'unknown');
       showToast(`Google Sign-In failed (${code}).`);
     });
+  }, []);
+
+  // Detect the on-screen soft keyboard so the bottom nav can hide while it is
+  // open (keeps chat input boxes visible above the keyboard). When the keyboard
+  // appears the visible viewport height shrinks well below the full window
+  // height. We watch both the Visual Viewport API and window.innerHeight (some
+  // Android WebViews only shrink one of them) and treat a drop greater than a
+  // threshold (~150px) as "keyboard open" to avoid false positives from browser
+  // chrome or rotation. The baseline is the largest height seen so far.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const KEYBOARD_THRESHOLD = 150;
+    let baselineHeight = window.visualViewport?.height ?? window.innerHeight;
+
+    const evaluateKeyboard = () => {
+      const currentHeight = window.visualViewport?.height ?? window.innerHeight;
+      // Grow the baseline as the viewport gets taller (rotation, chrome hide).
+      if (currentHeight > baselineHeight) baselineHeight = currentHeight;
+      const isOpen = baselineHeight - currentHeight > KEYBOARD_THRESHOLD;
+      setIsKeyboardOpen(isOpen);
+    };
+
+    evaluateKeyboard();
+    window.visualViewport?.addEventListener('resize', evaluateKeyboard);
+    window.visualViewport?.addEventListener('scroll', evaluateKeyboard);
+    window.addEventListener('resize', evaluateKeyboard);
+    window.addEventListener('orientationchange', evaluateKeyboard);
+
+    return () => {
+      window.visualViewport?.removeEventListener('resize', evaluateKeyboard);
+      window.visualViewport?.removeEventListener('scroll', evaluateKeyboard);
+      window.removeEventListener('resize', evaluateKeyboard);
+      window.removeEventListener('orientationchange', evaluateKeyboard);
+    };
   }, []);
 
 
@@ -1196,19 +1243,22 @@ export default function App() {
       schedule,
       settings: notificationSettings,
     });
-
-    // Re-sync periodically so reminders that were out of the scheduling window
-    // (or dropped by the 64-alarm cap) get registered as they come closer.
-    const intervalId = window.setInterval(() => {
-      void syncAllScheduledAlarms({
-        tasks,
-        schedule,
-        settings: notificationSettings,
-      });
-    }, 6 * 60 * 60 * 1000);
-
-    return () => window.clearInterval(intervalId);
   }, [tasks, schedule, notificationSettings]);
+
+  // Self-healing background top-up (native + web). Keeps the latest
+  // tasks/schedule/settings in a ref so the periodic sync always uses fresh
+  // data, and re-registers reminders that come into the alarm window, alarms
+  // dropped by the OS cap, or permissions granted later — even if the app sits
+  // open. Started once; `startBackgroundResync` is idempotent.
+  const syncOptionsRef = useRef({ tasks, schedule, settings: notificationSettings });
+  syncOptionsRef.current = { tasks, schedule, settings: notificationSettings };
+
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      startBackgroundResync(() => syncOptionsRef.current);
+    }
+    return () => stopBackgroundResync();
+  }, []);
 
   // Re-sync alarms when the app resumes from the background.
   // Catches tasks added/edited while the app was in the background,
@@ -1295,15 +1345,26 @@ export default function App() {
   // On native Android launch, request notification permissions so background alarms can alert in the notification bar
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
-      void checkNotificationPermission().then((status) => {
-        if (status === 'prompt') {
-          void requestNotificationPermission().then((granted) => {
-            if (granted) {
-              setNotificationSettings((prev) => ({ ...prev, browserNotifications: true }));
-            }
-          });
-        }
+      void ensureNotificationPermissionOnLaunch().then((result) => {
+        // Only flip the in-app master toggle when we actually showed a consent
+        // dialog this launch. On a silent launch (permission unchanged) we must
+        // preserve the user's stored choice — otherwise a user who deliberately
+        // keeps in-app reminders OFF while OS permission stays granted would
+        // have their preference silently re-enabled on every start.
+        if (!result.prompted) return;
+        setNotificationSettings((prev) => ({ ...prev, browserNotifications: result.granted }));
       });
+      // Android 12+ (esp. 14+): exact alarms are not granted by
+      // default. Without them, timed reminders degrade to inexact
+      // alarms that Doze defers — they fire late or never while
+      // the phone is locked. Surface a one-time heads-up.
+      if (Capacitor.getPlatform() === 'android') {
+        void getExactAlarmStatus().then((status) => {
+          if (status === 'needs_user_grant') {
+            showToast('Enable "Alarms & reminders" so task alerts fire on time (Notification Settings → Exact Alarms).');
+          }
+        });
+      }
     }
   }, []);
 
@@ -1614,6 +1675,30 @@ export default function App() {
       .catch((err) => {
         console.warn('Auto AI indexing failed for file:', err);
       });
+  };
+
+  /**
+   * "+" attach button in Tasks / Calendar: extracts the file's text,
+   * stores it as AI chat material, and opens the AI chat so the model
+   * can work directly from the file data.
+   */
+  const handleAttachFileToChat = async (file: File) => {
+    try {
+      const extracted = await extractTextFromFile(file, file.name);
+      handleUploadFile({
+        name: file.name,
+        size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+        type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
+        extractedContent: extracted,
+        summary: `Document attached for AI chat: ${file.name}.`,
+      });
+      setIncomingChatMaterial({ name: file.name, content: extracted });
+      showToast(`Attached "${file.name}" — opening AI chat`);
+      handleTabChange('ai');
+    } catch (err) {
+      console.warn('Attach file to AI chat failed:', err);
+      showToast('Could not attach that file.');
+    }
   };
 
   const handleReindexFile = (fileId: string) => {
@@ -2670,6 +2755,7 @@ export default function App() {
             onExecuteAction={handleExecuteAction}
             onComposerStateChange={setIsTaskComposerOpen}
             closeComposerSignal={closeComposerSignal}
+            onAttachFileToChat={handleAttachFileToChat}
           />
         );
 
@@ -2678,6 +2764,8 @@ export default function App() {
           <AIChatScreen
             contextTask={chatAttachedTask}
             contextFile={selectedFileForChat}
+            incomingMaterial={incomingChatMaterial}
+            onConsumeIncomingMaterial={() => setIncomingChatMaterial(null)}
             courses={courses}
             resources={resources}
             files={files}
@@ -2728,6 +2816,7 @@ export default function App() {
             onSyncNow={() => gcal.syncNow()}
             onOpenSyncSettings={() => setActiveSubScreen('calendar_sync')}
             onOpenAIChat={(q) => requireAIProvider(() => setCurrentTab('ai'))}
+            onAttachFileToChat={handleAttachFileToChat}
           />
         );
 
@@ -2891,14 +2980,17 @@ export default function App() {
               className={`flex-1 min-h-0 ${
                 activeSubScreen === 'resource_reader'
                   ? 'overflow-hidden flex flex-col p-0 h-full'
+                  : isKeyboardOpen
+                  ? 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-3'
                   : 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24'
               } no-scrollbar`}
             >
               {renderCurrentView()}
             </div>
 
-            {/* Fixed Mobile Bottom Nav Bar */}
-            {!isTaskComposerOpen && (
+            {/* Fixed Mobile Bottom Nav Bar — hidden while the soft keyboard is
+                open so only the chat input box shows above it. */}
+            {!isTaskComposerOpen && !isKeyboardOpen && (
               <div className="fixed bottom-0 left-0 right-0 z-40 pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
                 <MobileBottomNav
                   currentTab={currentTab}
