@@ -2,7 +2,6 @@ import { SocialLogin } from '@capgo/capacitor-social-login';
 import { Capacitor } from '@capacitor/core';
 import {
   auth,
-  googleProvider,
   FIREBASE_CONFIG,
 } from './firebase';
 import {
@@ -237,10 +236,20 @@ export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
     'auth/popup-timeout',
   ];
 
-  try {
-    googleProvider.setCustomParameters({ prompt: 'select_account' });
+  // Web login uses a local provider with basic profile scopes only. The
+  // shared `googleProvider` also requests the Calendar scope — a sensitive
+  // Google scope that Google hard-blocks ("Access blocked: ... has not
+  // completed the Google verification process") until the OAuth consent
+  // screen is verified. Login doesn't need Calendar: the calendar-connect
+  // flow requests it separately when the user enables sync.
+  const webProvider = new GoogleAuthProvider();
+  webProvider.addScope('email');
+  webProvider.addScope('profile');
 
-    const popupPromise = signInWithPopup(auth, googleProvider);
+  try {
+    webProvider.setCustomParameters({ prompt: 'select_account' });
+
+    const popupPromise = signInWithPopup(auth, webProvider);
     // Swallow a late settlement once the timeout has won the race, so a
     // popup that resolves/rejects after we've moved on can't surface as an
     // unhandled rejection.
@@ -352,7 +361,7 @@ export async function signInWithGoogleWeb(): Promise<FirebaseUser> {
     // still works when popups are blocked. The page navigates away, so this
     // never returns; `completeGoogleRedirect()` picks the result up on load.
     if (POPUP_FALLBACK_CODES.includes(code) || gisFailure) {
-      await signInWithRedirect(auth, googleProvider);
+      await signInWithRedirect(auth, webProvider);
       throw gisFailure || popupErr;
     }
 
