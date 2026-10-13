@@ -10,6 +10,7 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 
 import { MobileBottomNav, NavTab } from './components/mobile/MobileBottomNav';
+import { DesktopSidebarNav } from './components/desktop/DesktopSidebarNav';
 import { QuickActionsSheet } from './components/mobile/QuickActionsSheet';
 import { VoiceAIModal } from './components/mobile/VoiceAIModal';
 import {
@@ -3659,8 +3660,14 @@ export default function App() {
             />
           </ErrorBoundary>
         ) : (
-          <div className="w-full flex-1 flex flex-col justify-between overflow-hidden">
-            {/* In-app Toast Notification Banner */}
+          <div className="w-full flex-1 flex flex-col lg:flex-row overflow-hidden">
+            {/* Desktop (lg+): left sidebar; mobile: fixed bottom tab bar */}
+            <DesktopSidebarNav
+              currentTab={currentTab}
+              onTabChange={handleTabChange}
+              unreadCount={notifications.filter((n) => !n.read).length}
+            />
+            <div className="w-full flex-1 min-w-0 flex flex-col justify-between overflow-hidden">
             {toastMessage && (
               <div className="fixed top-4 left-4 right-4 z-50 transition-all duration-300 pointer-events-auto">
                 <div className="bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 text-xs font-semibold px-4 py-3 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-white/10 dark:border-black/10 backdrop-blur-md">
@@ -3723,8 +3730,8 @@ export default function App() {
                 activeSubScreen === 'resource_reader'
                   ? 'overflow-hidden flex flex-col p-0 h-full'
                   : isKeyboardOpen
-                  ? 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-8 pt-4 pb-3'
-                  : 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-8 pt-4 pb-24'
+                  ? 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-10 pt-4 pb-3'
+                  : 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-10 pt-4 pb-24 lg:pb-10'
               } no-scrollbar`}
             >
               {renderCurrentView()}
@@ -3733,7 +3740,7 @@ export default function App() {
             {/* Fixed Mobile Bottom Nav Bar — hidden while the soft keyboard is
                 open so only the chat input box shows above it. */}
             {!isTaskComposerOpen && !isKeyboardOpen && (
-              <div className="fixed bottom-0 left-0 right-0 z-40 pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+              <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
                 <MobileBottomNav
                   currentTab={currentTab}
                   onTabChange={handleTabChange}
@@ -3751,6 +3758,7 @@ export default function App() {
                 }}
               />
             )}
+            </div>
           </div>
         )}
 
