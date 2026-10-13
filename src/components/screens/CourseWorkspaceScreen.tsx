@@ -34,6 +34,7 @@ import {
   ScheduleEvent,
   StudyFile,
   Task,
+  StudyFileUpload,
 } from '../../types';
 import { AIOrchestrator, isAIConfigured } from '../../services/aiOrchestrator';
 import { TaskComposer } from '../tasks/TaskComposer';
@@ -156,7 +157,7 @@ interface CourseWorkspaceScreenProps {
   onOpenTutor: (options?: { resourceId?: string; tab?: 'learn' | 'tutor' | 'quiz' | 'cards'; prompt?: string }) => void;
   onAddResource: (data: Partial<CourseResource>) => void;
   /** Registers an uploaded file in the Files tab as well as the course library. */
-  onUploadFile?: (file: Partial<StudyFile> & { extractedContent?: string }) => void;
+  onUploadFile?: (file: StudyFileUpload) => void;
   /** Creates a task from inside the course — no detour to the Tasks tab. */
   onAddTask: (taskData: Partial<Task>, autoPlan: boolean) => void;
   /** Toggles completion directly from the course task list. */
@@ -619,7 +620,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
     // The FULL text is persisted with the file record (IndexedDB); the resource
     // reader keeps a generous excerpt so huge textbooks cannot exhaust the
     // localStorage quota.
-    const { text: extractedText, structure } = await extractDocumentFromFile(file, file.name);
+    const { text: extractedText, structure, pages } = await extractDocumentFromFile(file, file.name);
 
     onUploadFile?.({
       name: file.name,
@@ -629,6 +630,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       fileStorageKey,
       extractedContent: extractedText,
       structure: structure ?? undefined,
+      pages: pages ?? null,
     });
     onAddResource({
       title: file.name,

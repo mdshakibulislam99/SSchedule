@@ -39,7 +39,7 @@ import {
   Course,
   CourseResource,
   AIConversation,
-  DocumentStructure,
+  StudyFileUpload,
 } from '../../types';
 import { AIOrchestrator, AIExecutionContext } from '../../services/aiOrchestrator';
 import { getLocalDateKey } from '../../utils/dates';
@@ -63,7 +63,7 @@ interface AIChatScreenProps {
   onClearContext?: () => void;
   onOpenVoiceModal: () => void;
   onExecuteAction: (action: AIActionProposal) => void;
-  onUploadFile?: (file: Partial<StudyFile> & { extractedContent?: string }) => void;
+  onUploadFile?: (file: StudyFileUpload) => void;
   config: AIProviderConfig;
   allTasks: Task[];
   schedule?: ScheduleEvent[];
@@ -370,13 +370,14 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
     if (!file) return;
 
     try {
-      const { text: extracted, structure } = await extractDocumentFromFile(file, file.name);
-      const newStudyFile: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure } = {
+      const { text: extracted, structure, pages } = await extractDocumentFromFile(file, file.name);
+      const newStudyFile: StudyFileUpload = {
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
         extractedContent: extracted,
         structure: structure ?? undefined,
+        pages: pages ?? null,
         courseCode: focusedCourse?.code,
         summary: `Document uploaded during study chat: ${file.name}.`,
       };
@@ -443,6 +444,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         schedule,
         user,
         energyLevel: user?.energyLevel,
+        pilotUid: user?.firebaseUid,
       };
 
       // Add attached material text into the prompt context if present

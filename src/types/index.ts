@@ -126,6 +126,34 @@ export interface DocumentStructure {
   chapters: DocumentChapter[];
 }
 
+/** Character span of one physical page inside the full extracted text. */
+export interface DocumentPageSpan {
+  /** 1-based page number. */
+  page: number;
+  startChar: number;
+  endChar: number;
+}
+
+/** A stored per-page entry of a document index. */
+export interface DocumentIndexedPage extends DocumentPageSpan {
+  /** IndexedDB key holding this page's complete text. */
+  textKey: string;
+  charCount: number;
+}
+
+/**
+ * Page-level index of an uploaded document: every physical page is
+ * addressable by page number, with its complete text stored locally
+ * (IndexedDB) and mirrored to Google Drive for pilot accounts.
+ */
+export interface DocumentPageIndex {
+  unit: 'page';
+  totalPages: number;
+  /** Per-page spans + storage keys (pages beyond the local cap are
+   *  still addressable via the full extracted text offsets). */
+  pages: DocumentIndexedPage[];
+}
+
 export interface ResourceAIContext {
   status: 'pending' | 'analyzing' | 'ready' | 'error';
   analyzedAt?: string;
@@ -381,7 +409,22 @@ export interface StudyFile {
   extractedChars?: number;
   /** Chapter/section/slide map of the document for targeted learning. */
   structure?: DocumentStructure;
+  /** Per-page index (PDFs / slide decks): every page addressable by number. */
+  pageIndex?: DocumentPageIndex;
   aiContext?: ResourceAIContext;
+}
+
+/**
+ * Payload an upload screen hands to `handleUploadFile`: a partial
+ * StudyFile plus the freshly extracted document artifacts (full text,
+ * chapter structure, and per-page spans) that the App persists into
+ * IndexedDB and mirrors to Drive before AI indexing.
+ */
+export interface StudyFileUpload extends Partial<StudyFile> {
+  extractedContent?: string;
+  structure?: DocumentStructure;
+  /** Per-page spans from the extractor (PDFs/slide decks). */
+  pages?: DocumentPageSpan[] | null;
 }
 
 export interface StudyNote {

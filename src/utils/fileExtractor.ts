@@ -1,6 +1,6 @@
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { DocumentChapter, DocumentStructure } from '../types';
+import type { DocumentChapter, DocumentPageSpan, DocumentStructure } from '../types';
 
 if (typeof window !== 'undefined' && !GlobalWorkerOptions.workerSrc) {
   GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
@@ -41,6 +41,12 @@ const TEXT_EXTENSIONS = [
 export interface ExtractedDocument {
   text: string;
   structure: DocumentStructure | null;
+  /**
+   * Per-page character spans (PDFs and slide decks): every physical
+   * page's text is addressable inside `text`. Null for formats with
+   * no page concept (plain text, DOCX).
+   */
+  pages: DocumentPageSpan[] | null;
 }
 
 interface DocumentSection {
@@ -108,8 +114,12 @@ function extractDrawingText(xmlDoc: Document): string {
   return parts.join(' ');
 }
 
-/** Builds the final full text + chapter map from detected sections. */
-function assembleStructure(
+/**
+ * Builds the final full text + chapter map from detected sections.
+ * For slide decks every chapter is also emitted as a page span.
+ * Exported for tests.
+ */
+export function assembleStructure(
   sections: DocumentSection[],
   unit: DocumentStructure['unit'],
   fileName: string
@@ -136,9 +146,17 @@ function assembleStructure(
       endChar: fullText.length,
     };
   });
+
+  // Slide decks: one page per slide (slides are the pages of a deck).
+  const pages: DocumentPageSpan[] | null =
+    unit === 'slide'
+      ? chapters.map((c, idx) => ({ page: c.slide ?? idx + 1, startChar: c.startChar, endChar: c.endChar }))
+      : null;
+
   return {
     text: fullText,
     structure: { unit, fileName, totalChars: fullText.length, chapters },
+    pages,
   };
 }
 
@@ -242,6 +260,20 @@ async function extractPdfDocument(file: Blob): Promise<ExtractedDocument> {
         pageHeader = '';
       }
     }
+    // A page with no extractable text (blank page or image-only page)
+    // would otherwise lose its [Page N]: marker, silently dropping that
+    // page from the per-page index. Preserve it: if content has already
+    // started, append the marker to the current section; if this is a
+    // leading text-less page, anchor it in an opening section so the
+    // per-page index still records page N. Page spans must align to real
+    // physical pages, never skip one.
+    if (pageHeader) {
+      if (current) {
+        current.text += pageHeader;
+      } else {
+        current = { title: 'Introduction', text: pageHeader, startPage: i, endPage: i };
+      }
+    }
   }
   if (current && current.text.trim()) sections.push(current);
 
@@ -266,7 +298,26 @@ async function extractPdfDocument(file: Blob): Promise<ExtractedDocument> {
     if (ranged.length > 1) sections = ranged;
   }
 
-  return assembleStructure(sections, sections.length > 1 ? 'chapter' : 'page-range', 'document');
+  const assembled = assembleStructure(
+    sections,
+    sections.length > 1 ? 'chapter' : 'page-range',
+    'document',
+  );
+
+  // Page-level index: every physical page's text is delimited by the
+  // "[Page N]:" markers the extractor embedded in the full text.
+  const spans: DocumentPageSpan[] = [];
+  const marker = /\[Page (\d+)\]:/g;
+  let prev: { page: number; start: number } | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(assembled.text)) !== null) {
+    const pageNo = parseInt(match[1], 10);
+    if (prev) spans.push({ page: prev.page, startChar: prev.start, endChar: match.index });
+    prev = { page: pageNo, start: match.index };
+  }
+  if (prev) spans.push({ page: prev.page, startChar: prev.start, endChar: assembled.text.length });
+
+  return { ...assembled, pages: spans.length > 0 ? spans : null };
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,7 +466,7 @@ export async function extractDocumentFromFile(file: File | Blob, filename?: stri
     } catch (e) {
       console.warn('Text file read error:', e);
     }
-    return { text: '', structure: null };
+    return { text: '', structure: null, pages: null };
   }
 
   // 2. PDF documents — every single page, structurally mapped
@@ -425,7 +476,7 @@ export async function extractDocumentFromFile(file: File | Blob, filename?: stri
     } catch (pdfErr) {
       console.warn('PDF text extraction error:', pdfErr);
     }
-    return { text: '', structure: null };
+    return { text: '', structure: null, pages: null };
   }
 
   // 3. PowerPoint presentations (PPTX)
@@ -437,7 +488,7 @@ export async function extractDocumentFromFile(file: File | Blob, filename?: stri
     } catch (pptErr) {
       console.warn('PPTX text extraction error:', pptErr);
     }
-    return { text: '', structure: null };
+    return { text: '', structure: null, pages: null };
   }
 
   // 4. Word documents (DOCX)
@@ -449,10 +500,10 @@ export async function extractDocumentFromFile(file: File | Blob, filename?: stri
     } catch (docxErr) {
       console.warn('DOCX text extraction error:', docxErr);
     }
-    return { text: '', structure: null };
+    return { text: '', structure: null, pages: null };
   }
 
-  return { text: '', structure: null };
+  return { text: '', structure: null, pages: null };
 }
 
 /** Convenience wrapper: only the full extracted text. */

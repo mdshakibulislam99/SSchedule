@@ -93,6 +93,7 @@ export const DRIVE_FOLDER_TREE: Array<{ path: string; parent: string | null }> =
   { path: 'ai-indexes/extracted-text', parent: 'ai-indexes' },
   { path: 'ai-indexes/chunks', parent: 'ai-indexes' },
   { path: 'ai-indexes/embeddings', parent: 'ai-indexes' },
+  { path: 'ai-indexes/page-index', parent: 'ai-indexes' },
   { path: 'backups', parent: null },
   { path: 'backups/snapshots', parent: 'backups' },
   { path: 'backups/exports', parent: 'backups' },
@@ -149,6 +150,13 @@ export interface DriveService {
     fileName: string,
     content: unknown,
   ): Promise<DriveFileRef>;
+  /**
+   * Lists files in a named Drive folder, optionally filtered by a
+   * name-contains clause (used by the per-page document index mirror).
+   */
+  listFolderFiles(folderPath: string, nameContains?: string): Promise<DriveFileRef[]>;
+  /** Downloads the raw text of any Drive file by id. */
+  readFileText(fileId: string): Promise<string>;
   recoverStaging(): Promise<string[]>;
 }
 
@@ -698,6 +706,27 @@ export function createDriveService(options: DriveServiceOptions): DriveService {
         throw new DriveApiError(400, `Unknown Drive folder path: ${folderPath}`);
       }
       return writeSystemDocument(api, folderId, fileName, content);
+    },
+
+    async listFolderFiles(
+      folderPath: string,
+      nameContains?: string,
+    ): Promise<DriveFileRef[]> {
+      const folderIds = cachedFolderIds ?? (await ensureFolderTree()).folderIds;
+      const folderId = folderIds[folderPath];
+      if (!folderId) {
+        throw new DriveApiError(400, `Unknown Drive folder path: ${folderPath}`);
+      }
+      const nameClause = nameContains ? ` and name contains '${nameContains}'` : '';
+      const res = await api.listFiles(
+        `'${folderId}' in parents and trashed = false${nameClause}`,
+        { pageSize: 200 },
+      );
+      return res.files;
+    },
+
+    async readFileText(fileId: string): Promise<string> {
+      return api.downloadText(fileId);
     },
 
     async recoverStaging(): Promise<string[]> {

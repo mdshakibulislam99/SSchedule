@@ -110,12 +110,14 @@ import {
   AppUpdateCheckResult,
   AIConversation,
   DocumentStructure,
+  StudyFileUpload,
 } from './types';
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC, INITIAL_DRIVE_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { extractDocumentFromFile } from './utils/fileExtractor';
 import { saveExtractedText, loadExtractedText } from './utils/fileStorage';
 import { AIOrchestrator } from './services/aiOrchestrator';
+import { persistPageIndexLocal, mirrorPageIndexToDrive } from './services/documentIndexStore';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
 import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
@@ -2290,7 +2292,7 @@ export default function App() {
   };
 
   /** Shared by the Files screen and the course workspace so uploads land in one place. */
-  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure }): StudyFile => {
+  const handleUploadFile = (newF: StudyFileUpload): StudyFile => {
     const fileId = `file-${Date.now()}`;
 
     // Rewrite chapter keys to absolute IndexedDB keys and persist
@@ -2339,6 +2341,30 @@ export default function App() {
     if (f.extractedTextKey && newF.extractedContent) {
       saveExtractedText(f.extractedTextKey, newF.extractedContent)
         .then(() => Promise.all(chapterSaves))
+        .then(async () => {
+          // Build the per-page index so "page 42" / "chapter 5 all words"
+          // retrieves exact stored page text instead of a digest.
+          if (newF.pages && newF.pages.length > 0) {
+            const pageIndex = await persistPageIndexLocal(
+              f.id,
+              newF.extractedContent!,
+              newF.pages,
+            );
+            if (pageIndex) {
+              setFiles((prev) =>
+                prev.map((item) => (item.id === f.id ? { ...item, pageIndex } : item)),
+              );
+              // Durable cross-device copy for pilot accounts (best-effort).
+              void mirrorPageIndexToDrive(
+                firebaseUser?.uid,
+                f.id,
+                f.name,
+                newF.extractedContent!,
+                newF.pages,
+              ).catch((err) => console.warn('Page-index Drive mirror failed:', err));
+            }
+          }
+        })
         .catch((err) => console.warn('Full-text persistence failed:', err));
     }
 
@@ -2381,13 +2407,14 @@ export default function App() {
    */
   const handleAttachFileToChat = async (file: File) => {
     try {
-      const { text: extracted, structure } = await extractDocumentFromFile(file, file.name);
+      const { text: extracted, structure, pages } = await extractDocumentFromFile(file, file.name);
       const created = handleUploadFile({
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
         extractedContent: extracted,
         structure: structure ?? undefined,
+        pages: pages ?? null,
         summary: `Document attached for AI chat: ${file.name}.`,
       });
       // Wire the freshly uploaded file as the chat's current file so

@@ -60,6 +60,24 @@ export function scoreChapterForMessage(
 }
 
 /**
+ * Detects exhaustive-extraction asks ("chapter 5 all word list",
+ * "every term in section 3", "list all phrases", Chinese 所有…).
+ * When true and chapter/page text was retrieved, the chat is
+ * instructed to output the COMPLETE list, never a sample.
+ * Exported for tests.
+ */
+export function wantsExhaustiveExtraction(message: string): boolean {
+  const m = (message || '').toLowerCase();
+  // Any "all/every/complete/whole/full" quantifier over listable items.
+  const quantifier =
+    /\b(all|every|complete|full|entire|whole)\b[\s\S]{0,40}\b(words?|terms?|vocab\w*|phrases?|sentences?|questions?|examples?|expressions?|characters?|idioms?|lines?|items?|entries|headings?|titles?|names?)\b/.test(m);
+  const reverse =
+    /\b(words?|terms?|vocab\w*|phrases?|sentences?|expressions?|characters?|idioms?)\s+(list|lists)\b/.test(m);
+  const chinese = /所有|全部|每个/.test(m) && /词|字|句|表/.test(m);
+  return quantifier || reverse || chinese;
+}
+
+/**
  * Picks the single best-matching chapter across the given files for a
  * topic-style question (no explicit "chapter N" reference). Requires a
  * meaningful score (≥3: at least one title/concept hit) so random
@@ -84,4 +102,29 @@ export function findTopicRelevantChapter(
     }
   }
   return best && best.score >= minScore ? best : null;
+}
+
+/**
+ * Detects an explicit single-page reference ("page 42", "p. 42",
+ * "第 42 页") and returns the matching file + page number when that file
+ * carries a per-page index covering it. Preferred over chapter ranges for
+ * single-page questions because the per-page index holds the exact page
+ * text. Exported for tests.
+ */
+export function findReferencedPage(
+  message: string,
+  files: StudyFile[],
+): { file: StudyFile; page: number } | null {
+  const ref =
+    message.match(/\bpages?\s*([0-9]+)\b/i) ||
+    message.match(/\bp\.?\s*([0-9]+)\b/i) ||
+    message.match(/第\s*([0-9]+)\s*页/i);
+  if (!ref) return null;
+  const page = parseInt(ref[1], 10);
+  for (const file of files) {
+    if (file.pageIndex?.pages?.some((p) => p.page === page)) {
+      return { file, page };
+    }
+  }
+  return null;
 }

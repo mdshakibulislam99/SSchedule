@@ -22,7 +22,8 @@ import {
 import { getLocalDateKey } from '../utils/dates';
 import { apiUrl } from '../lib/api';
 import { loadExtractedText } from '../utils/fileStorage';
-import { findTopicRelevantChapter } from './documentRetrieval';
+import { findTopicRelevantChapter, findReferencedPage, wantsExhaustiveExtraction } from './documentRetrieval';
+import { loadPageText } from './documentIndexStore';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -34,6 +35,8 @@ export interface AIExecutionContext {
   schedule?: ScheduleEvent[];
   user?: UserProfile;
   energyLevel?: number;
+  /** Firebase uid — enables Drive-mirror fallback for page retrieval. */
+  pilotUid?: string;
 }
 
 export interface AIResponseWithActions {
@@ -554,33 +557,45 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
 
     const todayDateKey = getLocalDateKey();
 
-    // Chapter-aware retrieval: when the student references a specific
-    // chapter/section/slide/page of an uploaded document, load its
-    // COMPLETE stored text from IndexedDB as the primary context.
-    let chapterContext = '';
-    const referenced = findReferencedChapter(userMessage, [
+    // Build the candidate file list once.
+    const retrievalFiles = [
       ...(context.currentFile ? [context.currentFile] : []),
       ...(context.courseFiles || []),
-    ]);
-    if (referenced) {
-      const { file, chapter } = referenced;
-      const chapterText = await loadExtractedText(chapter.textKey);
-      if (chapterText && chapterText.trim()) {
-        const unit = file.structure?.unit || 'chapter';
-        chapterContext = `The student is asking specifically about ${unit} ${chapter.index} of "${file.name}" — "${chapter.title}". This is the COMPLETE stored text of that ${unit} (${chapter.charCount} characters). Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 80000)}\n"""\n\n`;
+    ];
+
+    // 1. Page-exact retrieval: an explicit single-page reference
+    //    ("page 42", "p. 42") is answered from that page's COMPLETE
+    //    stored text (IndexedDB, Drive-mirror fallback) — the most
+    //    precise source, preferred over chapter ranges.
+    let chapterContext = '';
+    const pageRef = findReferencedPage(userMessage, retrievalFiles);
+    if (pageRef) {
+      const pageText = await loadPageText(context.pilotUid, pageRef.file, pageRef.page);
+      if (pageText && pageText.trim()) {
+        chapterContext = `The student is asking specifically about page ${pageRef.page} of "${pageRef.file.name}". This is the COMPLETE stored text of that exact page. Ground your answer strictly in this text:\n"""\n${pageText.slice(0, 80000)}\n"""\n\n`;
       }
     }
 
-    // Topic-style questions ("what does the file say about X") with no
-    // explicit chapter/page reference: retrieve the best-matching
-    // chapter by keyword overlap and ground the answer in its full
-    // stored text instead of guessing from the digest alone.
+    // 2. Chapter/section/slide-aware retrieval: an explicit reference
+    //    loads that unit's COMPLETE stored text from IndexedDB.
     if (!chapterContext) {
-      const contextFiles = [
-        ...(context.currentFile ? [context.currentFile] : []),
-        ...(context.courseFiles || []),
-      ];
-      const topicMatch = findTopicRelevantChapter(userMessage, contextFiles);
+      const referenced = findReferencedChapter(userMessage, retrievalFiles);
+      if (referenced) {
+        const { file, chapter } = referenced;
+        const chapterText = await loadExtractedText(chapter.textKey);
+        if (chapterText && chapterText.trim()) {
+          const unit = file.structure?.unit || 'chapter';
+          chapterContext = `The student is asking specifically about ${unit} ${chapter.index} of "${file.name}" — "${chapter.title}". This is the COMPLETE stored text of that ${unit} (${chapter.charCount} characters). Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 80000)}\n"""\n\n`;
+        }
+      }
+    }
+
+    // 3. Topic-style questions ("what does the file say about X") with no
+    //    explicit chapter/page reference: retrieve the best-matching
+    //    chapter by keyword overlap and ground the answer in its full
+    //    stored text instead of guessing from the digest alone.
+    if (!chapterContext) {
+      const topicMatch = findTopicRelevantChapter(userMessage, retrievalFiles);
       if (topicMatch) {
         const { file, chapter } = topicMatch;
         const chapterText = await loadExtractedText(chapter.textKey);
@@ -602,10 +617,19 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
       chapterContext || context.currentFile || (context.courseFiles?.length ?? 0) > 0
     );
     const groundingRule = hasDocumentContext
-      ? 'DOCUMENT GROUNDING RULE: The student has uploaded study material in this conversation. Answer strictly from the provided document context (pre-indexed digests and any retrieved chapter text above). If the provided context does not contain the information needed, say so plainly and suggest which chapter/section to ask about next — never invent facts and attribute them to the document.\n\n'
+      ? 'DOCUMENT GROUNDING RULE: The student has uploaded study material in this conversation. Answer strictly from the provided document context (pre-indexed digests and any retrieved chapter/page text above). If the provided context does not contain the information needed, say so plainly and suggest which chapter/section to ask about next — never invent facts and attribute them to the document.\n\n'
       : '';
+    // Exhaustive-extraction rule: when the student explicitly asks for the
+    // COMPLETE set ("chapter 5 all word list", "every term", "list all
+    // phrases", 所有单词) and we retrieved that unit's full text, the model
+    // must output EVERY item found in the text — never a sample or summary.
+    const exhaustiveRule =
+      chapterContext && wantsExhaustiveExtraction(userMessage)
+        ? 'EXHAUSTIVE EXTRACTION REQUIRED: The student asked for the COMPLETE list (e.g. every word/term/phrase). The provided context contains the full stored text of the referenced unit. Extract and present EVERY matching item from that text — do not summarize, truncate, or give only a few examples. If the text is long, still include all items, organized cleanly.\n\n'
+        : '';
     const conversationPrompt =
       groundingRule +
+      exhaustiveRule +
       chapterContext +
       (recentHistory
         ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
@@ -1501,7 +1525,7 @@ Return valid JSON only in this format:
     // Analyze the ENTIRE document: split into sentence-aligned chunks and
     // reason over each one (sampling evenly across very long documents so
     // the beginning, middle and end are all covered).
-    const chunks = sampleArray(splitIntoChunks(fullContent), 6);
+    const chunks = sampleArray(splitIntoChunks(fullContent), 12);
 
     const analyzeChunk = async (chunk: string, index: number, total: number): Promise<ChunkAnalysis | null> => {
       const isSection = total > 1;
@@ -1598,7 +1622,7 @@ Analyze and return valid JSON only with this exact shape:
 
     // Skip tiny chapters (title slides etc.) and cap API calls by sampling.
     const substantial = chapters.filter((c) => c.endChar - c.startChar > 200);
-    const toAnalyze = new Set(sampleArray(substantial, 8).map((c) => c.index));
+    const toAnalyze = new Set(sampleArray(substantial, 32).map((c) => c.index));
 
     const analyzed: DocumentChapter[] = [];
     for (const chapter of chapters) {

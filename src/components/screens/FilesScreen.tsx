@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft, Maximize2 } from 'lucide-react';
-import { CourseResource, StudyFile, StudyNote, Task } from '../../types';
+import { CourseResource, StudyFile, StudyNote, Task, StudyFileUpload } from '../../types';
 import { FileViewer } from '../course/FileViewer';
 import { saveFileBlob } from '../../utils/fileStorage';
 import { extractDocumentFromFile } from '../../utils/fileExtractor';
@@ -51,7 +51,7 @@ interface FilesScreenProps {
   files: StudyFile[];
   notes: StudyNote[];
   onBack: () => void;
-  onUploadFile: (file: Partial<StudyFile> & { extractedContent?: string }) => void;
+  onUploadFile: (file: StudyFileUpload) => void;
   onAddNote: (title: string, content: string) => void;
   onAskAIAboutFile: (file: StudyFile) => void;
   onCreateTasksFromFile: (file: StudyFile) => void;
@@ -107,7 +107,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
 
     // Extract the complete text + chapter structure so AI gets
     // rich material context and per-chapter learning works.
-    const { text: extractedContent, structure } = await extractDocumentFromFile(uploaded, uploaded.name);
+    const { text: extractedContent, structure, pages } = await extractDocumentFromFile(uploaded, uploaded.name);
 
     onUploadFile({
       name: uploaded.name,
@@ -116,6 +116,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       fileStorageKey,
       extractedContent,
       structure: structure ?? undefined,
+      pages: pages ?? null,
     });
     setUploadNotice(`${uploaded.name} added · AI Auto-Indexing in background…`);
     window.setTimeout(() => setUploadNotice(null), 4000);
