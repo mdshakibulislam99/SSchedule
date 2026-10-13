@@ -1097,7 +1097,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
 
               {/* Requirement 4: + Popup menu */}
               {isPlusMenuOpen && (
-                <div className="absolute left-0 bottom-full mb-2 w-72 sm:w-80 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2 z-50 animate-slide-up space-y-1">
+                <div className="absolute left-0 bottom-full mb-2 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl p-2 z-50 animate-slide-up space-y-1">
                   {plusMenuTab === 'main' ? (
                     <>
                       <div className="px-2.5 py-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">

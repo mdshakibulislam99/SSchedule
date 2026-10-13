@@ -161,7 +161,7 @@ export const ResearchScreen: React.FC<ResearchScreenProps> = ({
                   <div className="font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 truncate">
                     {source.title}
                   </div>
-                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">{source.domain}</div>
+                  <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">{source.domain}</div>
                 </div>
                 <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               </a>

@@ -62,7 +62,7 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
       }}
     >
       <div
-        className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-scale-in text-center relative"
+        className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-scale-in text-center relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Dismiss Button */}

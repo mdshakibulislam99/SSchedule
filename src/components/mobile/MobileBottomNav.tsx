@@ -39,7 +39,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`group relative flex flex-col items-center justify-center min-w-[52px] min-h-[44px] py-1.5 px-[5px] rounded transition-all cursor-pointer active:scale-95 ${
+                className={`group relative flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] max-w-[68px] py-1.5 px-[5px] rounded transition-all cursor-pointer active:scale-95 ${
                   isActive
                     ? 'bg-indigo-100 dark:bg-indigo-950/60'
                     : 'bg-indigo-50 dark:bg-indigo-950/40'
@@ -72,7 +72,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
               aria-current={isActive ? 'page' : undefined}
-              className={`group relative flex flex-col items-center justify-center min-w-[50px] min-h-[44px] py-1 active:scale-95 transition-all cursor-pointer ${
+              className={`group relative flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] max-w-[68px] py-1 active:scale-95 transition-all cursor-pointer ${
                 isActive
                   ? 'text-indigo-600 dark:text-indigo-400 font-bold'
                   : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'

@@ -89,7 +89,7 @@ export const ForceUpdateModal: React.FC<ForceUpdateModalProps> = ({
       role="dialog"
       aria-modal="true"
     >
-      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative animate-scale-in">
+      <div className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative animate-scale-in">
         {/* Dismiss 'X' Button when not hard-blocked */}
         {!isHardBlocked && (
           <button
