@@ -22,6 +22,7 @@ import {
 import { getLocalDateKey } from '../utils/dates';
 import { apiUrl } from '../lib/api';
 import { loadExtractedText } from '../utils/fileStorage';
+import { findTopicRelevantChapter } from './documentRetrieval';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -370,11 +371,15 @@ function mergeChunkAnalyses(
     }
     if (suggestedTasks.length >= 6) break;
   }
+  // Fair digest budget: give every chunk an equal share of the
+  // denseContext budget so late sections of long documents are never
+  // cut entirely (the old join-then-slice kept only the beginning).
+  const perChunkBudget = Math.max(900, Math.floor(12000 / Math.max(chunkResults.length, 1)));
   const denseContext = chunkResults
-    .map((r) => r.sectionDigest)
+    .map((r) => (r.sectionDigest || '').slice(0, perChunkBudget))
     .filter(Boolean)
     .join('\n\n')
-    .slice(0, 9000);
+    .slice(0, 12000);
   const summary = chunkResults
     .map((r) => r.summary)
     .filter(Boolean)
@@ -566,12 +571,41 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
       }
     }
 
+    // Topic-style questions ("what does the file say about X") with no
+    // explicit chapter/page reference: retrieve the best-matching
+    // chapter by keyword overlap and ground the answer in its full
+    // stored text instead of guessing from the digest alone.
+    if (!chapterContext) {
+      const contextFiles = [
+        ...(context.currentFile ? [context.currentFile] : []),
+        ...(context.courseFiles || []),
+      ];
+      const topicMatch = findTopicRelevantChapter(userMessage, contextFiles);
+      if (topicMatch) {
+        const { file, chapter } = topicMatch;
+        const chapterText = await loadExtractedText(chapter.textKey);
+        if (chapterText && chapterText.trim()) {
+          const unit = file.structure?.unit || 'chapter';
+          chapterContext = `Retrieved the most relevant ${unit} of "${file.name}" for this question — ${unit} ${chapter.index}: "${chapter.title}". This is the COMPLETE stored text of that ${unit}. Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 60000)}\n"""\n\n`;
+        }
+      }
+    }
+
     const recentHistory = history
       .filter((message) => !message.isError && (message.sender === 'user' || (message.sender === 'ai' && message.id.startsWith('ai-'))))
       .slice(-12)
       .map((message) => `${message.sender === 'user' ? 'Student' : 'StudyAI'}: ${message.text.slice(0, 2000)}`)
       .join('\n');
+    // Grounding rule: whenever document context is in play, answers
+    // must come from that context — never from the model's imagination.
+    const hasDocumentContext = Boolean(
+      chapterContext || context.currentFile || (context.courseFiles?.length ?? 0) > 0
+    );
+    const groundingRule = hasDocumentContext
+      ? 'DOCUMENT GROUNDING RULE: The student has uploaded study material in this conversation. Answer strictly from the provided document context (pre-indexed digests and any retrieved chapter text above). If the provided context does not contain the information needed, say so plainly and suggest which chapter/section to ask about next — never invent facts and attribute them to the document.\n\n'
+      : '';
     const conversationPrompt =
+      groundingRule +
       chapterContext +
       (recentHistory
         ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
@@ -1608,26 +1642,22 @@ Return valid JSON only with this exact shape:
     return analyzed;
   },
 
-  /** Deterministic high-quality fallback when AI analysis cannot run. */
+  /** Honest failure state when AI analysis cannot run: never fabricate a digest. */
   buildFallbackIndex(
     material: { title: string; type: string; content?: string; courseCode?: string },
     courseLabel: string
   ): ResourceAIContext {
     return {
-      status: 'ready',
-      analyzedAt: new Date().toISOString(),
-      summary: `Academic resource covering ${material.title}. Essential reference material for ${courseLabel}.`,
-      keyConcepts: [material.title, 'Key principles', 'Application methods'],
-      denseContext: `Pre-indexed study digest for "${material.title}". This document provides reference material, practical examples, and core concepts relevant to ${courseLabel}.`,
-      studyQuestions: [
-        `What are the core arguments and premises presented in "${material.title}"?`,
-        `How does this material connect to other course modules and assignments?`,
-      ],
+      status: 'error',
+      summary: `AI indexing could not run for "${material.title}" — no digest was created. Check your AI provider settings, then use Re-index.`,
+      keyConcepts: [],
+      denseContext: '',
+      studyQuestions: [],
       suggestedTasks: [
         {
-          title: `Review and annotate ${material.title}`,
+          title: `Re-index "${material.title}" once an AI provider is connected`,
           priority: 'high',
-          estimatedMinutes: 30,
+          estimatedMinutes: 10,
         },
       ],
     };

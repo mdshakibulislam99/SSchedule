@@ -114,7 +114,7 @@ import {
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC, INITIAL_DRIVE_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { extractDocumentFromFile } from './utils/fileExtractor';
-import { saveExtractedText } from './utils/fileStorage';
+import { saveExtractedText, loadExtractedText } from './utils/fileStorage';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
@@ -2290,7 +2290,7 @@ export default function App() {
   };
 
   /** Shared by the Files screen and the course workspace so uploads land in one place. */
-  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure }) => {
+  const handleUploadFile = (newF: Partial<StudyFile> & { extractedContent?: string; structure?: DocumentStructure }): StudyFile => {
     const fileId = `file-${Date.now()}`;
 
     // Rewrite chapter keys to absolute IndexedDB keys and persist
@@ -2370,6 +2370,8 @@ export default function App() {
       .catch((err) => {
         console.warn('Auto AI indexing failed for file:', err);
       });
+
+    return f;
   };
 
   /**
@@ -2380,7 +2382,7 @@ export default function App() {
   const handleAttachFileToChat = async (file: File) => {
     try {
       const { text: extracted, structure } = await extractDocumentFromFile(file, file.name);
-      handleUploadFile({
+      const created = handleUploadFile({
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
@@ -2388,6 +2390,10 @@ export default function App() {
         structure: structure ?? undefined,
         summary: `Document attached for AI chat: ${file.name}.`,
       });
+      // Wire the freshly uploaded file as the chat's current file so
+      // chapter- and topic-based retrieval can ground answers in its
+      // stored text during this session.
+      setSelectedFileForChat(created);
       setIncomingChatMaterial({ name: file.name, content: extracted });
       showToast(`Attached "${file.name}" — opening AI chat`);
       handleTabChange('ai');
@@ -2397,7 +2403,7 @@ export default function App() {
     }
   };
 
-  const handleReindexFile = (fileId: string) => {
+  const handleReindexFile = async (fileId: string) => {
     const target = files.find((f) => f.id === fileId);
     if (!target) return;
 
@@ -2417,12 +2423,24 @@ export default function App() {
       )
     );
 
+    // Analyze the FULL extracted text from IndexedDB — re-indexing a
+    // file from its one-line summary produced a useless "digest".
+    let fullText = '';
+    if (target.extractedTextKey) {
+      try {
+        fullText = (await loadExtractedText(target.extractedTextKey)) || '';
+      } catch (err) {
+        console.warn('Re-index full-text load failed:', err);
+      }
+    }
+
     AIOrchestrator.analyzeAndIndexMaterial(
       {
         title: target.name,
         type: target.type,
-        content: target.summary,
+        content: fullText.trim() || target.summary,
         courseCode: target.courseCode,
+        structure: target.structure,
       },
       aiConfig
     )
