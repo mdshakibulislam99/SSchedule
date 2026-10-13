@@ -12,12 +12,39 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
+      // Pilot sync signals: identifiers and revisions only.
+      // A user may read/write ONLY their own signal documents, and
+      // writes may never carry content payloads (titles, descriptions,
+      // deadlines, attachments, …) — the authoritative content lives
+      // in the user's Google Drive. Applies to every Drive-backed
+      // entity type (tasks, schedules, notes, …).
+      match /sync-signals/{signalId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+          request.resource.data.keys().hasOnly([
+            'entityType', 'recordId', 'revision', 'updatedAt', 'op'
+          ]) &&
+          request.resource.data.entityType in [
+            'task', 'schedule-event', 'study-note', 'goal', 'course',
+            'course-resource', 'study-file', 'research-item',
+            'ai-memory-item', 'ai-conversation', 'ai-message',
+            'notification-item', 'course-quiz', 'course-flashcard',
+            'resource-annotation', 'app-settings', 'reminder'
+          ] &&
+          request.resource.data.recordId is string &&
+          request.resource.data.revision is int &&
+          request.resource.data.updatedAt is string &&
+          request.resource.data.op in ['create', 'update', 'delete'];
+      }
+
       // Every per-user subcollection recursively: tasks, courses, resources, schedule,
       // goals, notifications, files, notes, research, aiMemory,
       // conversations, metrics, quizzes, flashcards, annotations,
-      // integrations, etc.
+      // integrations, etc. Sync signals are governed by the stricter
+      // rule above and are excluded here.
       match /{allSubcollections=**} {
-        allow read, write: if isOwner(userId);
+        allow read, write: if isOwner(userId) &&
+          !allSubcollections.hasPrefix('sync-signals');
       }
     }
 

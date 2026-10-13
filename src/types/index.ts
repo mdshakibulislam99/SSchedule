@@ -325,6 +325,31 @@ export interface GoogleCalendarSyncState {
   lastSyncError?: string;
 }
 
+/**
+ * Persisted state for the Google Drive connection — the user's
+ * data store. `folderId` is the app's "SScheduleData" root folder,
+ * resolved by name on every (re)connect so it always re-attaches
+ * to the same folder. The additional fields are minimal account
+ * metadata only — OAuth tokens are never stored here.
+ */
+export interface GoogleDriveSyncState {
+  connected: boolean;
+  email?: string;
+  folderId: string;
+  folderName: string;
+  connectedAt?: string;
+  lastSyncedAt?: string;
+  updatedAt?: string;
+  /** Drive storage schema version of the initialized structure. */
+  schemaVersion?: number;
+  /** Firestore→Drive migration lifecycle state. */
+  migrationStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'VERIFIED' | 'COMPLETE';
+  /** Drive partition revision at the last checkpoint. */
+  revision?: number;
+  /** 'legacy' = Firestore primary (default); 'pilot' = Drive primary. */
+  storageRole?: 'legacy' | 'pilot';
+}
+
 /** A pending Google Calendar write that has not yet been confirmed. */
 export interface CalendarOutboxItem {
   id: string;

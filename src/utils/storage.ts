@@ -18,6 +18,7 @@ import {
   CourseFlashcard,
   ResourceAnnotation,
   GoogleCalendarSyncState,
+  GoogleDriveSyncState,
   CalendarOutboxItem,
 } from '../types';
 import { getLocalDateKey } from './dates';
@@ -50,11 +51,18 @@ const STORAGE_KEYS = {
   ANNOTATIONS: 'studyai_resource_annotations',
   CALENDAR_SYNC: 'studyai_calendar_sync',
   CALENDAR_OUTBOX: 'studyai_calendar_outbox',
+  DRIVE_SYNC: 'studyai_drive_sync',
 };
 
 export const INITIAL_CALENDAR_SYNC: GoogleCalendarSyncState = {
   connected: false,
   calendarId: 'primary',
+};
+
+export const INITIAL_DRIVE_SYNC: GoogleDriveSyncState = {
+  connected: false,
+  folderId: '',
+  folderName: 'SSfilesdata',
 };
 
 export const CLEAN_USER: UserProfile = {
@@ -452,6 +460,7 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.ANNOTATIONS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.CALENDAR_SYNC, JSON.stringify(INITIAL_CALENDAR_SYNC));
     localStorage.removeItem(STORAGE_KEYS.CALENDAR_OUTBOX);
+    localStorage.setItem(STORAGE_KEYS.DRIVE_SYNC, JSON.stringify(INITIAL_DRIVE_SYNC));
   },
 
   getCalendarSync(): GoogleCalendarSyncState {
@@ -464,6 +473,18 @@ export const StudyStorage = {
   },
   saveCalendarSync(state: GoogleCalendarSyncState) {
     localStorage.setItem(STORAGE_KEYS.CALENDAR_SYNC, JSON.stringify(state));
+  },
+
+  getDriveSync(): GoogleDriveSyncState {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.DRIVE_SYNC);
+      return data ? { ...INITIAL_DRIVE_SYNC, ...JSON.parse(data) } : INITIAL_DRIVE_SYNC;
+    } catch {
+      return INITIAL_DRIVE_SYNC;
+    }
+  },
+  saveDriveSync(state: GoogleDriveSyncState) {
+    localStorage.setItem(STORAGE_KEYS.DRIVE_SYNC, JSON.stringify(state));
   },
 
   getCalendarOutbox(): CalendarOutboxItem[] {

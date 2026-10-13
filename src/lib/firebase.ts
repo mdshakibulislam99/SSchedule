@@ -30,7 +30,7 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import firebaseConfigFile from '../../firebase-applet-config.json';
-import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState, StudyFile, StudyNote, ResearchItem, AIMemoryItem, NotificationItem, CourseQuiz, CourseFlashcard, ResourceAnnotation, ProgressMetrics, AIConversation } from '../types';
+import { UserProfile, Task, ScheduleEvent, Goal, Course, CourseResource, GoogleCalendarSyncState, GoogleDriveSyncState, StudyFile, StudyNote, ResearchItem, AIMemoryItem, NotificationItem, CourseQuiz, CourseFlashcard, ResourceAnnotation, ProgressMetrics, AIConversation } from '../types';
 
 // The verified Firebase project configuration provided by the user
 export const FIREBASE_CONFIG = {
@@ -202,6 +202,16 @@ export async function completeGoogleRedirect(): Promise<FirebaseUser | null> {
         if (credential?.accessToken) {
           const { cacheCalendarToken } = await import('./googleCalendar');
           cacheCalendarToken(credential.accessToken);
+          // The same redirect result carries the Drive access token when
+          // the native Drive connect flow started it — hand it back so
+          // the pending connect resumes without a second consent.
+          try {
+            const { DRIVE_CONNECT_PENDING_KEY, cacheDriveToken } = await import('./googleDrive');
+            if (localStorage.getItem(DRIVE_CONNECT_PENDING_KEY)) {
+              cacheDriveToken(credential.accessToken);
+              localStorage.removeItem(DRIVE_CONNECT_PENDING_KEY);
+            }
+          } catch {}
         }
       } catch {
         // Best-effort: calendar sync falls back to its own flow if this fails.
@@ -297,6 +307,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   annotations: ResourceAnnotation[];
   metrics: ProgressMetrics | null;
   calendarSync: GoogleCalendarSyncState | null;
+  driveSync: GoogleDriveSyncState | null;
 }> {
   // Small helpers so every collection can be fetched in parallel — a
   // sequential chain of getDocs() would take many round trips on mobile.
@@ -352,6 +363,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     annotations,
     metrics,
     calendarSync,
+    driveSync,
   ] = await Promise.all([
     readDoc<UserProfile>(),
     readCol<Task>('tasks'),
@@ -370,6 +382,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     readCol<ResourceAnnotation>('annotations'),
     readDoc<ProgressMetrics>('metrics', 'current'),
     readDoc<GoogleCalendarSyncState>('integrations', 'googleCalendar'),
+    readDoc<GoogleDriveSyncState>('integrations', 'googleDrive'),
   ]);
 
   const profile = userDoc;
@@ -401,6 +414,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     annotations,
     metrics,
     calendarSync,
+    driveSync,
   };
 }
 
@@ -472,6 +486,21 @@ export async function syncGoogleCalendarStateToFirestore(
     }), { merge: true });
   } catch (err) {
     console.warn('Failed to sync Google Calendar state to Firestore:', err);
+  }
+}
+
+export async function syncGoogleDriveStateToFirestore(
+  userId: string,
+  state: GoogleDriveSyncState,
+) {
+  if (!userId) return;
+  try {
+    await setDoc(doc(db, 'users', userId, 'integrations', 'googleDrive'), cleanForFirestore({
+      ...state,
+      updatedAt: new Date().toISOString(),
+    }), { merge: true });
+  } catch (err) {
+    console.warn('Failed to sync Google Drive state to Firestore:', err);
   }
 }
 

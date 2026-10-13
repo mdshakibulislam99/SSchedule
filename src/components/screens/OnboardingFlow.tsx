@@ -10,10 +10,13 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  HardDrive,
+  ShieldCheck,
 } from 'lucide-react';
 import { MascotAvatar } from '../mobile/MascotAvatar';
 import { PasswordResetPanel } from '../common/PasswordResetPanel';
 import { UserProfile } from '../../types';
+import { StudyStorage } from '../../utils/storage';
 import { registerBackHandler } from '../../lib/native';
 import {
   signInWithGoogle,
@@ -22,6 +25,8 @@ import {
   fetchUserDataFromFirestore,
   syncUserProfileToFirestore,
 } from '../../lib/firebase';
+import { connectDrive } from '../../lib/googleDrive';
+import { enableDrivePilot } from '../../services/storageInterface';
 import type { User as FirebaseUser } from 'firebase/auth';
 
 interface OnboardingFlowProps {
@@ -67,7 +72,8 @@ export const GoogleIcon = ({ className }: { className?: string }) => (
 );
 
 export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, initialUser }) => {
-  // Steps: 1 = Sign in, 2 = Sign up, 3 = Study field, 4 = Goals, 5 = Profile
+  // Steps: 1 = Sign in, 2 = Sign up, 3 = Study field, 4 = Goals,
+  // 5 = Profile, 6 = Connect Google Drive (optional backup)
   const [step, setStep] = useState<number>(1);
   const [selectedField, setSelectedField] = useState<string>(initialUser.studyField || 'Computer Science');
   const [selectedGoals, setSelectedGoals] = useState<string[]>(initialUser.goals || ['Finish assignments']);
@@ -86,7 +92,14 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
   const [firebaseUid, setFirebaseUid] = useState<string | undefined>(initialUser.firebaseUid);
   const [photoURL, setPhotoURL] = useState<string | undefined>(initialUser.photoURL);
 
-  // Back targets: sign-up -> sign-in, study field -> sign-in, then straight back
+  // Google Drive backup connection (onboarding step 6). Optional: the
+  // user may connect their own Drive for online backup, or skip and
+  // continue on the default cloud backup.
+  const [driveConnecting, setDriveConnecting] = useState<boolean>(false);
+  const [driveConnected, setDriveConnected] = useState<boolean>(false);
+  const [driveError, setDriveError] = useState<string | null>(null);
+
+  // Back targets: sign-up -> sign-in, study field -> sign-in, drive -> profile.
   const backTarget = step === 2 || step === 3 ? 1 : step - 1;
 
   // Mirror the in-app back chevron on the Android hardware back button. Returning
@@ -258,6 +271,43 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
     }
   };
 
+  /**
+   * Connects the user's own Google Drive for online backup and opts this
+   * brand-new account into Drive-backed task storage. This is a brand-new
+   * account with no existing Firestore tasks, so enabling the pilot here is
+   * safe — nothing is migrated. The user can always skip and stay on the
+   * default cloud backup.
+   */
+  const handleConnectDrive = async () => {
+    if (!firebaseUid) {
+      setDriveError('Sign in first to connect Google Drive.');
+      return;
+    }
+    setDriveConnecting(true);
+    setDriveError(null);
+    try {
+      const state = await connectDrive();
+      // Persist the connection so it survives an app restart.
+      StudyStorage.saveDriveSync(state);
+      // Opt this new account into Drive-backed task storage. Wrapped in
+      // its own try so a Drive-structure hiccup never blocks onboarding.
+      try {
+        await enableDrivePilot(firebaseUid);
+      } catch (pilotErr) {
+        console.warn('Drive pilot init during onboarding failed:', pilotErr);
+      }
+      setDriveConnected(true);
+    } catch (err: any) {
+      console.warn('Drive connect during onboarding failed:', err);
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (!msg.includes('cancelled') && !msg.includes('closed') && !msg.includes('cancel')) {
+        setDriveError(err?.message || 'Could not connect Google Drive. You can try again in Settings.');
+      }
+    } finally {
+      setDriveConnecting(false);
+    }
+  };
+
   const handleFinish = async () => {
     const completedUser: UserProfile = {
       ...initialUser,
@@ -316,7 +366,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         {/* Progress dots only appear during the study setup (after sign-in) */}
         {step >= 3 ? (
           <div className="flex items-center gap-1.5">
-            {[3, 4, 5].map((i) => (
+            {[3, 4, 5, 6].map((i) => (
               <span
                 key={i}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -633,6 +683,71 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
         </div>
       )}
 
+      {/* Screen 6: Connect Google Drive (optional online backup) */}
+      {step === 6 && (
+        <div className="flex-1 flex flex-col justify-center my-auto py-4 space-y-6">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-b from-indigo-100 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/40 flex items-center justify-center shadow-inner">
+              <HardDrive className="w-9 h-9 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+                Connect your Google Drive
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                Store your SSchedule data in your own Google Drive and access
+                it across your devices. Your files and application data remain
+                in your Drive, while Firebase manages your account and
+                essential synchronization metadata.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/60">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
+              Your data stays private and encrypted in your Google account. We
+              never share it, and you can disconnect anytime from Settings.
+            </p>
+          </div>
+
+          {driveError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2 animate-fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
+              <span>{driveError}</span>
+            </div>
+          )}
+
+          {driveConnected ? (
+            <div className="p-3.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-center gap-2.5 animate-fade-in">
+              <CheckCircle2 className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">
+                Google Drive connected — your backup is on.
+              </span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleConnectDrive}
+              disabled={driveConnecting}
+              className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
+            >
+              {driveConnecting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Connecting…</span>
+                </>
+              ) : (
+                <>
+                  <HardDrive className="w-4 h-4" />
+                  <span>Connect Google Drive</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Bottom CTA Buttons */}
       <div className="pt-4 shrink-0 space-y-2.5">
         {step === 1 ? (
@@ -686,7 +801,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
               Log in
             </button>
           </p>
-        ) : step < 5 ? (
+        ) : step < 6 ? (
           <button
             onClick={() => setStep(step + 1)}
             className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
@@ -695,13 +810,26 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, init
             <ArrowRight className="w-4 h-4" />
           </button>
         ) : (
-          <button
-            onClick={handleFinish}
-            className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
-          >
-            <span>Start Studying with SSchedule</span>
-            <Sparkles className="w-4 h-4" />
-          </button>
+          <div className="space-y-2.5">
+            <button
+              onClick={handleFinish}
+              className="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
+            >
+              <span>Start Studying with SSchedule</span>
+              <Sparkles className="w-4 h-4" />
+            </button>
+            {!driveConnected && (
+              <button
+                type="button"
+                onClick={handleFinish}
+                className="w-full text-center text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 py-1 cursor-pointer"
+              >
+                Skip for now — without Google Drive, your study data stays on
+                this device only and is not backed up or synced. You can
+                connect Drive later in Settings.
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

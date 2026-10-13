@@ -17,6 +17,7 @@ import {
   completeGoogleRedirect,
   signOutUser,
   onAuthChange,
+  db,
   syncUserProfileToFirestore,
   syncTasksToFirestore,
   syncScheduleToFirestore,
@@ -26,8 +27,26 @@ import {
   deleteTaskFromFirestore,
   deleteCourseFromFirestore,
   syncGoogleCalendarStateToFirestore,
+  syncGoogleDriveStateToFirestore,
   cleanForFirestore,
 } from './lib/firebase';
+import { connectDrive, disconnectDrive } from './lib/googleDrive';
+import { enableDrivePilot, isDrivePilotEnabled, isCollectionDriveAuthoritative } from './services/storageInterface';
+import {
+  deleteCollectionRecord,
+  persistCollectionChange as persistGenericCollectionChange,
+  retryPendingCollectionChanges,
+  DriveCollectionConflictError,
+} from './services/collectionPilotService';
+import {
+  deleteTaskOnDrive,
+  isTaskPilotActive,
+  loadTaskRecordsFromDrive,
+  reconcileSyncSignals,
+  retryPendingTaskChanges,
+  persistTaskChange,
+  DriveTaskConflictError,
+} from './services/taskPilotService';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { registerBackHandler, updateNativeTheme } from './lib/native';
 import { offlineSyncService } from './services/offlineSyncService';
@@ -86,11 +105,12 @@ import {
   CourseQuiz,
   CourseFlashcard,
   GoogleCalendarSyncState,
+  GoogleDriveSyncState,
   AppUpdateCheckResult,
   AIConversation,
   DocumentStructure,
 } from './types';
-import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC } from './utils/storage';
+import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC, INITIAL_DRIVE_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { extractDocumentFromFile } from './utils/fileExtractor';
 import { saveExtractedText } from './utils/fileStorage';
@@ -152,6 +172,7 @@ export default function App() {
   );
   const [metrics, setMetrics] = useState<ProgressMetrics>(() => StudyStorage.getMetrics());
   const [calendarSync, setCalendarSync] = useState<GoogleCalendarSyncState>(() => StudyStorage.getCalendarSync());
+  const [driveSync, setDriveSync] = useState<GoogleDriveSyncState>(() => StudyStorage.getDriveSync());
 
   const gcal = useGoogleCalendarSync({ schedule, setSchedule, calendarSync, setCalendarSync });
 
@@ -248,6 +269,25 @@ export default function App() {
   const offlineSync = useOfflineSync(firebaseUser?.uid);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateCheckResult | null>(null);
   const [isGraceModalDismissed, setIsGraceModalDismissed] = useState(false);
+  const [isDriveConnecting, setIsDriveConnecting] = useState(false);
+  const [isDriveInitializing, setIsDriveInitializing] = useState(false);
+  const [drivePilotEnabled, setDrivePilotEnabled] = useState<boolean>(() =>
+    isDrivePilotEnabled(firebaseUser?.uid),
+  );
+  const [isDriveRefreshing, setIsDriveRefreshing] = useState(false);
+  const [isDriveVerifying, setIsDriveVerifying] = useState(false);
+  const [driveVerificationReports, setDriveVerificationReports] = useState<
+    import('./services/driveVerificationService').CollectionVerificationReport[] | null
+  >(null);
+
+  // True when the current account is a Drive pilot. This is decided by
+  // the explicit per-uid opt-in ONLY — never by the transient Drive
+  // connection state. A pilot account stays Drive-authoritative even
+  // when offline/unauthed: task writes are queued and retried, and are
+  // never silently redirected to Firestore (which would create a
+  // divergent copy of the task data).
+  const isTaskPilotOn =
+    Boolean(firebaseUser) && isTaskPilotActive(firebaseUser!.uid);
 
   const isLoggingOutRef = useRef(false);
   const isDeleteSyncPaused = isFirebaseSyncing || isLoggingOutRef.current;
@@ -255,19 +295,27 @@ export default function App() {
   // Mirror local deletions into Firestore for every cloud-synced collection,
   // so items removed here don't resurrect on the next restore.
   // Paused during initial cloud sync, restore, or logout to prevent wiping cloud state!
-  useCloudDeleteSync(tasks, 'tasks', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(schedule, 'schedule', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(courses, 'courses', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(resources, 'resources', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(goals, 'goals', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(files, 'files', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(notes, 'notes', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(research, 'research', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(notifications, 'notifications', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser, isDeleteSyncPaused);
-  useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused);
+  // The tasks collection is additionally paused for Drive-pilot accounts:
+  // their deletions become Drive tombstones (handleDeleteTask) and any
+  // pre-existing Firestore task records must be preserved untouched.
+  // Every other collection pauses its Firestore delete mirror while its own
+  // rollout gate is enabled: Drive tombstones are the deletion record and
+  // the Firestore copy (if any) must be preserved, never wiped.
+  const isDriveCollectionPaused = (collection: string): boolean =>
+    Boolean(firebaseUser) && isCollectionDriveAuthoritative(collection, firebaseUser!.uid);
+  useCloudDeleteSync(tasks, 'tasks', firebaseUser, isDeleteSyncPaused || isTaskPilotOn);
+  useCloudDeleteSync(schedule, 'schedule', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('schedule'));
+  useCloudDeleteSync(courses, 'courses', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('courses'));
+  useCloudDeleteSync(resources, 'resources', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('resources'));
+  useCloudDeleteSync(goals, 'goals', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('goals'));
+  useCloudDeleteSync(files, 'files', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('files'));
+  useCloudDeleteSync(notes, 'notes', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('notes'));
+  useCloudDeleteSync(research, 'research', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('research'));
+  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('aiMemory'));
+  useCloudDeleteSync(notifications, 'notifications', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('notifications'));
+  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('quizzes'));
+  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('flashcards'));
+  useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('annotations'));
 
   const checkAppUpdates = async () => {
     try {
@@ -478,6 +526,21 @@ export default function App() {
   // adding one task re-queue and re-write all of them, one Firestore
   // write at a time, every time).
   const syncedSigsRef = useRef<Map<string, string>>(new Map());
+  // Last-known Google Drive revision per task id — the
+  // baseRevision used for conflict detection in the
+  // task pilot. Only populated for pilot accounts.
+  const driveTaskRevisionsRef = useRef<Map<string, number>>(new Map());
+  // Serializes pilot task writes so rapid successive
+  // edits can't race each other's revision checks.
+  const pilotTaskWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  // Last-known Drive revision per record id for every OTHER routed
+  // collection (schedule, courses, ...). Only populated when that
+  // collection's rollout gate is enabled — empty maps mean the legacy
+  // Firestore path is active and no Drive revision tracking applies.
+  const driveCollectionRevisionsRef = useRef<Map<string, Map<string, number>>>(new Map());
+  // Serializes Drive writes per collection so rapid successive edits to
+  // the same collection can't race each other's revision checks.
+  const collectionWriteChainsRef = useRef<Map<string, Promise<void>>>(new Map());
   const itemSignature = (item: unknown) => JSON.stringify(item);
   const changedItems = <T extends { id: string }>(
     collection: string,
@@ -518,6 +581,160 @@ export default function App() {
     offlineSyncService.enqueueBatchUpsert(uid, 'conversations', convs.map((c) => ({ ...c })));
   };
 
+  /**
+   * Pilot task write pipeline. Serialized through the write chain so
+   * rapid successive edits can't race each other's revision checks.
+   * Each write carries the base revision last seen for the task; a
+   * Drive-side revision mismatch blocks the write, preserves the local
+   * version in _system/conflicts/, and surfaces a recoverable error —
+   * never a silent overwrite. Offline failures are queued per-uid and
+   * retried on the next sign-in / refresh.
+   */
+  const persistPilotTaskChange = (uid: string, task: Task) => {
+    pilotTaskWriteChainRef.current = pilotTaskWriteChainRef.current.then(async () => {
+      const baseRevision = driveTaskRevisionsRef.current.get(task.id);
+      try {
+        const result = await persistTaskChange(
+          uid,
+          task,
+          baseRevision === undefined ? 'create' : 'update',
+          baseRevision,
+        );
+        if (result.revision !== undefined) {
+          driveTaskRevisionsRef.current.set(task.id, result.revision);
+        }
+        if (result.pending) {
+          // Never claim a successful cloud save — the Drive write did
+          // not land. Say so accurately and keep the change queued.
+          const reason = result.pendingReason;
+          showToast(
+            reason === 'needs-reconnect'
+              ? `"${task.title}" is saved on this device — reconnect Google Drive to sync it (your change is kept safe).`
+              : `"${task.title}" is saved on this device — it will sync to Google Drive when you're back online.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof DriveTaskConflictError) {
+          showToast(err.message);
+          // Reload the authoritative Drive copy so the user sees the
+          // latest revision; their rejected version is in conflicts/.
+          try {
+            const records = await loadTaskRecordsFromDrive();
+            const active = records.filter((r) => !r.deletedAt).map((r) => r.payload);
+            setTasks(active);
+            StudyStorage.saveTasks(active);
+            driveTaskRevisionsRef.current = new Map(records.map((r) => [r.id, r.revision]));
+            markSynced('tasks', active);
+          } catch (reloadErr) {
+            console.warn('Drive task reload after conflict failed:', reloadErr);
+          }
+        } else {
+          console.warn('Drive task write failed:', err);
+          showToast(
+            `Could not save "${task.title}" to Google Drive: ${(err as Error)?.message || err}`,
+          );
+        }
+      }
+    });
+  };
+
+  /** Loads the Drive-authoritative task list into local state. */
+  const reloadDriveTasks = async (): Promise<number> => {
+    const records = await loadTaskRecordsFromDrive();
+    const active = records.filter((r) => !r.deletedAt).map((r) => r.payload);
+    setTasks(active);
+    StudyStorage.saveTasks(active);
+    driveTaskRevisionsRef.current = new Map(records.map((r) => [r.id, r.revision]));
+    markSynced('tasks', active);
+    return active.length;
+  };
+
+  /**
+   * Generic Drive write pipeline for every NON-task routed collection.
+   * Mirrors persistPilotTaskChange: serialized through a per-collection
+   * write chain, revision-checked, conflict-preserving, queued when
+   * offline — and never redirected to Firestore. Only called when the
+   * collection's rollout gate is enabled; the legacy sync effects call
+   * through only when the gate is off.
+   */
+  const persistRoutedCollectionChange = <T extends { id: string }>(
+    uid: string,
+    collection: string,
+    entityType: string,
+    record: T,
+    label: string,
+  ) => {
+    const chain = collectionWriteChainsRef.current.get(collection) ?? Promise.resolve();
+    const revisions =
+      driveCollectionRevisionsRef.current.get(collection) ?? new Map<string, number>();
+    driveCollectionRevisionsRef.current.set(collection, revisions);
+    collectionWriteChainsRef.current.set(
+      collection,
+      chain.then(async () => {
+        const baseRevision = revisions.get(record.id);
+        try {
+          const result = await persistGenericCollectionChange(
+            collection,
+            entityType,
+            uid,
+            record,
+            baseRevision === undefined ? 'create' : 'update',
+            baseRevision,
+          );
+          if (result.revision !== undefined) {
+            revisions.set(record.id, result.revision);
+          }
+          if (result.pending) {
+            showToast(
+              result.pendingReason === 'needs-reconnect'
+                ? `"${label}" is saved on this device — reconnect Google Drive to sync it (your change is kept safe).`
+                : `"${label}" is saved on this device — it will sync to Google Drive when you're back online.`,
+            );
+          }
+        } catch (err) {
+          if (err instanceof DriveCollectionConflictError) {
+            showToast(err.message);
+          } else {
+            console.warn(`Drive ${collection} write failed:`, err);
+            showToast(
+              `Could not save "${label}" to Google Drive: ${(err as Error)?.message || err}`,
+            );
+          }
+        }
+      }),
+    );
+  };
+
+  /**
+   * Settings → "Refresh tasks from Drive": drains the offline pending
+   * queue, re-reads the authoritative task partitions from Drive, and
+   * re-publishes any missed minimal sync signals. This is also the
+   * manual recovery path after a conflicted or failed write.
+   */
+  const handleDriveTasksRefresh = async () => {
+    if (!firebaseUser || !isTaskPilotOn) {
+      showToast('Connect Google Drive and initialize the Drive pilot first.');
+      return;
+    }
+    setIsDriveRefreshing(true);
+    try {
+      const applied = await retryPendingTaskChanges(firebaseUser.uid);
+      const count = await reloadDriveTasks();
+      await reconcileSyncSignals(firebaseUser.uid);
+      showToast(
+        `Drive tasks refreshed — ${count} active task(s)` +
+          (applied > 0 ? `, ${applied} queued change(s) synced.` : '.'),
+      );
+    } catch (err) {
+      console.warn('Drive task refresh failed:', err);
+      showToast(
+        `Could not refresh tasks from Google Drive: ${(err as Error)?.message || err}`,
+      );
+    } finally {
+      setIsDriveRefreshing(false);
+    }
+  };
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthChange(async (fUser) => {
@@ -530,6 +747,15 @@ export default function App() {
         // stale entries from a previous account or session can't
         // make a real edit look "already synced".
         syncedSigsRef.current.clear();
+        // Drive pilot revisions are per-account — a different
+        // account must never inherit another account's
+        // revision map.
+        driveTaskRevisionsRef.current = new Map();
+        pilotTaskWriteChainRef.current = Promise.resolve();
+        // The pilot badge is per-account too: switching accounts must
+        // never carry a previous account's Drive-pilot selection into
+        // the new one.
+        setDrivePilotEnabled(isDrivePilotEnabled(fUser.uid));
         try {
           // Apply any pending offline writes before reading, so the cloud
           // snapshot below reflects the user's latest data. Without this,
@@ -601,13 +827,79 @@ export default function App() {
           }
 
           // Restore or merge tasks
-          if (cloudData.tasks && cloudData.tasks.length > 0) {
-            setTasks(cloudData.tasks);
-            StudyStorage.saveTasks(cloudData.tasks);
-            markSynced('tasks', cloudData.tasks);
-          } else if (tasks.length > 0) {
-            await syncTasksToFirestore(fUser.uid, tasks);
-            markSynced('tasks', tasks);
+          // Task pilot: the signed-in user's own Google
+          // Drive is the authoritative task store. Firestore
+          // keeps only minimal sync signals — never task
+          // content — for pilot accounts.
+          // The Drive connection state must be resolved BEFORE the
+          // pilot gates so they never read an out-of-scope variable.
+          const restoredDrive: GoogleDriveSyncState = {
+            ...INITIAL_DRIVE_SYNC,
+            ...(cloudData.driveSync ?? StudyStorage.getDriveSync()),
+          };
+          let restoredTasksFromDrive = false;
+          if (isTaskPilotActive(fUser.uid)) {
+            try {
+              const records = await loadTaskRecordsFromDrive();
+              const activeTasks = records
+                .filter((r) => !r.deletedAt)
+                .map((r) => r.payload);
+              setTasks(activeTasks);
+              StudyStorage.saveTasks(activeTasks);
+              driveTaskRevisionsRef.current = new Map(
+                records.map((r) => [r.id, r.revision]),
+              );
+              markSynced('tasks', activeTasks);
+              restoredTasksFromDrive = true;
+            } catch (driveErr) {
+              // Drive is offline or unauthenticated. Drive stays the
+              // authoritative store for a pilot account: we deliberately
+              // do NOT fall back to Firestore here (that would show or
+              // seed a divergent copy). Keep the last known local copy
+              // and drain any queued changes below.
+              console.warn('Drive task restore failed:', driveErr);
+              showToast(
+                'Could not load tasks from Google Drive — showing the last known copy. Queued changes stay safe.',
+              );
+            }
+          }
+          if (!restoredTasksFromDrive && !isTaskPilotActive(fUser.uid)) {
+            if (cloudData.tasks && cloudData.tasks.length > 0) {
+              setTasks(cloudData.tasks);
+              StudyStorage.saveTasks(cloudData.tasks);
+              markSynced('tasks', cloudData.tasks);
+            } else if (tasks.length > 0) {
+              await syncTasksToFirestore(fUser.uid, tasks);
+              markSynced('tasks', tasks);
+            }
+          }
+
+          // Pilot reconciliation: drain the offline pending
+          // queue and re-publish any missed sync signals. Runs for
+          // every pilot account regardless of the current connection
+          // state — if Drive is unreachable the retries no-op and the
+          // changes stay queued for the next reconnect.
+          if (isTaskPilotActive(fUser.uid)) {
+            void retryPendingTaskChanges(fUser.uid).then(
+              async (applied) => {
+                if (applied > 0) {
+                  const records = await loadTaskRecordsFromDrive();
+                  const activeTasks = records
+                    .filter((r) => !r.deletedAt)
+                    .map((r) => r.payload);
+                  setTasks(activeTasks);
+                  StudyStorage.saveTasks(activeTasks);
+                  driveTaskRevisionsRef.current = new Map(
+                    records.map((r) => [r.id, r.revision]),
+                  );
+                  markSynced('tasks', activeTasks);
+                  showToast(
+                    `${applied} pending task change(s) synced to Google Drive.`,
+                  );
+                }
+              },
+            );
+            void reconcileSyncSignals(fUser.uid);
           }
 
           // Restore or merge schedule
@@ -733,6 +1025,13 @@ export default function App() {
             StudyStorage.saveCalendarSync(cloudData.calendarSync);
           }
 
+          // Restore Google Drive connection (user data storage)
+          // (state was merged into `restoredDrive` above — persist it)
+          if (cloudData.driveSync) {
+            setDriveSync(restoredDrive);
+            StudyStorage.saveDriveSync(restoredDrive);
+          }
+
           // For returning / old accounts with restored data, immediately dismiss onboarding
           if (isOldAccount) {
             setShowOnboarding(false);
@@ -781,19 +1080,46 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('tasks', tasks);
       if (changed.length > 0) {
-        syncTasksToFirestore(firebaseUser.uid, changed);
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'tasks', changed);
+        if (isTaskPilotOn) {
+          // Pilot accounts: Google Drive is the authoritative task
+          // store. Each change is written to the user's own Drive
+          // (revision-checked, conflict-preserving); Firestore only
+          // receives the minimal sync signal published after a
+          // successful Drive write — never task content.
+          for (const task of changed) {
+            persistPilotTaskChange(firebaseUser.uid, task);
+          }
+        } else {
+          // Default path for every non-pilot account — unchanged.
+          syncTasksToFirestore(firebaseUser.uid, changed);
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'tasks', changed);
+        }
       }
       markSynced('tasks', tasks);
     }
-  }, [tasks, firebaseUser]);
+  }, [tasks, firebaseUser, isTaskPilotOn]);
 
   useEffect(() => {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('schedule', schedule);
       if (changed.length > 0) {
-        syncScheduleToFirestore(firebaseUser.uid, changed);
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'schedule', changed);
+        // Gated Drive path: pilot account + schedule rollout enabled.
+        // Until the gate opens this is dead code and the legacy path
+        // below runs exactly as today.
+        if (isCollectionDriveAuthoritative('schedule', firebaseUser.uid)) {
+          for (const event of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'schedule',
+              'schedule-event',
+              event,
+              event.title || 'Schedule event',
+            );
+          }
+        } else {
+          syncScheduleToFirestore(firebaseUser.uid, changed);
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'schedule', changed);
+        }
       }
       markSynced('schedule', schedule);
     }
@@ -803,8 +1129,21 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('courses', courses);
       if (changed.length > 0) {
-        syncCoursesToFirestore(firebaseUser.uid, changed);
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'courses', changed);
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('courses', firebaseUser.uid)) {
+          for (const course of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'courses',
+              'course',
+              course,
+              course.name || 'Course',
+            );
+          }
+        } else {
+          syncCoursesToFirestore(firebaseUser.uid, changed);
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'courses', changed);
+        }
       }
       markSynced('courses', courses);
     }
@@ -814,8 +1153,21 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('resources', resources);
       if (changed.length > 0) {
-        syncResourcesToFirestore(firebaseUser.uid, changed);
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'resources', changed);
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('resources', firebaseUser.uid)) {
+          for (const resource of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'resources',
+              'course-resource',
+              resource,
+              resource.title || 'Resource',
+            );
+          }
+        } else {
+          syncResourcesToFirestore(firebaseUser.uid, changed);
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'resources', changed);
+        }
       }
       markSynced('resources', resources);
     }
@@ -825,7 +1177,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('goals', goals);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'goals', changed);
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('goals', firebaseUser.uid)) {
+          for (const goal of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'goals',
+              'goal',
+              goal,
+              goal.title || 'Goal',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'goals', changed);
+        }
       }
       markSynced('goals', goals);
     }
@@ -842,7 +1207,21 @@ export default function App() {
       );
       const changed = changedItems('files', safeFiles);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'files', changed);
+        // Gated Drive path: metadata envelopes only — file binaries stay in
+        // files/originals (handled separately, still behind the same gate).
+        if (isCollectionDriveAuthoritative('files', firebaseUser.uid)) {
+          for (const file of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'files',
+              'study-file',
+              file,
+              file.name || 'File',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'files', changed);
+        }
       }
       markSynced('files', safeFiles);
     }
@@ -852,7 +1231,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('notes', notes);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notes', changed.map((n) => ({ ...n })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('notes', firebaseUser.uid)) {
+          for (const note of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'notes',
+              'study-note',
+              note,
+              note.title || 'Note',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notes', changed.map((n) => ({ ...n })));
+        }
       }
       markSynced('notes', notes);
     }
@@ -862,7 +1254,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('research', research);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'research', changed.map((r) => ({ ...r })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('research', firebaseUser.uid)) {
+          for (const item of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'research',
+              'research-item',
+              item,
+              item.topic || 'Research item',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'research', changed.map((r) => ({ ...r })));
+        }
       }
       markSynced('research', research);
     }
@@ -872,7 +1277,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('aiMemory', aiMemory);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'aiMemory', changed.map((m) => ({ ...m })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('aiMemory', firebaseUser.uid)) {
+          for (const item of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'aiMemory',
+              'ai-memory-item',
+              item,
+              'AI memory',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'aiMemory', changed.map((m) => ({ ...m })));
+        }
       }
       markSynced('aiMemory', aiMemory);
     }
@@ -882,7 +1300,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('notifications', notifications);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notifications', changed.map((n) => ({ ...n })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('notifications', firebaseUser.uid)) {
+          for (const item of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'notifications',
+              'notification-item',
+              item,
+              item.title || 'Notification',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'notifications', changed.map((n) => ({ ...n })));
+        }
       }
       markSynced('notifications', notifications);
     }
@@ -892,7 +1323,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('quizzes', quizzes);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'quizzes', changed.map((q) => ({ ...q })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('quizzes', firebaseUser.uid)) {
+          for (const quiz of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'quizzes',
+              'course-quiz',
+              quiz,
+              quiz.title || 'Quiz',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'quizzes', changed.map((q) => ({ ...q })));
+        }
       }
       markSynced('quizzes', quizzes);
     }
@@ -902,7 +1346,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('flashcards', flashcards);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'flashcards', changed.map((f) => ({ ...f })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('flashcards', firebaseUser.uid)) {
+          for (const card of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'flashcards',
+              'course-flashcard',
+              card,
+              card.front || 'Flashcard',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'flashcards', changed.map((f) => ({ ...f })));
+        }
       }
       markSynced('flashcards', flashcards);
     }
@@ -912,7 +1369,20 @@ export default function App() {
     if (firebaseUser && !restoreInFlightRef.current) {
       const changed = changedItems('annotations', annotations);
       if (changed.length > 0) {
-        offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'annotations', changed.map((a) => ({ ...a })));
+        // Gated Drive path (see schedule effect above for the contract).
+        if (isCollectionDriveAuthoritative('annotations', firebaseUser.uid)) {
+          for (const annotation of changed) {
+            persistRoutedCollectionChange(
+              firebaseUser.uid,
+              'annotations',
+              'resource-annotation',
+              annotation,
+              'Annotation',
+            );
+          }
+        } else {
+          offlineSyncService.enqueueBatchUpsert(firebaseUser.uid, 'annotations', changed.map((a) => ({ ...a })));
+        }
       }
       markSynced('annotations', annotations);
     }
@@ -969,6 +1439,184 @@ export default function App() {
   };
 
   /**
+   * Connects Google Drive as the user data store: authenticates with
+   * Google, then finds (first connect) or re-attaches to (reconnect)
+   * the "SSfilesdata" root folder in the user's Drive.
+   */
+  const handleDriveConnect = async () => {
+    setIsDriveConnecting(true);
+    try {
+      const state = await connectDrive();
+      setDriveSync(state);
+      StudyStorage.saveDriveSync(state);
+      showToast(`Google Drive connected — "${state.folderName}" folder ready`);
+      // Reconnection: flush any task changes queued while Drive was
+      // offline/unauthed, then reload the authoritative list. Uses the
+      // existing stable ids, revisions and conflict checks — never
+      // overwrites newer remote data without detecting conflicts.
+      if (firebaseUser && isTaskPilotActive(firebaseUser.uid)) {
+        try {
+          const applied = await retryPendingTaskChanges(firebaseUser.uid);
+          await reconcileSyncSignals(firebaseUser.uid);
+          const count = await reloadDriveTasks();
+          showToast(
+            applied > 0
+              ? `Google Drive reconnected — ${applied} queued task change(s) synced, ${count} task(s) now on Drive.`
+              : `Google Drive reconnected — ${count} task(s) loaded from Drive.`,
+          );
+        } catch (flushErr) {
+          console.warn('Post-reconnect task flush failed:', flushErr);
+          showToast(
+            'Reconnected, but flushing queued tasks failed — use "Refresh tasks from Drive" to retry.',
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn('Drive connect error:', err);
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (!msg.includes('cancelled') && !msg.includes('closed') && !msg.includes('cancel')) {
+        showToast(err?.message || 'Google Drive connect could not be completed.');
+      }
+    } finally {
+      setIsDriveConnecting(false);
+    }
+  };
+
+  const handleDriveStorageInitialize = async () => {
+    if (!firebaseUser) {
+      showToast('Sign in first to initialize Drive storage.');
+      return;
+    }
+    if (!driveSync.connected) {
+      showToast('Connect Google Drive first, then initialize Drive storage.');
+      return;
+    }
+    setIsDriveInitializing(true);
+    try {
+      const result = await enableDrivePilot(firebaseUser.uid);
+      setDrivePilotEnabled(true);
+      showToast(
+        `Drive storage initialized — ${result.createdFolderCount} folders ready. Migration state: ${result.migrationState}`,
+      );
+      // Make Drive authoritative for this account's task list. For a
+      // fresh test account this is (correctly) empty; any pre-existing
+      // Firestore task records stay untouched in Firestore and are
+      // NOT copied into Drive.
+      try {
+        const count = await reloadDriveTasks();
+        showToast(
+          `Drive pilot active — showing ${count} Drive-backed task(s). Existing Firestore tasks were not migrated.`,
+        );
+      } catch (err) {
+        console.warn('Initial Drive task load failed:', err);
+        showToast('Drive initialized, but loading tasks from Drive failed — reconnect to retry.');
+      }
+    } catch (err: any) {
+      console.warn('Drive storage initialization failed:', err);
+      const msg = String(err?.message || err || '').toLowerCase();
+      if (!msg.includes('cancelled') && !msg.includes('closed') && !msg.includes('cancel')) {
+        showToast(err?.message || 'Drive storage initialization failed.');
+      }
+    } finally {
+      setIsDriveInitializing(false);
+    }
+  };
+
+  /**
+   * Read-only integrity check across every mapped collection: Drive
+   * manifest/schema validity, partition checksums, record ids/revisions,
+   * stale Firestore source copies, and interrupted uploads. Never
+   * migrates, copies, deletes, or overwrites anything.
+   */
+  const handleDriveVerify = async () => {
+    if (!firebaseUser) {
+      showToast('Sign in first to verify Drive storage.');
+      return;
+    }
+    setIsDriveVerifying(true);
+    try {
+      const { verifyAllCollections } = await import('./services/driveVerificationService');
+      const reports = await verifyAllCollections(firebaseUser.uid);
+      setDriveVerificationReports(reports);
+      const failed = reports.filter((r) => r.state === 'FAILED');
+      const blockers = reports.filter((r) =>
+        r.issues.some((i) =>
+          i.code === 'STALE_SOURCE_DISCREPANCY' ||
+          i.code === 'MIGRATION_BLOCKED_NO_READ' ||
+          i.code === 'MIGRATION_INCOMPLETE',
+        ),
+      );
+      if (failed.length > 0) {
+        showToast(`Verification FAILED for ${failed.length} collection(s): ${failed.map((r) => r.collection).join(', ')}.`);
+      } else if (blockers.length > 0) {
+        showToast(`Verified with ${blockers.length} migration blocker(s) — nothing was changed. Details in Settings.`);
+      } else {
+        showToast(`Verification complete — ${reports.length} collection(s) healthy.`);
+      }
+    } catch (err: any) {
+      console.warn('Drive verification failed:', err);
+      showToast(err?.message || 'Drive verification failed.');
+    } finally {
+      setIsDriveVerifying(false);
+    }
+  };
+
+  /** Disconnects Drive: clears the local connection state and token. */
+  useEffect(() => {
+    setDrivePilotEnabled(isDrivePilotEnabled(firebaseUser?.uid));
+  }, [firebaseUser?.uid]);
+
+  /**
+   * Cross-device task pilot sync: watch the MINIMAL sync-signal
+   * documents (identifiers + revisions only — never task content)
+   * and refresh the authoritative task set from Drive whenever
+   * another device publishes a change. Own writes also land here and
+   * simply re-read Drive, which is idempotent.
+   */
+  useEffect(() => {
+    if (!firebaseUser || !isTaskPilotOn) return;
+    const uid = firebaseUser.uid;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    let unsub = () => {};
+    let cancelled = false;
+    void import('firebase/firestore').then(({ collection, onSnapshot }) => {
+      if (cancelled) return;
+      unsub = onSnapshot(
+        collection(db, 'users', uid, 'sync-signals'),
+        () => {
+          if (restoreInFlightRef.current) return;
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            reloadDriveTasks().catch((err) =>
+              console.warn('Signal-driven Drive task refresh failed:', err),
+            );
+          }, 2000);
+        },
+        (err) => console.warn('sync-signals listener failed:', err),
+      );
+    });
+    return () => {
+      cancelled = true;
+      if (debounce) clearTimeout(debounce);
+      try {
+        unsub();
+      } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseUser?.uid, isTaskPilotOn]);
+
+  const handleDriveDisconnect = async () => {
+    try {
+      await disconnectDrive();
+    } catch (err) {
+      console.warn('Drive disconnect error:', err);
+    }
+    setDriveSync(INITIAL_DRIVE_SYNC);
+    StudyStorage.saveDriveSync(INITIAL_DRIVE_SYNC);
+    showToast('Google Drive disconnected');
+  };
+
+  /**
    * The single logout path for the whole app: end the Google/Firebase session
    * (plus Puter and calendar), wipe the device copy of the account data, and
    * drop the user on the login screen. Cloud-synced data stays in Firestore and
@@ -990,7 +1638,10 @@ export default function App() {
         // 1. Explicitly ensure all current state is pushed to Firestore before session terminates
         try {
           await syncUserProfileToFirestore(firebaseUser.uid, user);
-          if (tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
+          // Drive-pilot accounts keep task content in their own Drive —
+          // only minimal sync signals are ever published, so the
+          // pre-logout flush must not copy task payloads into Firestore.
+          if (!isTaskPilotOn && tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
           if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
           if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
           if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
@@ -1069,11 +1720,22 @@ export default function App() {
   }, [calendarSync]);
 
   useEffect(() => {
+    StudyStorage.saveDriveSync(driveSync);
+  }, [driveSync]);
+
+  useEffect(() => {
     if (firebaseUser && !restoreInFlightRef.current) {
       syncGoogleCalendarStateToFirestore(firebaseUser.uid, calendarSync);
       offlineSyncService.enqueueUpsert(firebaseUser.uid, 'integrations', 'googleCalendar', calendarSync);
     }
   }, [calendarSync, firebaseUser]);
+
+  useEffect(() => {
+    if (firebaseUser && !restoreInFlightRef.current) {
+      syncGoogleDriveStateToFirestore(firebaseUser.uid, driveSync);
+      offlineSyncService.enqueueUpsert(firebaseUser.uid, 'integrations', 'googleDrive', driveSync);
+    }
+  }, [driveSync, firebaseUser]);
 
   useEffect(() => {
     StudyStorage.saveGoals(goals);
@@ -2219,8 +2881,34 @@ export default function App() {
     }
 
     if (firebaseUser) {
-      deleteTaskFromFirestore(firebaseUser.uid, taskId);
-      offlineSyncService.enqueueDelete(firebaseUser.uid, 'tasks', taskId);
+      if (isTaskPilotOn) {
+        // Pilot accounts: the deletion becomes a recoverable Drive
+        // tombstone. Firestore task records (if any pre-date the
+        // pilot) are deliberately left untouched, and the delete is
+        // revision-checked so a task modified on another device is
+        // never silently removed.
+        const uid = firebaseUser.uid;
+        const baseRevision = driveTaskRevisionsRef.current.get(taskId);
+        pilotTaskWriteChainRef.current = pilotTaskWriteChainRef.current.then(async () => {
+          try {
+            const result = await deleteTaskOnDrive(uid, taskId, baseRevision);
+            driveTaskRevisionsRef.current.delete(taskId);
+            if (result.pending) {
+              showToast(
+                'Task removed on this device — the Drive deletion is queued and will complete when you\'re back online.',
+              );
+            }
+          } catch (err) {
+            console.warn('Drive task deletion failed:', err);
+            showToast(
+              `Could not delete the task from Google Drive: ${(err as Error)?.message || err}`,
+            );
+          }
+        });
+      } else {
+        deleteTaskFromFirestore(firebaseUser.uid, taskId);
+        offlineSyncService.enqueueDelete(firebaseUser.uid, 'tasks', taskId);
+      }
     }
 
     showToast(`Deleted task "${targetTask?.title || 'Task'}"`);
@@ -2635,6 +3323,15 @@ export default function App() {
           user={user}
           config={aiConfig}
           calendarSync={calendarSync}
+          driveSync={driveSync}
+          isDriveConnecting={isDriveConnecting}
+          isDrivePilot={drivePilotEnabled}
+          isDriveInitializing={isDriveInitializing}
+          isDriveRefreshing={isDriveRefreshing}
+          onDriveTasksRefresh={handleDriveTasksRefresh}
+          isDriveVerifying={isDriveVerifying}
+          driveVerificationReports={driveVerificationReports}
+          onDriveVerify={handleDriveVerify}
           notificationSettings={notificationSettings}
           updateInfo={updateInfo}
           onCheckUpdates={checkAppUpdates}
@@ -2643,6 +3340,9 @@ export default function App() {
           onOpenNotifications={() => setActiveSubScreen('notification_settings')}
           onOpenAIMemory={() => setIsAIMemoryOpen(true)}
           onOpenCalendarSync={() => setActiveSubScreen('calendar_sync')}
+          onDriveConnect={handleDriveConnect}
+          onDriveDisconnect={handleDriveDisconnect}
+          onDriveStorageInitialize={handleDriveStorageInitialize}
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
           isDark={isDark}
@@ -2940,7 +3640,16 @@ export default function App() {
                     completeUser.firebaseUid,
                     cleanForFirestore(completeUser)
                   );
-                  if (tasks.length > 0) await syncTasksToFirestore(completeUser.firebaseUid, tasks);
+                  // Onboarding may have connected Google Drive and opted this
+                  // new account into Drive-backed tasks. Re-read the persisted
+                  // Drive state and pilot flag so the app immediately reflects
+                  // the choice the user just made.
+                  const onboardingDrive = StudyStorage.getDriveSync();
+                  if (onboardingDrive.connected) setDriveSync(onboardingDrive);
+                  setDrivePilotEnabled(isDrivePilotEnabled(completeUser.firebaseUid));
+                  // A Drive-pilot account's task content lives in Drive;
+                  // never copy it into Firestore here.
+                  if (!isTaskPilotOn && tasks.length > 0) await syncTasksToFirestore(completeUser.firebaseUid, tasks);
                   if (schedule.length > 0) await syncScheduleToFirestore(completeUser.firebaseUid, schedule);
                   if (courses.length > 0) await syncCoursesToFirestore(completeUser.firebaseUid, courses);
                   if (resources.length > 0) await syncResourcesToFirestore(completeUser.firebaseUid, resources);
@@ -3014,8 +3723,8 @@ export default function App() {
                 activeSubScreen === 'resource_reader'
                   ? 'overflow-hidden flex flex-col p-0 h-full'
                   : isKeyboardOpen
-                  ? 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-3'
-                  : 'overflow-y-auto px-4 sm:px-6 lg:px-8 pt-4 pb-24'
+                  ? 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-8 pt-4 pb-3'
+                  : 'overflow-y-auto overflow-x-clip px-4 sm:px-6 lg:px-8 pt-4 pb-24'
               } no-scrollbar`}
             >
               {renderCurrentView()}

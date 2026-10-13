@@ -14,8 +14,10 @@ import {
   RefreshCw,
   DownloadCloud,
   AlertTriangle,
+  HardDrive,
+  Database,
 } from 'lucide-react';
-import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, NotificationSettings, AppUpdateCheckResult } from '../../types';
+import { UserProfile, AIProviderConfig, GoogleCalendarSyncState, GoogleDriveSyncState, NotificationSettings, AppUpdateCheckResult } from '../../types';
 import { ThemeMode } from '../../utils/storage';
 import { PasswordResetPanel } from '../common/PasswordResetPanel';
 import { CURRENT_APP_VERSION, CURRENT_BUILD_NUMBER, getActiveAppVersion, setSimulatedAppVersion } from '../../utils/version';
@@ -62,6 +64,18 @@ interface SettingsScreenProps {
   user: UserProfile;
   config: AIProviderConfig;
   calendarSync: GoogleCalendarSyncState;
+  driveSync: GoogleDriveSyncState;
+  isDriveConnecting?: boolean;
+  isDrivePilot?: boolean;
+  isDriveInitializing?: boolean;
+  isDriveRefreshing?: boolean;
+  onDriveStorageInitialize: () => void;
+  /** Re-reads tasks from Drive, retries queued changes, re-publishes signals. */
+  onDriveTasksRefresh?: () => void;
+  /** Runs the read-only Drive verification pass; never mutates data. */
+  isDriveVerifying?: boolean;
+  driveVerificationReports?: import('../../services/driveVerificationService').CollectionVerificationReport[] | null;
+  onDriveVerify?: () => void;
   notificationSettings?: NotificationSettings;
   updateInfo?: AppUpdateCheckResult | null;
   onCheckUpdates?: () => Promise<void>;
@@ -70,6 +84,8 @@ interface SettingsScreenProps {
   onOpenNotifications: () => void;
   onOpenAIMemory: () => void;
   onOpenCalendarSync: () => void;
+  onDriveConnect: () => void;
+  onDriveDisconnect: () => void;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
   isDark: boolean;
@@ -82,6 +98,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   user,
   config,
   calendarSync,
+  driveSync,
+  isDriveConnecting,
+  isDrivePilot,
+  isDriveInitializing,
+  isDriveRefreshing,
   notificationSettings,
   updateInfo,
   onCheckUpdates,
@@ -90,6 +111,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   onOpenNotifications,
   onOpenAIMemory,
   onOpenCalendarSync,
+  onDriveConnect,
+  onDriveDisconnect,
+  onDriveStorageInitialize,
+  onDriveTasksRefresh,
+  isDriveVerifying,
+  driveVerificationReports,
+  onDriveVerify,
   themeMode,
   onThemeModeChange,
   isDark,
@@ -336,6 +364,179 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             {calendarSync.connected ? 'On' : 'Off'}
           </span>
         </button>
+
+        {/* Google Drive Storage */}
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
+                <HardDrive className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-slate-900 dark:text-white">Google Drive</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {driveSync.connected
+                    ? `${driveSync.folderName || 'SScheduleData'} folder${driveSync.email ? ` · ${driveSync.email}` : ''}${driveSync.migrationStatus ? ` · migration ${driveSync.migrationStatus}` : ''}`
+                    : 'Tasks, files & notes stored in your Drive'}
+                </div>
+              </div>
+            </div>
+            <span
+              className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+                driveSync.connected
+                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {driveSync.connected ? 'On' : 'Off'}
+            </span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onDriveConnect}
+              disabled={isDriveConnecting}
+              className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 active:bg-sky-700 disabled:opacity-60 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-sky-600/20 transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${isDriveConnecting ? 'animate-spin' : ''}`} />
+              <span>
+                {isDriveConnecting
+                  ? 'Connecting…'
+                  : driveSync.connected
+                    ? 'Reconnect Drive'
+                    : 'Connect Google Drive'}
+              </span>
+            </button>
+            {driveSync.connected && (
+              <button
+                type="button"
+                onClick={onDriveDisconnect}
+                className="py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs transition-all cursor-pointer"
+              >
+                Disconnect
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Drive Storage (pilot) — explicit opt-in, never default */}
+        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center shrink-0">
+                <Database className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  Drive Storage
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {isDrivePilot
+                    ? 'Pilot — Google Drive is the primary data store'
+                    : 'Pilot: keep all study data in your Google Drive'}
+                </div>
+              </div>
+            </div>
+            <span
+              className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+                isDrivePilot
+                  ? 'bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {isDrivePilot ? 'Pilot' : 'Firestore'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onDriveStorageInitialize}
+            disabled={isDriveInitializing}
+            className="w-full py-2.5 rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 dark:hover:bg-violet-950/60 disabled:opacity-60 text-violet-700 dark:text-violet-300 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${isDriveInitializing ? 'animate-spin' : ''}`} />
+            <span>
+              {isDriveInitializing
+                ? 'Initializing…'
+                : isDrivePilot
+                  ? 'Re-initialize Drive Structure'
+                  : 'Initialize Drive Storage (Pilot)'}
+            </span>
+          </button>
+          {isDrivePilot && onDriveTasksRefresh && (
+            <button
+              type="button"
+              onClick={onDriveTasksRefresh}
+              disabled={isDriveRefreshing}
+              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-600 dark:text-slate-300 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${isDriveRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isDriveRefreshing ? 'Refreshing…' : 'Refresh Tasks from Drive'}</span>
+            </button>
+          )}
+          {isDrivePilot && onDriveVerify && (
+            <button
+              type="button"
+              onClick={onDriveVerify}
+              disabled={isDriveVerifying}
+              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-600 dark:text-slate-300 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${isDriveVerifying ? 'animate-spin' : ''}`} />
+              <span>{isDriveVerifying ? 'Verifying…' : 'Verify Drive Storage (read-only)'}</span>
+            </button>
+          )}
+          {isDrivePilot && driveVerificationReports && driveVerificationReports.length > 0 && (
+            <div className="space-y-1.5 max-h-56 overflow-y-auto">
+              {driveVerificationReports.map((report) => (
+                <div
+                  key={report.collection}
+                  className="flex items-start justify-between gap-2 text-[10px] rounded-lg border border-slate-100 dark:border-slate-800 px-2 py-1.5"
+                >
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      {report.collection}
+                    </span>
+                    <span className="text-slate-400 dark:text-slate-500">
+                      {' '}· Drive {report.driveRecordCount}
+                      {report.firestoreRecordCount !== null
+                        ? ` · Firestore ${report.firestoreRecordCount}`
+                        : ' · Firestore ?'}
+                    </span>
+                    {report.issues.length > 0 && (
+                      <ul className="mt-0.5 text-amber-600 dark:text-amber-400 leading-snug">
+                        {report.issues.map((issue, idx) => (
+                          <li key={idx}>
+                            {issue.code}: {issue.detail}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <span
+                    className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                      report.state === 'COMPLETE'
+                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                        : report.state === 'VERIFIED'
+                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400'
+                          : report.state === 'FAILED'
+                            ? 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {report.state}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed">
+            Creates the SScheduleData folder structure in your Drive. Your
+            existing Firestore data stays untouched — migration only starts
+            when you choose to run it. The pilot stores task content in your
+            Drive; Firestore only receives minimal change signals.
+          </p>
+        </div>
 
         {/* Appearance (Theme) */}
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
