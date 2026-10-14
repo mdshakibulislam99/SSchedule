@@ -49,7 +49,7 @@ import {
   DriveTaskConflictError,
 } from './services/taskPilotService';
 import type { User as FirebaseUser } from 'firebase/auth';
-import { registerBackHandler, updateNativeTheme } from './lib/native';
+import { registerBackHandler, updateNativeTheme, isNativeApp } from './lib/native';
 import { offlineSyncService } from './services/offlineSyncService';
 import { AIService } from './services/aiService';
 import { useOfflineSync } from './hooks/useOfflineSync';
@@ -321,6 +321,15 @@ export default function App() {
   useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('annotations'));
 
   const checkAppUpdates = async () => {
+    // The forced-update flow installs an APK, so it only makes sense inside the
+    // packaged Android/iOS shell. On the web (Vercel/PWA) the deployed bundle is
+    // always the latest commit — there is no APK to update to — so comparing the
+    // build version against the GitHub release would only produce an
+    // unsatisfiable "update required" block. Skip the check entirely on web.
+    if (!isNativeApp()) {
+      setUpdateInfo(null);
+      return;
+    }
     try {
       const res = await AppUpdateService.checkAppVersion();
       setUpdateInfo(res);
@@ -342,7 +351,7 @@ export default function App() {
   // Auth internals are untouched; this only re-runs the update check.
   useEffect(() => {
     if (firebaseUser) {
-      setIsGraceModalDismissed(false);
+      if (isNativeApp()) setIsGraceModalDismissed(false);
       void checkAppUpdates();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
