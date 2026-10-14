@@ -892,26 +892,32 @@ export default function App() {
           // state — if Drive is unreachable the retries no-op and the
           // changes stay queued for the next reconnect.
           if (isTaskPilotActive(fUser.uid)) {
-            void retryPendingTaskChanges(fUser.uid).then(
-              async (applied) => {
-                if (applied > 0) {
-                  const records = await loadTaskRecordsFromDrive();
-                  const activeTasks = records
-                    .filter((r) => !r.deletedAt)
-                    .map((r) => r.payload);
-                  setTasks(activeTasks);
-                  StudyStorage.saveTasks(activeTasks);
-                  driveTaskRevisionsRef.current = new Map(
-                    records.map((r) => [r.id, r.revision]),
-                  );
-                  markSynced('tasks', activeTasks);
-                  showToast(
-                    `${applied} pending task change(s) synced to Google Drive.`,
-                  );
-                }
-              },
-            );
-            void reconcileSyncSignals(fUser.uid);
+            void retryPendingTaskChanges(fUser.uid)
+              .then(
+                async (applied) => {
+                  if (applied > 0) {
+                    const records = await loadTaskRecordsFromDrive();
+                    const activeTasks = records
+                      .filter((r) => !r.deletedAt)
+                      .map((r) => r.payload);
+                    setTasks(activeTasks);
+                    StudyStorage.saveTasks(activeTasks);
+                    driveTaskRevisionsRef.current = new Map(
+                      records.map((r) => [r.id, r.revision]),
+                    );
+                    markSynced('tasks', activeTasks);
+                    showToast(
+                      `${applied} pending task change(s) synced to Google Drive.`,
+                    );
+                  }
+                },
+              )
+              .catch((err) => {
+                console.warn('Pending Drive task sync failed:', err);
+              });
+            void reconcileSyncSignals(fUser.uid).catch((err) => {
+              console.warn('Drive signal reconciliation failed:', err);
+            });
           }
 
           // Restore or merge schedule
