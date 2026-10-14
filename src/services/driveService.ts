@@ -38,6 +38,7 @@ import {
   createInitialMigrationStateDocument,
   getDeviceId,
 } from '../types/driveStorage';
+import { CURRENT_APP_VERSION } from '../utils/version';
 import {
   DriveApi,
   DriveApiError,
@@ -772,7 +773,7 @@ export function createDriveService(options: DriveServiceOptions): DriveService {
  */
 export const driveService: DriveService = createDriveService({
   api: liveDriveApi,
-  appVersion: '3.5.2',
+  appVersion: CURRENT_APP_VERSION,
   persistMetadata: async (firebaseUserId, snapshot) => {
     const { syncGoogleDriveStateToFirestore } = await import('../lib/firebase');
     await syncGoogleDriveStateToFirestore(firebaseUserId, {
