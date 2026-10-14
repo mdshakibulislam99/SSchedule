@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chronopulse-cache-v2';
+const CACHE_NAME = 'chronopulse-cache-v3';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -95,6 +95,28 @@ self.addEventListener('fetch', (event) => {
     url.hostname.includes('googleapis') ||
     url.hostname.includes('puter')
   ) {
+    return;
+  }
+
+  // App-shell navigations (the HTML that bootstraps the bundle) are
+  // NETWORK-FIRST so a freshly deployed Vercel build is always used.
+  // Serving a cached index.html would keep pointing the app at an OLD
+  // hashed JS bundle (e.g. after a deploy), which is exactly the stale
+  // "update available" / wrong-version symptom. Hashed assets themselves
+  // stay cache-first below (their names change every build, so they are
+  // naturally cache-busted).
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(event.request).then((c) => c || caches.match('/')))
+    );
     return;
   }
 
