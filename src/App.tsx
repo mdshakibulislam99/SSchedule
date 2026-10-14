@@ -115,7 +115,7 @@ import {
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC, INITIAL_DRIVE_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { extractDocumentFromFile } from './utils/fileExtractor';
-import { saveExtractedText, loadExtractedText } from './utils/fileStorage';
+import { saveExtractedText, loadExtractedText, deleteFileBlob, deleteExtractedText } from './utils/fileStorage';
 import { AIOrchestrator } from './services/aiOrchestrator';
 import { persistPageIndexLocal, mirrorPageIndexToDrive } from './services/documentIndexStore';
 import { getLocalDateKey } from './utils/dates';
@@ -2499,6 +2499,47 @@ export default function App() {
       });
   };
 
+  /**
+   * Deletes an uploaded file everywhere it lives: removes it from the
+   * files list, clears it from the active chat context if attached, and
+   * purges every IndexedDB entry it created (original blob, full text,
+   * each chapter's text, and each per-page text) so nothing is orphaned.
+   */
+  const handleDeleteFile = async (fileId: string) => {
+    const target = files.find((f) => f.id === fileId);
+    if (!target) return;
+
+    // Remove from the list immediately for a responsive feel.
+    setFiles((prev) => prev.filter((f) => f.id !== fileId));
+
+    // If the deleted file was the chat's active context, detach it.
+    setSelectedFileForChat((prev) => (prev && prev.id === fileId ? null : prev));
+
+    // Collect every IndexedDB key this file created.
+    const textKeys: string[] = [];
+    if (target.extractedTextKey) textKeys.push(target.extractedTextKey);
+    target.structure?.chapters?.forEach((c) => {
+      if (c.textKey) textKeys.push(c.textKey);
+    });
+    target.pageIndex?.pages?.forEach((p) => {
+      if (p.textKey) textKeys.push(p.textKey);
+    });
+
+    try {
+      if (target.fileStorageKey) await deleteFileBlob(target.fileStorageKey);
+      for (const key of textKeys) {
+        await deleteExtractedText(key);
+      }
+      // Drive page-index mirror cleanup is best-effort and pilot-only;
+      // local deletion above is authoritative for retrieval.
+    } catch (err) {
+      console.warn('File deletion cleanup failed:', err);
+    }
+
+    playChime('success');
+    showToast(`Deleted "${target.name}"`);
+  };
+
   const handleReindexResource = (resourceId: string) => {
     const target = resources.find((r) => r.id === resourceId);
     if (!target) return;
@@ -3337,6 +3378,7 @@ export default function App() {
             }
           }}
           onReindexFile={handleReindexFile}
+          onDeleteFile={handleDeleteFile}
           onAddTask={(taskData) => handleCreateTask(taskData, false)}
         />
       );
@@ -3670,7 +3712,7 @@ export default function App() {
 
   return (
     <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
-      <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      <div className="w-full flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
           <ErrorBoundary fallbackTitle="Welcome Screen">

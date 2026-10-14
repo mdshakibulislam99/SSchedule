@@ -99,3 +99,39 @@ export async function loadExtractedText(key: string): Promise<string | null> {
     return null;
   }
 }
+
+/** Removes a stored file blob (IndexedDB + in-memory session cache). */
+export async function deleteFileBlob(key: string): Promise<void> {
+  sessionFiles.delete(key);
+  if (typeof indexedDB === 'undefined') return;
+  try {
+    const database = await openDatabase();
+    await new Promise<void>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      transaction.objectStore(STORE_NAME).delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+    });
+    database.close();
+  } catch {
+    // Nothing else to clean; the in-memory copy is already gone.
+  }
+}
+
+/** Removes stored extracted text (IndexedDB + in-memory session cache). */
+export async function deleteExtractedText(key: string): Promise<void> {
+  sessionTexts.delete(key);
+  if (typeof indexedDB === 'undefined') return;
+  try {
+    const database = await openDatabase();
+    await new Promise<void>((resolve) => {
+      const transaction = database.transaction(TEXT_STORE_NAME, 'readwrite');
+      transaction.objectStore(TEXT_STORE_NAME).delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+    });
+    database.close();
+  } catch {
+    // Nothing else to clean; the in-memory copy is already gone.
+  }
+}

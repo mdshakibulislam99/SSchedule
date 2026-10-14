@@ -518,7 +518,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({
   };
 
   return (
-    <div className="w-full max-w-3xl mx-auto flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-3xl lg:max-w-6xl mx-auto flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
       {/* Header */}
       <header className="flex items-center justify-between gap-3 pt-2">
         <div className="min-w-0">

@@ -199,7 +199,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   }, [tasks, schedule]);
 
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col space-y-5 pb-12 animate-fade-in text-slate-900 dark:text-slate-100 font-sans">
+    <div className="w-full max-w-4xl lg:max-w-7xl mx-auto flex flex-col space-y-5 pb-12 animate-fade-in text-slate-900 dark:text-slate-100 font-sans">
       {/* 1. CLEAN, MINIMAL HEADER */}
       <header className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-3">

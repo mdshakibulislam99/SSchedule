@@ -273,7 +273,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   }, [allFinishedTasks.length]);
 
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col space-y-4 pb-8 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-5xl lg:max-w-7xl mx-auto flex flex-col space-y-4 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Task workspace header */}
       <header className="flex items-center justify-between gap-4 pt-1">
         <div>

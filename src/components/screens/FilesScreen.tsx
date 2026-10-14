@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { UploadCloud, FileText, MoreVertical, Sparkles, CheckCircle2, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft, Maximize2 } from 'lucide-react';
+import { UploadCloud, FileText, Sparkles, Plus, Calendar, X, ArrowRight, Loader2, HelpCircle, Check, BookOpen, Clock, ListChecks, RotateCw, ChevronLeft, Maximize2, Trash2 } from 'lucide-react';
 import { CourseResource, StudyFile, StudyNote, Task, StudyFileUpload } from '../../types';
 import { FileViewer } from '../course/FileViewer';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { saveFileBlob } from '../../utils/fileStorage';
 import { extractDocumentFromFile } from '../../utils/fileExtractor';
 
@@ -56,6 +57,7 @@ interface FilesScreenProps {
   onAskAIAboutFile: (file: StudyFile) => void;
   onCreateTasksFromFile: (file: StudyFile) => void;
   onReindexFile?: (fileId: string) => void;
+  onDeleteFile?: (fileId: string) => void;
   onAddTask?: (taskData: Partial<Task>) => void;
 }
 
@@ -68,6 +70,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
   onAskAIAboutFile,
   onCreateTasksFromFile,
   onReindexFile,
+  onDeleteFile,
   onAddTask,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'notes'>('files');
@@ -78,6 +81,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
+  const [fileToDelete, setFileToDelete] = useState<StudyFile | null>(null);
 
   const canReadInApp = useMemo(() => (file: StudyFile) => Boolean(file.dataUrl || file.fileStorageKey), []);
 
@@ -256,9 +260,20 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
                     </div>
                   </div>
 
-                  <button className="p-1.5 text-slate-400 hover:text-slate-600">
-                    <MoreVertical className="w-4 h-4" />
-                  </button>
+                  {onDeleteFile && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFileToDelete(file);
+                      }}
+                      className="p-2 -mr-1 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors shrink-0 cursor-pointer"
+                      title={`Delete ${file.name}`}
+                      aria-label={`Delete ${file.name}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -696,6 +711,31 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* Delete File Confirmation */}
+      <ConfirmDialog
+        isOpen={Boolean(fileToDelete)}
+        title="Delete this file?"
+        description={
+          <>
+            <span className="font-bold text-slate-800 dark:text-slate-100">"{fileToDelete?.name}"</span> and all
+            its indexed content (extracted text, chapter map, and per-page data) will be permanently
+            removed. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete File"
+        variant="danger"
+        icon="trash"
+        onConfirm={() => {
+          if (fileToDelete) {
+            onDeleteFile?.(fileToDelete.id);
+            // If the deleted file was open in the detail view, close it.
+            setSelectedFile((prev) => (prev && prev.id === fileToDelete.id ? null : prev));
+          }
+          setFileToDelete(null);
+        }}
+        onCancel={() => setFileToDelete(null)}
+      />
     </div>
   );
 };

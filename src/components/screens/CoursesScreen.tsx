@@ -187,7 +187,7 @@ export const CoursesScreen: React.FC<CoursesScreenProps> = ({
   };
 
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col gap-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
+    <div className="w-full max-w-5xl lg:max-w-7xl mx-auto flex flex-col gap-5 pb-8 animate-fade-in text-slate-900 dark:text-white">
       {/* Header (Note: Main courses list has NO AI bar, as requested) */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
         <div>

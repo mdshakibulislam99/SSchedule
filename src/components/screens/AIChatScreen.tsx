@@ -1064,7 +1064,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         )}
 
         {/* Input Bar Row */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full min-w-0">
           {/* Standalone Voice Input Area / Button outside */}
           <button
             type="button"
@@ -1077,7 +1077,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
           </button>
 
           {/* Message Input Container (With + Button INSIDE the text area) */}
-          <div className="flex-1 flex items-center gap-2 p-1.5 pl-2 pr-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm focus-within:border-indigo-500 transition-colors">
+          <div className="flex-1 min-w-0 flex items-center gap-2 p-1.5 pl-2 pr-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm focus-within:border-indigo-500 transition-colors">
             {/* Plus (+) Button inside the text area */}
             <div className="relative shrink-0" ref={plusMenuRef}>
               <button
