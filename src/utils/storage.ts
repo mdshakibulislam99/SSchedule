@@ -92,7 +92,10 @@ export const INITIAL_RESEARCH: ResearchItem[] = [];
 
 export const INITIAL_AI_CONFIG: AIProviderConfig = {
   activeProvider: 'puter', // Defaults to Puter.js for free zero-key access as requested
-  useHybridMode: true,
+  // Single-model policy: hybrid auto-routing is disabled. Only the selected
+  // provider is ever used (no silent escalation to Gemini/Claude). Kept for
+  // backward-compat with configs saved before this policy.
+  useHybridMode: false,
   apiKeys: {},
   models: {
     openai: 'gpt-4o-mini',

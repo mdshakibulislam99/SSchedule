@@ -438,33 +438,28 @@ function findReferencedChapter(
 }
 
 export const AIOrchestrator = {
-  getProvider(config: AIProviderConfig, taskType: 'routine' | 'deep_research' | 'file_analysis' = 'routine'): IAIProvider {
-    let chosen = config.activeProvider;
-
-    // Hybrid mode smart routing
-    if (config.useHybridMode) {
-      if (taskType === 'deep_research' && config.apiKeys.gemini) {
-        chosen = 'gemini';
-      } else if (taskType === 'file_analysis' && config.apiKeys.claude) {
-        chosen = 'claude';
-      } else if (config.apiKeys.puter || config.puterUser) {
-        chosen = 'puter';
-      }
+  getProvider(config: AIProviderConfig, _taskType: 'routine' | 'deep_research' | 'file_analysis' = 'routine'): IAIProvider {
+    // SINGLE-MODEL POLICY: always use the provider the user explicitly chose
+    // in Settings. There is deliberately NO hybrid routing and NO automatic
+    // escalation to Gemini/Claude — if the free Puter model is selected, only
+    // Puter is ever called, for every task type (routine, research, files).
+    switch (config.activeProvider) {
+      case 'puter':
+        return new PuterAIProvider(config.apiKeys.puter, config.models.puter);
+      case 'gemini':
+        return new GeminiAIProvider(config.apiKeys.gemini);
+      case 'openai':
+        return new ExternalProxyAIProvider('openai', config.apiKeys.openai || '');
+      case 'claude':
+        return new ExternalProxyAIProvider('claude', config.apiKeys.claude || '');
+      case 'custom':
+        return new ExternalProxyAIProvider('custom', config.apiKeys.custom || '');
+      default:
+        // Never silently fall back to another provider — surface it so the
+        // user is guided back to Settings instead of being silently charged
+        // for / switched to a model they did not pick.
+        throw new Error('AI_NOT_CONFIGURED: No valid AI provider is selected.');
     }
-
-    if (chosen === 'puter') {
-      return new PuterAIProvider(config.apiKeys.puter, config.models.puter);
-    }
-    if (chosen === 'gemini') {
-      return new GeminiAIProvider(config.apiKeys.gemini);
-    }
-    if (chosen === 'openai') {
-      return new ExternalProxyAIProvider('openai', config.apiKeys.openai || '');
-    }
-    if (chosen === 'claude') {
-      return new ExternalProxyAIProvider('claude', config.apiKeys.claude || '');
-    }
-    return new GeminiAIProvider();
   },
 
   // 1. Context-Aware AI Chat with action proposal detection
@@ -859,9 +854,12 @@ Output JSON format:
     };
   },
 
-  // 4. AI Research Engine with Google Search Grounding
+  // 4. AI Research Engine — SINGLE-MODEL: uses ONLY the selected provider.
+  // Google Search Grounding is a Gemini-only feature, so it is used only when
+  // Gemini is the active provider; any other provider is used as-is (no silent
+  // switch to Gemini).
   async researchTopic(topic: string, config: AIProviderConfig): Promise<ResearchItem> {
-    const gemini = new GeminiAIProvider(config.apiKeys.gemini);
+    const provider = this.getProvider(config);
     const prompt = `Conduct a comprehensive, authoritative academic research synthesis on: "${topic}".
 Include:
 1. Executive summary (2-3 sentences based on verified findings)
@@ -876,40 +874,47 @@ Format your response as a valid JSON object:
 }`;
 
     try {
-      const grounded = await gemini.generateGroundedText(
-        prompt,
-        'You are an authoritative academic researcher. Ground all facts with up-to-date Google Search data.'
-      );
+      let answerText = '';
+      let sources: { title: string; url: string; domain: string }[] = [];
 
-      const jsonMatch = grounded.text.match(/\{[\s\S]*\}/);
+      if (provider.type === 'gemini') {
+        // Selected provider IS Gemini → Google Search Grounding is available.
+        const grounded = await (provider as GeminiAIProvider).generateGroundedText(
+          prompt,
+          'You are an authoritative academic researcher. Ground all facts with up-to-date Google Search data.'
+        );
+        answerText = grounded.text;
+        sources =
+          grounded.sources && grounded.sources.length > 0
+            ? grounded.sources.map((s) => {
+                let domain = 'google.com';
+                try {
+                  domain = new URL(s.uri).hostname.replace(/^www\./, '');
+                } catch (_) {}
+                return { title: s.title || domain, url: s.uri, domain };
+              })
+            : [];
+      } else {
+        // Any other selected provider (Puter/OpenAI/Claude/custom): use it
+        // directly. No web grounding, but strictly the model the user picked.
+        answerText = await provider.generateText(
+          prompt,
+          'You are an authoritative academic researcher. Base all statements on well-established knowledge; do not fabricate citations.'
+        );
+      }
+
+      const jsonMatch = answerText.match(/\{[\s\S]*\}/);
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-
-      const sources =
-        grounded.sources && grounded.sources.length > 0
-          ? grounded.sources.map((s) => {
-              let domain = 'google.com';
-              try {
-                domain = new URL(s.uri).hostname.replace(/^www\./, '');
-              } catch (_) {}
-              return {
-                title: s.title || domain,
-                url: s.uri,
-                domain,
-              };
-            })
-          : [
-              { title: `${topic} - Verified Overview`, url: 'https://scholar.google.com', domain: 'scholar.google.com' },
-              { title: `Academic Field Review - ${topic}`, url: 'https://arxiv.org', domain: 'arxiv.org' },
-            ];
 
       return {
         id: `res-${Date.now()}`,
         topic,
-        summary: parsed?.summary || grounded.text.slice(0, 300),
+        summary: parsed?.summary || answerText.slice(0, 300),
         keyFindings: parsed?.keyFindings || [
-          'Verified with Google Search Grounding and current citations.',
-          'Crucial concepts identified for examination and lecture synthesis.',
-          'Peer-reviewed evidence validates foundational theories.',
+          'Synthesized from the selected AI provider.',
+          'Key concepts identified for examination and lecture review.',
+          'Cross-check claims against your course material before relying on them.',
+          'Peer-reviewed sources validate the foundational theories.',
         ],
         sources,
         notes: parsed?.notes || [
@@ -919,7 +924,7 @@ Format your response as a valid JSON object:
         createdAt: new Date().toISOString(),
       };
     } catch (e) {
-      console.warn('Google Search Grounding research error, falling back:', e);
+      console.warn('Research generation failed with the selected provider:', e);
     }
 
     return {

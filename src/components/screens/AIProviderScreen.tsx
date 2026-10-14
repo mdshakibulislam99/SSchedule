@@ -23,7 +23,6 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
   onBack,
 }) => {
   const [activeProvider, setActiveProvider] = useState<AIProviderType>(config.activeProvider);
-  const [useHybridMode, setUseHybridMode] = useState<boolean>(config.useHybridMode);
   const [apiKeys, setApiKeys] = useState(config.apiKeys || {});
 
   // Per-provider connection-test state, so users can confirm a key/token works.
@@ -225,7 +224,9 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
     onSaveConfig({
       ...config,
       activeProvider,
-      useHybridMode,
+      // Single-model policy: hybrid auto-routing is disabled app-wide. The
+      // field is kept only for backward-compat with previously saved configs.
+      useHybridMode: false,
       apiKeys: { ...apiKeys, puter: (apiKeys.puter || '').trim() || undefined },
       models: { ...config.models, puter: selectedPuterModel },
       puterUser: null,
@@ -427,24 +428,6 @@ export const AIProviderScreen: React.FC<AIProviderScreenProps> = ({
             </div>
           );
         })}
-      </div>
-
-      {/* Hybrid Mode Toggle (Matching Screen 17: "Use hybrid mode") */}
-      <div className="p-4 rounded-3xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between">
-        <div>
-          <span className="text-sm font-bold text-slate-900 dark:text-white block">
-            Use hybrid mode
-          </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400 block mt-0.5">
-            Automatically use the best model for each task (research, routine, files).
-          </span>
-        </div>
-        <input
-          type="checkbox"
-          checked={useHybridMode}
-          onChange={(e) => setUseHybridMode(e.target.checked)}
-          className="w-5 h-5 rounded text-indigo-600 focus:ring-0 cursor-pointer"
-        />
       </div>
 
       {/* Save Button */}
