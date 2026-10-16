@@ -22,7 +22,12 @@ import {
 import { getLocalDateKey } from '../utils/dates';
 import { apiUrl } from '../lib/api';
 import { loadExtractedText } from '../utils/fileStorage';
-import { findTopicRelevantChapter, findReferencedPage, wantsExhaustiveExtraction } from './documentRetrieval';
+import {
+  findTopicRelevantChapter,
+  findReferencedPage,
+  referencedPageNumber,
+  wantsExhaustiveExtraction,
+} from './documentRetrieval';
 import { loadPageText } from './documentIndexStore';
 
 export interface AIExecutionContext {
@@ -437,6 +442,18 @@ function findReferencedChapter(
   return null;
 }
 
+/**
+ * chatWithContext receives `userMessage` that callers may have wrapped as
+ * "[ATTACHED STUDY MATERIAL: \"name\"]\n<content>\n\nStudent Query: <text>".
+ * Page references must be detected against the student's actual question,
+ * not against page numbers that happen to live inside attached material.
+ */
+function extractStudentQuery(userMessage: string): string {
+  const marker = 'Student Query:';
+  const idx = userMessage.lastIndexOf(marker);
+  return idx >= 0 ? userMessage.slice(idx + marker.length) : userMessage;
+}
+
 export const AIOrchestrator = {
   getProvider(config: AIProviderConfig, _taskType: 'routine' | 'deep_research' | 'file_analysis' = 'routine'): IAIProvider {
     // SINGLE-MODEL POLICY: always use the provider the user explicitly chose
@@ -562,13 +579,37 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     //    ("page 42", "p. 42") is answered from that page's COMPLETE
     //    stored text (IndexedDB, Drive-mirror fallback) — the most
     //    precise source, preferred over chapter ranges.
+    //
+    // NOTE: `userMessage` may wrap prepended attached-material text
+    // ("...[ATTACHED STUDY MATERIAL: ...]\n\nStudent Query: ..."), so we
+    // detect page references against the student's actual query only. Page
+    // numbers that happen to live inside attached material must never
+    // trigger a false page-specific answer.
     let chapterContext = '';
-    const pageRef = findReferencedPage(userMessage, retrievalFiles);
+    const studentQuery = extractStudentQuery(userMessage);
+    const pageRef = findReferencedPage(studentQuery, retrievalFiles);
+    const askedAboutPage = referencedPageNumber(studentQuery) !== null;
     if (pageRef) {
       const pageText = await loadPageText(context.pilotUid, pageRef.file, pageRef.page);
       if (pageText && pageText.trim()) {
         chapterContext = `The student is asking specifically about page ${pageRef.page} of "${pageRef.file.name}". This is the COMPLETE stored text of that exact page. Ground your answer strictly in this text:\n"""\n${pageText.slice(0, 80000)}\n"""\n\n`;
+      } else {
+        // The page exists in the index but holds no extractable text
+        // (scanned image or blank page). Surface a clear error instead of
+        // answering from the model's imagination.
+        return {
+          text: `I couldn't find any extractable text on page ${pageRef.page} of "${pageRef.file.name}". That page appears to be a scanned image or blank, and OCR is not available in this app, so I can't read its contents. Try a different page or a text-based document.`,
+          actions: [],
+          suggestedChips: [],
+        };
       }
+    } else if (askedAboutPage) {
+      const page = referencedPageNumber(studentQuery)!;
+      return {
+        text: `Page ${page} isn't available in any uploaded and indexed document. Make sure the file is uploaded and finished indexing, the page number is correct, and the page contains extractable text, then ask again.`,
+        actions: [],
+        suggestedChips: [],
+      };
     }
 
     // 2. Chapter/section/slide-aware retrieval: an explicit reference

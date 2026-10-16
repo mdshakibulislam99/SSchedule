@@ -2422,7 +2422,21 @@ export default function App() {
    */
   const handleAttachFileToChat = async (file: File) => {
     try {
-      const { text: extracted, structure, pages } = await extractDocumentFromFile(file, file.name);
+      const {
+        text: extracted,
+        structure,
+        pages,
+        scanned,
+      } = await extractDocumentFromFile(file, file.name);
+
+      // Requirement 7: never pretend an empty / failed extraction succeeded.
+      if (!extracted || !extracted.trim()) {
+        showToast(
+          `Couldn't extract readable text from "${file.name}". It may be scanned / image-only, encrypted, or corrupted. OCR is not available in this app.`,
+        );
+        return;
+      }
+
       const created = handleUploadFile({
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
@@ -2437,7 +2451,10 @@ export default function App() {
       // stored text during this session.
       setSelectedFileForChat(created);
       setIncomingChatMaterial({ name: file.name, content: extracted });
-      showToast(`Attached "${file.name}" — opening AI chat`);
+      showToast(
+        `Attached "${file.name}" — opening AI chat` +
+          (scanned ? ' (scanned document — answers may be limited)' : ''),
+      );
       handleTabChange('ai');
     } catch (err) {
       console.warn('Attach file to AI chat failed:', err);

@@ -105,6 +105,21 @@ export function findTopicRelevantChapter(
 }
 
 /**
+ * Extracts the page number from an explicit single-page reference
+ * ("page 42", "p. 42", "第 42 页"). Returns null when no page is
+ * referenced. Exported so callers can distinguish "the student asked
+ * about a specific page" from "no page was referenced at all".
+ */
+export function referencedPageNumber(message: string): number | null {
+  const ref =
+    message.match(/\bpages?\s*([0-9]+)\b/i) ||
+    message.match(/\bp\.?\s*([0-9]+)\b/i) ||
+    message.match(/第\s*([0-9]+)\s*页/i);
+  if (!ref) return null;
+  return parseInt(ref[1], 10);
+}
+
+/**
  * Detects an explicit single-page reference ("page 42", "p. 42",
  * "第 42 页") and returns the matching file + page number when that file
  * carries a per-page index covering it. Preferred over chapter ranges for
@@ -115,12 +130,8 @@ export function findReferencedPage(
   message: string,
   files: StudyFile[],
 ): { file: StudyFile; page: number } | null {
-  const ref =
-    message.match(/\bpages?\s*([0-9]+)\b/i) ||
-    message.match(/\bp\.?\s*([0-9]+)\b/i) ||
-    message.match(/第\s*([0-9]+)\s*页/i);
-  if (!ref) return null;
-  const page = parseInt(ref[1], 10);
+  const page = referencedPageNumber(message);
+  if (page === null) return null;
   for (const file of files) {
     if (file.pageIndex?.pages?.some((p) => p.page === page)) {
       return { file, page };

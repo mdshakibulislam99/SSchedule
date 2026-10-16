@@ -47,6 +47,13 @@ export interface ExtractedDocument {
    * no page concept (plain text, DOCX).
    */
   pages: DocumentPageSpan[] | null;
+  /**
+   * True when the document appears to be a scanned / image-only PDF:
+   * most physical pages carry no extractable text. Callers should
+   * warn the student that OCR is not available instead of pretending
+   * the content was read.
+   */
+  scanned?: boolean;
 }
 
 interface DocumentSection {
@@ -317,7 +324,18 @@ async function extractPdfDocument(file: Blob): Promise<ExtractedDocument> {
   }
   if (prev) spans.push({ page: prev.page, startChar: prev.start, endChar: assembled.text.length });
 
-  return { ...assembled, pages: spans.length > 0 ? spans : null };
+  // Scanned / image-only PDF detection: if most physical pages carry no
+  // extractable text (only the "[Page N]:" marker), flag it so callers
+  // can warn that OCR is not available instead of pretending the doc was read.
+  let emptyPages = 0;
+  for (const span of spans) {
+    const pageText = assembled.text.slice(span.startChar, span.endChar);
+    const realText = pageText.replace(/\[Page \d+\]:\s*/gi, '').trim();
+    if (realText.length === 0) emptyPages += 1;
+  }
+  const scanned = spans.length > 0 && emptyPages / spans.length >= 0.5;
+
+  return { ...assembled, pages: spans.length > 0 ? spans : null, scanned };
 }
 
 /* ------------------------------------------------------------------ */

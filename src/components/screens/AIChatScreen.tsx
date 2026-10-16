@@ -370,7 +370,29 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
     if (!file) return;
 
     try {
-      const { text: extracted, structure, pages } = await extractDocumentFromFile(file, file.name);
+      const {
+        text: extracted,
+        structure,
+        pages,
+        scanned,
+      } = await extractDocumentFromFile(file, file.name);
+
+      // Requirement 7: never pretend an empty / failed extraction succeeded.
+      if (!extracted || !extracted.trim()) {
+        const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const errMsg: AIMessage = {
+          id: `upload-err-${Date.now()}`,
+          sender: 'ai',
+          text: `⚠️ I couldn't extract any readable text from **${file.name}**. The file may be scanned / image-only, encrypted, or corrupted. OCR is not available in this app, so I can't read its contents. Try uploading a text-based document.`,
+          timestamp: nowTime,
+          isError: true,
+        };
+        setMessages((prev) => [...prev, errMsg]);
+        setIsPlusMenuOpen(false);
+        setPlusMenuTab('main');
+        return;
+      }
+
       const newStudyFile: StudyFileUpload = {
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
@@ -391,10 +413,13 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
       setPlusMenuTab('main');
 
       const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const scannedNote = scanned
+        ? `\n\n⚠️ **Scanned document detected:** this looks like an image-only PDF. No readable text was found on most pages, and OCR is not available in this app, so AI answers will be limited to any text that could be extracted.`
+        : '';
       const confirmMsg: AIMessage = {
         id: `upload-${Date.now()}`,
         sender: 'ai',
-        text: `📎 Attached **${file.name}**. I've extracted its content and can now answer questions, summarize key concepts, or quiz you based on this material.`,
+        text: `📎 Attached **${file.name}**. I've extracted its content and can now answer questions, summarize key concepts, or quiz you based on this material.${scannedNote}`,
         timestamp: nowTime,
         suggestedChips: [
           `📖 Summarize ${file.name}`,

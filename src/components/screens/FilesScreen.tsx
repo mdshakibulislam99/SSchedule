@@ -111,7 +111,20 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
 
     // Extract the complete text + chapter structure so AI gets
     // rich material context and per-chapter learning works.
-    const { text: extractedContent, structure, pages } = await extractDocumentFromFile(uploaded, uploaded.name);
+    const { text: extractedContent, structure, pages, scanned } = await extractDocumentFromFile(
+      uploaded,
+      uploaded.name,
+    );
+
+    // Requirement 7: never pretend an empty / failed extraction succeeded.
+    if (!extractedContent || !extractedContent.trim()) {
+      setUploadNotice(
+        `⚠️ No readable text could be extracted from "${uploaded.name}". It may be scanned / image-only, encrypted, or corrupted. OCR is not available in this app.`,
+      );
+      window.setTimeout(() => setUploadNotice(null), 6000);
+      e.target.value = '';
+      return;
+    }
 
     onUploadFile({
       name: uploaded.name,
@@ -122,8 +135,11 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       structure: structure ?? undefined,
       pages: pages ?? null,
     });
-    setUploadNotice(`${uploaded.name} added · AI Auto-Indexing in background…`);
-    window.setTimeout(() => setUploadNotice(null), 4000);
+    setUploadNotice(
+      `${uploaded.name} added · AI Auto-Indexing in background…` +
+        (scanned ? ' (scanned document — answers may be limited)' : ''),
+    );
+    window.setTimeout(() => setUploadNotice(null), 6000);
     e.target.value = '';
   };
 

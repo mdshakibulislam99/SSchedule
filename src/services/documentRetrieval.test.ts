@@ -4,6 +4,7 @@ import {
   scoreChapterForMessage,
   findTopicRelevantChapter,
   findReferencedPage,
+  referencedPageNumber,
   wantsExhaustiveExtraction,
 } from './documentRetrieval';
 import { DocumentChapter, StudyFile, DocumentPageSpan } from '../types';
@@ -170,5 +171,27 @@ describe('wantsExhaustiveExtraction', () => {
 
   it('handles empty input', () => {
     expect(wantsExhaustiveExtraction('')).toBe(false);
+  });
+});
+
+describe('referencedPageNumber', () => {
+  it('extracts "page N"', () => {
+    expect(referencedPageNumber('summarize page 3')).toBe(3);
+    expect(referencedPageNumber('PAGE 42')).toBe(42);
+  });
+
+  it('extracts "p. N" shorthand', () => {
+    expect(referencedPageNumber('what is on p. 7?')).toBe(7);
+    expect(referencedPageNumber('p42')).toBe(42);
+  });
+
+  it('extracts Chinese 第 N 页', () => {
+    expect(referencedPageNumber('第 4 页讲了什么')).toBe(4);
+  });
+
+  it('returns null when no page is referenced', () => {
+    expect(referencedPageNumber('explain photosynthesis')).toBeNull();
+    expect(referencedPageNumber('what page is chapter 3 on?')).toBeNull();
+    expect(referencedPageNumber('')).toBeNull();
   });
 });

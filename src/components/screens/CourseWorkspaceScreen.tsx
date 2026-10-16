@@ -620,7 +620,19 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
     // The FULL text is persisted with the file record (IndexedDB); the resource
     // reader keeps a generous excerpt so huge textbooks cannot exhaust the
     // localStorage quota.
-    const { text: extractedText, structure, pages } = await extractDocumentFromFile(file, file.name);
+    const { text: extractedText, structure, pages, scanned } = await extractDocumentFromFile(
+      file,
+      file.name,
+    );
+
+    // Requirement 7: never pretend an empty / failed extraction succeeded.
+    if (!extractedText || !extractedText.trim()) {
+      setUploadNotice(
+        `⚠️ No readable text could be extracted from "${file.name}". It may be scanned / image-only, encrypted, or corrupted. OCR is not available in this app.`,
+      );
+      window.setTimeout(() => setUploadNotice(null), 6000);
+      return;
+    }
 
     onUploadFile?.({
       name: file.name,
@@ -642,8 +654,11 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       estimatedReadMinutes: Math.max(2, Math.round(file.size / (1024 * 60))),
       tags: [],
     });
-    setUploadNotice(`✨ ${file.name} added · AI Auto-Indexing context for ${course.code}…`);
-    window.setTimeout(() => setUploadNotice(null), 4000);
+    setUploadNotice(
+      `✨ ${file.name} added · AI Auto-Indexing context for ${course.code}…` +
+        (scanned ? ' (scanned document — answers may be limited)' : ''),
+    );
+    window.setTimeout(() => setUploadNotice(null), 6000);
     setIsAddResourceOpen(false);
     setAddStep('choose');
   };
