@@ -191,6 +191,8 @@ export interface CourseResource {
   fileData?: string;
   /** IndexedDB key for the original file when it is too large for localStorage. */
   fileStorageKey?: string;
+  /** StudyFile id when this resource was created from an uploaded file (keeps Files tab & course library in sync). */
+  studyFileId?: string;
   estimatedReadMinutes: number;
   tags: string[];
   createdAt: string;

@@ -2261,6 +2261,7 @@ export default function App() {
       mime: data.mime,
       fileData: data.fileData,
       fileStorageKey: data.fileStorageKey,
+      studyFileId: data.studyFileId,
       estimatedReadMinutes: data.estimatedReadMinutes || 5,
       tags: data.tags || [],
       createdAt: new Date().toISOString(),
@@ -2538,6 +2539,40 @@ export default function App() {
     // If the deleted file was the chat's active context, detach it.
     setSelectedFileForChat((prev) => (prev && prev.id === fileId ? null : prev));
 
+    // Cascade: a file uploaded into a course also lives as a course
+    // resource. Remove those too so the course section cannot keep
+    // showing a file that was deleted from the Files tab.
+    const linkedResources = resources.filter(
+      (r) =>
+        r.studyFileId === fileId ||
+        (!!target.fileStorageKey && r.fileStorageKey === target.fileStorageKey)
+    );
+    if (linkedResources.length > 0) {
+      const removedIds = new Set(linkedResources.map((r) => r.id));
+      setResources((prev) => prev.filter((r) => !removedIds.has(r.id)));
+      setAnnotations((prev) => prev.filter((a) => !removedIds.has(a.resourceId)));
+      setCourses((prev) =>
+        prev.map((c) => ({
+          ...c,
+          resourceIds: c.resourceIds.filter((id) => !removedIds.has(id)),
+          materialsFileIds: c.materialsFileIds.filter((id) => id !== fileId),
+        }))
+      );
+      // If the reader is open on one of the removed resources, go back.
+      if (selectedResourceId && removedIds.has(selectedResourceId)) {
+        setSelectedResourceId(null);
+        if (activeSubScreen === 'resource_reader') setActiveSubScreen('course');
+      }
+    } else {
+      setCourses((prev) =>
+        prev.map((c) =>
+          c.materialsFileIds.includes(fileId)
+            ? { ...c, materialsFileIds: c.materialsFileIds.filter((id) => id !== fileId) }
+            : c
+        )
+      );
+    }
+
     // Collect every IndexedDB key this file created.
     const textKeys: string[] = [];
     if (target.extractedTextKey) textKeys.push(target.extractedTextKey);
@@ -2561,6 +2596,47 @@ export default function App() {
 
     playChime('success');
     showToast(`Deleted "${target.name}"`);
+  };
+
+  /**
+   * Deletes a course resource everywhere it lives: removes it from the
+   * resources list, unlinks it from its course — and when the resource
+   * was backed by an uploaded file, deletes that file (and its blobs)
+   * too so the Files tab cannot keep showing it.
+   */
+  const handleDeleteResource = (resourceId: string) => {
+    const target = resources.find((r) => r.id === resourceId);
+    if (!target) return;
+
+    setResources((prev) => prev.filter((r) => r.id !== resourceId));
+    setAnnotations((prev) => prev.filter((a) => a.resourceId !== resourceId));
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.resourceIds.includes(resourceId)
+          ? { ...c, resourceIds: c.resourceIds.filter((id) => id !== resourceId) }
+          : c
+      )
+    );
+
+    if (selectedResourceId === resourceId) {
+      setSelectedResourceId(null);
+      if (activeSubScreen === 'resource_reader') setActiveSubScreen('course');
+    }
+
+    // Backed by an uploaded file? Remove the Files-tab record too.
+    const linkedFile = files.find(
+      (f) =>
+        f.id === target.studyFileId ||
+        (!!target.fileStorageKey && f.fileStorageKey === target.fileStorageKey)
+    );
+    if (linkedFile) {
+      // Full cleanup incl. IndexedDB blobs + cascade toast.
+      handleDeleteFile(linkedFile.id);
+      return;
+    }
+
+    playChime('success');
+    showToast(`Deleted "${target.title}"`);
   };
 
   const handleReindexResource = (resourceId: string) => {
@@ -3153,6 +3229,7 @@ export default function App() {
             setActiveSubScreen('resource_reader');
           }}
           onReindexResource={handleReindexResource}
+          onDeleteResource={handleDeleteResource}
           onOpenTutor={(opts) => {
             requireAIProvider(() => {
               setCourseTutorPrefill(opts?.prompt);

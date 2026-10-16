@@ -57,6 +57,8 @@ interface ReviewDraft {
   /** Base64 data URL of the bytes, when the file is small enough to keep. */
   dataUrl?: string;
   fileStorageKey?: string;
+  /** StudyFile id of the linked Files-tab record (for two-way sync). */
+  studyFileId?: string;
   /** MIME type reported by the browser for this file. */
   mime?: string;
 }
@@ -157,7 +159,9 @@ interface CourseWorkspaceScreenProps {
   onOpenTutor: (options?: { resourceId?: string; tab?: 'learn' | 'tutor' | 'quiz' | 'cards'; prompt?: string }) => void;
   onAddResource: (data: Partial<CourseResource>) => void;
   /** Registers an uploaded file in the Files tab as well as the course library. */
-  onUploadFile?: (file: StudyFileUpload) => void;
+  onUploadFile?: (file: StudyFileUpload) => StudyFile | undefined;
+  /** Deletes a resource from the course library (and its linked file, if any). */
+  onDeleteResource?: (resourceId: string) => void;
   /** Creates a task from inside the course — no detour to the Tasks tab. */
   onAddTask: (taskData: Partial<Task>, autoPlan: boolean) => void;
   /** Toggles completion directly from the course task list. */
@@ -196,6 +200,7 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
   onOpenTutor,
   onAddResource,
   onUploadFile,
+  onDeleteResource,
   onAddTask,
   onToggleTask,
   onDeleteTask,
@@ -210,6 +215,7 @@ export const CourseWorkspaceScreen: React.FC<CourseWorkspaceScreenProps> = ({
   const [isDeleteCourseOpen, setIsDeleteCourseOpen] = useState(false);
   const [deleteAssociatedData, setDeleteAssociatedData] = useState(true);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [resourceToDelete, setResourceToDelete] = useState<CourseResource | null>(null);
   const [resTitle, setResTitle] = useState('');
   const [resContent, setResContent] = useState('');
   const [resType, setResType] = useState<CourseResource['type']>('text');
@@ -634,7 +640,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       return;
     }
 
-    onUploadFile?.({
+    const createdFile = onUploadFile?.({
       name: file.name,
       size: fileSize,
       type: studyFileType(file.name),
@@ -651,6 +657,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       fileName: file.name,
       mime,
       fileStorageKey,
+      studyFileId: createdFile?.id,
       estimatedReadMinutes: Math.max(2, Math.round(file.size / (1024 * 60))),
       tags: [],
     });
@@ -681,6 +688,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       fileSize: f.size,
       dataUrl: f.dataUrl,
       fileStorageKey: f.fileStorageKey,
+      studyFileId: f.id,
       mime: undefined,
     });
     setReviewBack('files');
@@ -693,8 +701,9 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
     if (!review || !review.title.trim()) return;
 
     // A fresh upload is also stored in the Files tab so the original is kept.
+    let createdFileId = review.studyFileId;
     if (review.file) {
-      onUploadFile?.({
+      createdFileId = onUploadFile?.({
         name: review.fileName,
         size: review.fileSize,
         type: studyFileType(review.fileName),
@@ -703,7 +712,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
         keyTopics: [course.code, 'Course library'],
         dataUrl: review.dataUrl,
         fileStorageKey: review.fileStorageKey,
-      });
+      })?.id;
     }
 
     onAddResource({
@@ -714,6 +723,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       mime: review.mime,
       fileData: review.dataUrl,
       fileStorageKey: review.fileStorageKey,
+      studyFileId: createdFileId,
       estimatedReadMinutes: estimateMinutes(review.content),
       tags: ['file', review.type],
     });
@@ -1353,6 +1363,21 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
                       <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
                     )}
                   </span>
+
+                  {onDeleteResource && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setResourceToDelete(res);
+                      }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors shrink-0"
+                      title="Delete resource"
+                      aria-label={`Delete ${res.title}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -2450,6 +2475,65 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Delete Task</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Resource Confirmation Modal */}
+      {resourceToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 shadow-xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Delete resource</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 text-xs">
+              <p className="font-bold text-slate-800 dark:text-slate-200 truncate">{resourceToDelete.title}</p>
+              {resourceToDelete.fileName && (
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5 truncate">
+                  {resourceToDelete.fileName}
+                </span>
+              )}
+            </div>
+
+            {(resourceToDelete.studyFileId || resourceToDelete.fileStorageKey) && (
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                This resource was uploaded as a file — it will also be removed from your{' '}
+                <b>Files</b> tab so it cannot linger there.
+              </p>
+            )}
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setResourceToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (resourceToDelete && onDeleteResource) {
+                    if (selectedAiContextResource?.id === resourceToDelete.id) {
+                      setSelectedAiContextResource(null);
+                    }
+                    onDeleteResource(resourceToDelete.id);
+                  }
+                  setResourceToDelete(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Resource</span>
               </button>
             </div>
           </div>
