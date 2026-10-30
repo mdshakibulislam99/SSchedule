@@ -22,6 +22,7 @@ import {
   CalendarOutboxItem,
 } from '../types';
 import { getLocalDateKey } from './dates';
+import { fetchAIConfigFromFirestore, syncAIConfigToFirestore } from '../lib/firebase';import { fetchAIConfigFromFirestore, syncAIConfigToFirestore } from '../lib/firebase';
 
 const INITIAL_SCHEDULE_DATE = getLocalDateKey();
 

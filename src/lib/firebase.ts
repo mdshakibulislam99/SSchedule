@@ -519,3 +519,45 @@ export async function deleteCourseFromFirestore(userId: string, courseId: string
     console.warn('Failed to delete course from Firestore:', err);
   }
 }
+
+// Sync AI provider config to Firestore for the current authenticated user
+export async function syncAIConfigToFirestore(aiConfig: import('../types').AIProviderConfig) {
+  const user = auth.currentUser;
+  if (!user) {
+    console.warn('syncAIConfigToFirestore: no authenticated user');
+    return;
+  }
+  try {
+    await setDoc(
+      doc(db, 'users', user.uid, 'ai-config'),
+      cleanForFirestore(aiConfig),
+      { merge: true }
+    );
+    console.log('AI config synced to Firestore for user', user.uid);
+  } catch (err) {
+    console.warn('Failed to sync AI config to Firestore:', err);
+  }
+}
+
+// Fetch AI provider config from Firestore for the current authenticated user
+export async function fetchAIConfigFromFirestore(): Promise<import('../types').AIProviderConfig | null> {
+  const user = auth.currentUser;
+  if (!user) {
+    return null;
+  }
+  try {
+    const docRef = doc(db, 'users', user.uid, 'ai-config');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as import('../types').AIProviderConfig;
+      console.log('AI config fetched from Firestore for user', user.uid);
+      return data;
+    } else {
+      console.log('No AI config found in Firestore for user', user.uid);
+      return null;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch AI config from Firestore:', err);
+    return null;
+  }
+}
