@@ -68,6 +68,7 @@ interface SettingsScreenProps {
   isDriveConnecting?: boolean;
   isDrivePilot?: boolean;
   isDriveInitializing?: boolean;
+  driveMigrationProgress?: { collection: string; complete: number; total: number } | null;
   isDriveRefreshing?: boolean;
   onDriveStorageInitialize: () => void;
   /** Re-reads tasks from Drive, retries queued changes, re-publishes signals. */
@@ -102,6 +103,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   isDriveConnecting,
   isDrivePilot,
   isDriveInitializing,
+  driveMigrationProgress,
   isDriveRefreshing,
   notificationSettings,
   updateInfo,
@@ -376,8 +378,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 <div className="text-sm font-bold text-slate-900 dark:text-white">Google Drive</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   {driveSync.connected
-                    ? `${driveSync.folderName || 'SScheduleData'} folder${driveSync.email ? ` · ${driveSync.email}` : ''}${driveSync.migrationStatus ? ` · migration ${driveSync.migrationStatus}` : ''}`
-                    : 'Tasks, files & notes stored in your Drive'}
+                    ? `${driveSync.folderName || 'SScheduleData'} · book files and chat indexes in Drive${driveSync.email ? ` · ${driveSync.email}` : ''}`
+                    : 'Connect your Drive to store book files and chat indexes there'}
                 </div>
               </div>
             </div>
@@ -420,7 +422,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
         </div>
 
-        {/* Drive Storage (pilot) — explicit opt-in, never default */}
+        {/* Optional migration of all app records; book files use Drive as soon as the user connects. */}
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
@@ -429,12 +431,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-bold text-slate-900 dark:text-white">
-                  Drive Storage
+                  Move all app data to Drive (optional)
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                  {isDrivePilot
-                    ? 'Pilot — Google Drive is the primary data store'
-                    : 'Pilot: keep all study data in your Google Drive'}
+                  {driveSync.migrationStatus === 'COMPLETE'
+                    ? 'Your app records and book files are in Drive. Firebase still handles sign-in and account settings.'
+                    : 'Book PDFs and their chat indexes use your connected Drive. Other app records stay in Firebase unless you choose the full migration.'}
                 </div>
               </div>
             </div>
@@ -445,7 +447,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
               }`}
             >
-              {isDrivePilot ? 'Pilot' : 'Firestore'}
+              {isDrivePilot ? 'Drive + Firebase' : 'Firebase'}
             </span>
           </div>
 
@@ -459,11 +461,25 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <span>
               {isDriveInitializing
                 ? 'Initializing…'
-                : isDrivePilot
-                  ? 'Re-initialize Drive Structure'
-                  : 'Initialize Drive Storage (Pilot)'}
+                : driveSync.migrationStatus === 'COMPLETE'
+                  ? 'Refresh Drive Storage'
+                  : 'Migrate all app data to Drive'}
             </span>
           </button>
+          {driveMigrationProgress && (
+            <div className="rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-100 dark:border-violet-900 p-3">
+              <div className="flex justify-between gap-3 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                <span className="capitalize">Migrating {driveMigrationProgress.collection}</span>
+                <span>{driveMigrationProgress.complete} / {driveMigrationProgress.total}</span>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-violet-100 dark:bg-violet-900 overflow-hidden">
+                <div
+                  className="h-full bg-violet-500 transition-all"
+                  style={{ width: `${driveMigrationProgress.total ? Math.min(100, driveMigrationProgress.complete / driveMigrationProgress.total * 100) : 100}%` }}
+                />
+              </div>
+            </div>
+          )}
           {isDrivePilot && onDriveTasksRefresh && (
             <button
               type="button"
@@ -531,10 +547,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
           )}
           <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed">
-            Creates the SScheduleData folder structure in your Drive. Your
-            existing Firestore data stays untouched — migration only starts
-            when you choose to run it. The pilot stores task content in your
-            Drive; Firestore only receives minimal change signals.
+            Copies and verifies your existing study records and available file
+            originals before switching them to Drive. Firestore copies are
+            retained for recovery. Login, integration, and AI-provider
+            credentials remain in Firebase; Drive sync signals contain only
+            record identifiers and revisions.
           </p>
         </div>
 

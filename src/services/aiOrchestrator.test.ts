@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // retrieval) and reads apiUrl(); stub them so this unit test stays hermetic
 // and never touches the network.
 vi.mock('./documentIndexStore', () => ({
+  loadDocumentIndexFromDrive: vi.fn(async () => null),
+  loadDocumentText: vi.fn(async () => null),
   loadPageText: vi.fn(async () => null),
 }));
 vi.mock('../utils/fileStorage', () => ({
@@ -145,6 +147,139 @@ describe('AIOrchestrator.chatWithContext — page-specific answers', () => {
     expect(res.text.toLowerCase()).toContain('indexed');
   });
 
+
+  it('retrieves an exact passage from late in a long attached book instead of sending only its opening', async () => {
+    const opening = 'This is introductory text about an unrelated topic. '.repeat(600);
+    const target = 'The Moon Quartz correction rule subtracts atmospheric drift before calculating the final measurement.';
+    const content = opening + target;
+    const capturedPrompts: string[] = [];
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter',
+      generateText: vi.fn(async (prompt: string) => { capturedPrompts.push(prompt); return 'The book says to subtract atmospheric drift first.'; }),
+    } as any);
+    const file = { ...indexedFile(), pageIndex: undefined } as StudyFile;
+    const page: DocumentPageSpan = { page: 55, startChar: opening.length, endChar: content.length };
+    try {
+      const result = await AIOrchestrator.chatWithContext(
+        'Explain the Moon Quartz correction rule',
+        [],
+        {
+          ...context(),
+          attachedMaterial: { name: file.name, content, file, pages: [page] },
+        },
+        configFor('puter'),
+      );
+      expect(result.text).toContain('subtract atmospheric drift');
+      expect(capturedPrompts[0]).toContain('page 55');
+      expect(capturedPrompts[0]).toContain(target);
+      expect(capturedPrompts[0]).not.toContain(opening.slice(0, 20000));
+    } finally {
+      providerSpy.mockRestore();
+    }
+  });
+
+  it('abstains when a long attached book has no matching passage', async () => {
+    const content = 'The book contains material about cellular biology. '.repeat(500);
+    const file = { ...indexedFile(), pageIndex: undefined } as StudyFile;
+    const generateText = vi.fn(async () => 'This should not run without source evidence.');
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter',
+      generateText,
+    } as any);
+    try {
+      const result = await AIOrchestrator.chatWithContext(
+        'Explain volcanology',
+        [],
+        { ...context(), attachedMaterial: { name: file.name, content, file } },
+        configFor('puter'),
+      );
+      expect(result.text).toContain('couldn’t locate a matching passage');
+      expect(generateText).not.toHaveBeenCalled();
+    } finally {
+      providerSpy.mockRestore();
+    }
+  });
+
+  it('does not map a missing Chapter 14 to the first indexed section (printed Lesson 11)', async () => {
+    const file = {
+      ...indexedFile(),
+      name: 'Xia.pdf',
+      structure: {
+        unit: 'chapter',
+        fileName: 'Xia.pdf',
+        totalChars: 120,
+        chapters: [{
+          index: 1,
+          title: '第十一课 你去哪儿',
+          textKey: 'chapter-1',
+          charCount: 120,
+          startChar: 0,
+          endChar: 120,
+        }],
+      },
+    } as StudyFile;
+    const generateText = vi.fn(async () => 'This should not run for an absent chapter.');
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter', generateText,
+    } as any);
+    try {
+      const result = await AIOrchestrator.chatWithContext(
+        'What does Chapter 14 teach?', [], context([file]), configFor('puter'),
+      );
+      expect(result.text).toContain('couldn’t verify a printed heading');
+      expect(result.text).not.toContain('Chapter 7');
+      expect(generateText).not.toHaveBeenCalled();
+    } finally {
+      providerSpy.mockRestore();
+    }
+  });
+
+  it('checks a source-based draft before returning it', async () => {
+    const content = 'The Moon Quartz rule says subtract atmospheric drift before calculating the final measurement.';
+    const generateText = vi.fn()
+      .mockResolvedValueOnce('Subtract atmospheric drift before calculating the measurement.')
+      .mockResolvedValueOnce('{"supported":true,"reason":"Directly stated in the source."}');
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter', generateText,
+    } as any);
+    try {
+      const result = await AIOrchestrator.chatWithContext(
+        'Explain the Moon Quartz rule', [],
+        { ...context(), attachedMaterial: { name: 'Notes.txt', content } },
+        configFor('puter'),
+      );
+      expect(result.text).toContain('Subtract atmospheric drift');
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(generateText.mock.calls[1][0]).toContain('SOURCE EVIDENCE');
+    } finally {
+      providerSpy.mockRestore();
+    }
+  });
+
+  it('labels a model-knowledge fallback when the source checker rejects a draft', async () => {
+    const content = 'The notes discuss cellular biology and cell membranes.';
+    const generateText = vi.fn()
+      .mockResolvedValueOnce('The notes say volcanoes form from tectonic collisions.')
+      .mockResolvedValueOnce('{"supported":false,"reason":"The source does not discuss volcanoes."}')
+      .mockResolvedValueOnce('Volcanoes form when magma reaches the surface.');
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter', generateText,
+    } as any);
+    try {
+      const result = await AIOrchestrator.chatWithContext(
+        'Explain volcanoes', [],
+        { ...context(), attachedMaterial: { name: 'Notes.txt', content } },
+        configFor('puter'),
+      );
+      expect(result.text).toContain('couldn’t verify an answer from the uploaded file');
+      expect(result.text).toContain('General answer');
+      expect(result.text).toContain('Volcanoes form when magma reaches the surface.');
+      expect(generateText).toHaveBeenCalledTimes(3);
+    } finally {
+      providerSpy.mockRestore();
+    }
+  });
+
   it('does not treat page numbers inside attached material as a page request', async () => {
     const file = indexedFile();
     vi.mocked(loadPageText).mockResolvedValueOnce(null);
@@ -155,15 +290,21 @@ describe('AIOrchestrator.chatWithContext — page-specific answers', () => {
     // detection to the provider (which is unconfigured in this hermetic
     // test). The key assertion is that page 7 inside the material never
     // triggered loadPageText.
-    await expect(
-      AIOrchestrator.chatWithContext(
+    const providerSpy = vi.spyOn(AIOrchestrator, 'getProvider').mockReturnValue({
+      type: 'puter',
+      generateText: vi.fn(async () => 'Photosynthesis converts light energy into chemical energy.'),
+    } as any);
+    try {
+      await AIOrchestrator.chatWithContext(
         '[ATTACHED STUDY MATERIAL: "book.pdf"]\n...page 7 mentions mitochondria...\n\nStudent Query: explain photosynthesis',
         [],
         context([file]),
         configFor('puter'),
-      ),
-    ).rejects.toThrow();
+      );
 
-    expect(loadPageText).not.toHaveBeenCalled();
+      expect(loadPageText).not.toHaveBeenCalled();
+    } finally {
+      providerSpy.mockRestore();
+    }
   });
 });

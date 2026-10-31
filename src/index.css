@@ -3,36 +3,67 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-slate-50: #f8f7f2;
+  --color-slate-100: #f0efe8;
+  --color-slate-200: #e3e2da;
+  --color-slate-300: #cfd1ca;
+  --color-slate-400: #8b969b;
+  --color-slate-500: #69777e;
+  --color-slate-600: #4b5a62;
+  --color-slate-700: #35464e;
+  --color-slate-800: #273942;
+  --color-slate-900: #182b35;
+  --color-slate-950: #101d26;
+  --color-indigo-50: #f3f2ff;
+  --color-indigo-100: #e8e5ff;
+  --color-indigo-200: #d4ceff;
+  --color-indigo-300: #b7aaff;
+  --color-indigo-400: #9583ff;
+  --color-indigo-500: #735af2;
+  --color-indigo-600: #5f46d7;
+  --color-indigo-700: #4935ad;
+  --color-indigo-800: #392b82;
+  --color-indigo-900: #2c2462;
+  --color-indigo-950: #211b46;
+  --shadow-sm: 0 2px 10px rgb(24 43 53 / 6%), 0 1px 2px rgb(24 43 53 / 4%);
+  --shadow-md: 0 10px 28px rgb(24 43 53 / 9%), 0 2px 8px rgb(24 43 53 / 4%);
 }
 
 @layer base {
   :root {
     color-scheme: light;
-    --app-background: #f5f7fb;
+    --app-background: #f0efe8;
     --app-surface: #ffffff;
-    --app-border: #e2e8f0;
+    --app-border: #e3e2da;
+    --app-ink: #182b35;
+    --app-brand: #5f46d7;
+    --app-accent: #d7ee70;
   }
 
   .dark {
     color-scheme: dark;
-    --app-background: #0f172a;
-    --app-surface: #111c2e;
-    --app-border: #243247;
+    --app-background: #101d26;
+    --app-surface: #172832;
+    --app-border: #2b3e47;
+    --app-ink: #f5f4ec;
+    --app-brand: #a99aff;
+    --app-accent: #d7ee70;
   }
 
   *, ::before, ::after {
-    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-sans);
   }
 
   html, body, #root {
-    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font-sans);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     font-size: 16px;
     line-height: 24px;
-    color: #0f172a;
+    color: var(--app-ink);
     background: var(--app-background);
     height: 100%;
     height: 100dvh;
@@ -45,16 +76,16 @@
   }
 
   button, input, textarea, select {
-    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-sans);
   }
 
   button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-    outline: 2px solid #6366f1;
+    outline: 2px solid var(--app-brand);
     outline-offset: 2px;
   }
 
   .font-mono {
-    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
@@ -276,4 +307,106 @@
 
 .animate-pop-in {
   animation: pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* SSchedule's visual language: warm paper, ink, violet focus, and a small
+   citron accent for moments that need extra attention. */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+.ss-app-frame {
+  background:
+    radial-gradient(ellipse at 92% 0%, rgb(115 90 242 / 7%), transparent 34%),
+    radial-gradient(ellipse at 0% 72%, rgb(215 238 112 / 8%), transparent 28%),
+    var(--app-background);
+}
+
+.ss-focus-card {
+  border-color: rgb(183 170 255 / 18%) !important;
+  background: linear-gradient(125deg, #142933 0%, #252052 54%, #162a32 100%) !important;
+  box-shadow: 0 16px 34px rgb(24 33 52 / 16%), inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+.ss-focus-card-inner {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.ss-focus-card-inner::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 220px;
+  height: 220px;
+  top: -145px;
+  right: -55px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgb(183 170 255 / 24%), rgb(183 170 255 / 0%) 70%);
+  pointer-events: none;
+}
+
+.ss-mobile-dock-shell {
+  background: transparent;
+  pointer-events: none;
+}
+
+.ss-mobile-dock {
+  max-width: 620px;
+  margin: 0 auto;
+  border: 1px solid rgb(215 218 207 / 85%);
+  border-radius: 24px;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 12px 34px rgb(24 43 53 / 14%), 0 2px 8px rgb(24 43 53 / 5%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  pointer-events: auto;
+}
+
+.dark .ss-mobile-dock {
+  border-color: rgb(72 91 99 / 65%);
+  background: rgb(23 40 50 / 94%);
+  box-shadow: 0 12px 34px rgb(0 0 0 / 25%);
+}
+
+.ss-desktop-sidebar {
+  background: linear-gradient(165deg, #172b35 0%, #12232d 62%, #101d26 100%) !important;
+  border-color: rgb(255 255 255 / 8%) !important;
+  color: #f8f7f2;
+}
+
+.ss-desktop-sidebar > div:first-child > div:first-child {
+  background: var(--app-accent) !important;
+  color: #182b35 !important;
+  box-shadow: 0 8px 22px rgb(215 238 112 / 18%);
+}
+
+.ss-desktop-sidebar .ss-sidebar-brand {
+  color: #fbfaf5 !important;
+  letter-spacing: -0.035em;
+}
+
+.ss-desktop-sidebar .ss-sidebar-tagline {
+  color: #aebdc0 !important;
+  letter-spacing: 0.025em;
+}
+
+.ss-desktop-sidebar nav button[aria-current='page'] {
+  background: rgb(149 131 255 / 16%) !important;
+  color: #f8f7f2 !important;
+  box-shadow: inset 0 0 0 1px rgb(183 170 255 / 14%);
+}
+
+.ss-desktop-sidebar > div:last-child p {
+  color: #aebdc0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

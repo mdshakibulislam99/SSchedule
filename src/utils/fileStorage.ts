@@ -17,7 +17,7 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function saveFileBlob(file: File, key: string): Promise<string> {
+export async function saveFileBlob(file: Blob, key: string): Promise<string> {
   // Keep the current session readable even when the browser quota rejects persistence.
   sessionFiles.set(key, file);
   if (typeof indexedDB === 'undefined') return key;
@@ -31,8 +31,9 @@ export async function saveFileBlob(file: File, key: string): Promise<string> {
       transaction.onerror = () => reject(transaction.error);
     });
     database.close();
-  } catch {
-    // The in-memory copy remains available until the page is closed.
+  } catch (err) {
+    // Keep the session cache usable, but surface the failed durable write.
+    throw new Error('Original file could not be saved to this device.', { cause: err });
   }
   return key;
 }
@@ -74,8 +75,9 @@ export async function saveExtractedText(key: string, text: string): Promise<stri
       transaction.onerror = () => reject(transaction.error);
     });
     database.close();
-  } catch {
-    // The in-memory copy remains available until the page is closed.
+  } catch (err) {
+    // Keep session access, but never report a failed durable write as saved.
+    throw new Error('Extracted text could not be saved to this device.', { cause: err });
   }
   return key;
 }

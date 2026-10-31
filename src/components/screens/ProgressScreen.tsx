@@ -1,19 +1,10 @@
 import React, { useState } from 'react';
 import {
-  Award,
   TrendingUp,
   Sparkles,
   Clock,
-  CheckCircle2,
-  ChevronRight,
-  BarChart2,
   ChevronLeft,
   Calendar,
-  Flame,
-  Sun,
-  Sunset,
-  Moon,
-  Zap,
 } from 'lucide-react';
 import { ProgressMetrics } from '../../types';
 
@@ -31,46 +22,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   onOpenGoals,
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'goals'>('overview');
-
-  const hasStudyData =
-    metrics.tasksCompleted > 0 ||
-    (metrics.studyTimeFormatted && metrics.studyTimeFormatted !== '0h 0m');
-
-  // Daily study distribution data (Hours per day for current week)
-  const weeklyDistribution = hasStudyData
-    ? [
-        { day: 'Mon', hours: 3.5, label: '3h 30m' },
-        { day: 'Tue', hours: 4.2, label: '4h 12m' },
-        { day: 'Wed', hours: 2.8, label: '2h 48m' },
-        { day: 'Thu', hours: 5.0, label: '5h 00m' },
-        { day: 'Fri', hours: 3.2, label: '3h 12m' },
-        { day: 'Sat', hours: 1.5, label: '1h 30m' },
-        { day: 'Sun', hours: 2.2, label: '2h 15m' },
-      ]
-    : [
-        { day: 'Mon', hours: 0, label: '0m' },
-        { day: 'Tue', hours: 0, label: '0m' },
-        { day: 'Wed', hours: 0, label: '0m' },
-        { day: 'Thu', hours: 0, label: '0m' },
-        { day: 'Fri', hours: 0, label: '0m' },
-        { day: 'Sat', hours: 0, label: '0m' },
-        { day: 'Sun', hours: 0, label: '0m' },
-      ];
-  const maxHours = Math.max(...weeklyDistribution.map((d) => d.hours), 5);
-
-  const timeOfDayBreakdown = hasStudyData
-    ? [
-        { period: 'Morning', time: '6am – 12pm', pct: 35, icon: Sun, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/60' },
-        { period: 'Afternoon', time: '12pm – 5pm', pct: 45, icon: Zap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
-        { period: 'Evening', time: '5pm – 10pm', pct: 15, icon: Sunset, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
-        { period: 'Night', time: '10pm – 2am', pct: 5, icon: Moon, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/60' },
-      ]
-    : [
-        { period: 'Morning', time: '6am – 12pm', pct: 0, icon: Sun, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/60' },
-        { period: 'Afternoon', time: '12pm – 5pm', pct: 0, icon: Zap, color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60' },
-        { period: 'Evening', time: '5pm – 10pm', pct: 0, icon: Sunset, color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/60' },
-        { period: 'Night', time: '10pm – 2am', pct: 0, icon: Moon, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/60' },
-      ];
 
   return (
     <div className="w-full flex flex-col space-y-4 pb-6 animate-fade-in text-slate-900 dark:text-white">
@@ -214,38 +165,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                   {metrics.dayStreak} Day Streak 🔥
                 </span>
               </div>
-              <div className="grid grid-cols-7 gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-800">
-                {Array.from({ length: 28 }).map((_, i) => {
-                  const isRecent = i >= 28 - metrics.dayStreak;
-                  const intensity = isRecent
-                    ? (i % 3 === 0 ? 4 : i % 2 === 0 ? 3 : 2)
-                    : i % 4 === 0 ? 2 : i % 3 === 0 ? 1 : 0;
-                  const colors = [
-                    'bg-slate-200/60 dark:bg-slate-800/80',
-                    'bg-emerald-200 dark:bg-emerald-950/80',
-                    'bg-emerald-400 dark:bg-emerald-800',
-                    'bg-emerald-500 dark:bg-emerald-600',
-                    'bg-emerald-600 dark:bg-emerald-500',
-                  ];
-                  return (
-                    <div
-                      key={i}
-                      className={`h-5 rounded-md ${colors[intensity]} transition-transform hover:scale-110 flex items-center justify-center`}
-                      title={`Day -${27 - i}: ${intensity > 0 ? `${intensity * 1.2}h study` : 'Rest day'}`}
-                    />
-                  );
-                })}
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1.5 px-1">
-                <span>4 weeks ago</span>
-                <div className="flex items-center gap-1">
-                  <span>Less</span>
-                  <div className="w-2.5 h-2.5 rounded-xs bg-slate-200 dark:bg-slate-800" />
-                  <div className="w-2.5 h-2.5 rounded-xs bg-emerald-300 dark:bg-emerald-800" />
-                  <div className="w-2.5 h-2.5 rounded-xs bg-emerald-500 dark:bg-emerald-500" />
-                  <span>More</span>
-                </div>
-                <span>Today</span>
+              <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-950/30 px-4 py-6 text-center">
+                <Calendar className="w-5 h-5 mx-auto mb-2 text-slate-400" />
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  Daily activity history is not available yet
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This view will fill in when daily study tracking is available.
+                </p>
               </div>
             </div>
           </div>
@@ -256,8 +183,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               Subject Breakdown
             </h3>
 
-            <div className="space-y-3">
-              {metrics.subjectBreakdown.map((subj) => (
+            {metrics.subjectBreakdown.length > 0 ? (
+              <div className="space-y-3">
+                {metrics.subjectBreakdown.map((subj) => (
                 <div key={subj.course} className="space-y-1">
                   <div className="flex justify-between text-xs font-semibold">
                     <span className="text-slate-800 dark:text-slate-200">{subj.course}</span>
@@ -270,8 +198,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                     />
                   </div>
                 </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl bg-slate-50 dark:bg-slate-950/30 px-4 py-5 text-center text-xs text-slate-500 dark:text-slate-400">
+                Subject insights will appear after study activity is recorded.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -290,68 +223,38 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                 <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
                   {metrics.studyTimeFormatted} total
                 </span>
-                <span className="text-[10px] text-slate-400 block">Avg 3.2h / day</span>
               </div>
             </div>
 
-            {/* Bar Chart */}
-            <div className="pt-4 pb-2">
-              <div className="flex items-end justify-between gap-2 h-36 border-b border-slate-100 dark:border-slate-800 pb-2">
-                {weeklyDistribution.map((item) => {
-                  const heightPercent = Math.min(100, Math.round((item.hours / maxHours) * 100));
-                  return (
-                    <div key={item.day} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                      <span className="text-[10px] font-mono text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {item.hours}h
-                      </span>
-                      <div className="w-full max-w-[28px] bg-indigo-50 dark:bg-indigo-950/40 rounded-t-lg relative flex items-end overflow-hidden h-full">
-                        <div
-                          className="w-full bg-indigo-600 hover:bg-indigo-500 dark:bg-indigo-500 rounded-t-lg transition-all duration-500"
-                          style={{ height: `${heightPercent}%` }}
-                        />
-                      </div>
-                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-                        {item.day}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-950/30 px-4 py-8 text-center">
+              <Clock className="w-5 h-5 mx-auto mb-2 text-slate-400" />
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Daily breakdown unavailable
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Your total study time is shown above. Daily focus hours are not tracked yet.
+              </p>
             </div>
           </div>
 
           {/* Time of Day Peak Productivity */}
           <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3.5">
             <div>
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Focus Heatmap</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Time of Day</span>
               <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
                 Peak Productivity by Time of Day
               </h3>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
-              {timeOfDayBreakdown.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div
-                    key={item.period}
-                    className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${item.color}`}>
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <span className="text-sm font-extrabold font-mono text-slate-900 dark:text-white">
-                        {item.pct}%
-                      </span>
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-800 dark:text-slate-200">{item.period}</div>
-                      <div className="text-[10px] text-slate-400">{item.time}</div>
-                    </div>
-                  </div>
-                );
-              })}
+              <div className="col-span-2 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-950/30 px-4 py-6 text-center">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  Time-of-day insights are not available yet
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Study sessions are not currently grouped by time of day.
+                </p>
+              </div>
             </div>
           </div>
         </div>

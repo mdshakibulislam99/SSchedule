@@ -41,6 +41,7 @@ function createViewerResource(file: StudyFile): CourseResource {
     mime,
     fileData: file.dataUrl,
     fileStorageKey: file.fileStorageKey,
+    studyFileId: file.id,
     estimatedReadMinutes: 5,
     tags: file.keyTopics || [],
     createdAt: file.uploadedAt,
@@ -101,12 +102,13 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               ? 'image'
               : 'text';
 
-    let fileStorageKey: string | undefined;
+    let fileStorageKey = `file-${crypto.randomUUID()}`;
 
     try {
-      fileStorageKey = await saveFileBlob(uploaded, `file-${crypto.randomUUID()}`);
+      await saveFileBlob(uploaded, fileStorageKey);
     } catch {
-      fileStorageKey = undefined;
+      // Keep the stable key; the app can retry the local write or back up
+      // the original bytes to Drive directly.
     }
 
     // Extract the complete text + chapter structure so AI gets
@@ -131,6 +133,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
       size: `${(uploaded.size / (1024 * 1024)).toFixed(1)} MB`,
       type,
       fileStorageKey,
+      originalBlob: uploaded,
       extractedContent,
       structure: structure ?? undefined,
       pages: pages ?? null,
@@ -217,7 +220,7 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
           <label className="border-2 border-dashed border-indigo-200 dark:border-indigo-900/60 rounded-3xl p-6 bg-indigo-50/40 dark:bg-indigo-950/20 hover:bg-indigo-50/70 transition-colors flex flex-col items-center justify-center text-center cursor-pointer group">
             <input
               type="file"
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,image/*,video/*"
+              accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.json,.csv,.ts,.js,.tsx,.py,.java,.c,.cpp,.html,.css,.xml,.yaml,.yml,.rst,.tex"
               onChange={handleSimulateUpload}
               className="hidden"
             />
@@ -261,6 +264,11 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
                           <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60 shrink-0">
                             <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
                             AI Ready
+                          </span>
+                        )}
+                        {file.aiContext?.status === 'partial' && (
+                          <span className="inline-flex items-center text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/60 shrink-0">
+                            Partial index
                           </span>
                         )}
                         {file.aiContext?.status === 'analyzing' && (
@@ -464,21 +472,50 @@ export const FilesScreen: React.FC<FilesScreenProps> = ({
               {fileTab === 'aiContext' && (
                 <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-4 bg-white dark:bg-slate-900">
                   {/* Status banner */}
-                  <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 flex items-center justify-between gap-3">
+                  <div className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${selectedFile.aiContext?.status === 'partial' || selectedFile.aiContext?.status === 'error' ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200/80 dark:border-amber-800/60' : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200/80 dark:border-emerald-800/60'}`}>
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
                         <Sparkles className="w-4 h-4" />
                       </div>
                       <div>
-                        <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                        <p className="text-xs font-bold text-slate-900 dark:text-white">
                           {selectedFile.aiContext?.status === 'ready'
-                            ? 'Auto-Indexed & Persisted'
+                            ? 'AI index ready'
+                            : selectedFile.aiContext?.status === 'partial'
+                              ? 'AI index is incomplete'
                             : selectedFile.aiContext?.status === 'analyzing'
-                              ? 'Indexing Material Context…'
-                              : 'Context Ready'}
+                              ? 'Indexing material…'
+                              : selectedFile.aiContext?.status === 'error'
+                                ? 'AI indexing failed'
+                                : 'Waiting for AI indexing'}
                         </p>
-                        <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400">
-                          Cached permanently for instant future AI learning
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                          {selectedFile.aiContext?.status === 'partial'
+                            ? selectedFile.aiContext.summary
+                            : selectedFile.documentStorageStatus === 'device-and-drive'
+                              ? 'Extracted text is saved on this device and in Google Drive.'
+                              : selectedFile.documentStorageStatus === 'drive'
+                                ? 'Extracted text is saved in Google Drive.'
+                                : selectedFile.documentStorageStatus === 'device'
+                                  ? 'Extracted text is saved on this device only.'
+                                  : selectedFile.documentStorageStatus === 'saving'
+                                    ? 'Saving extracted text…'
+                                    : selectedFile.documentStorageStatus === 'session-only'
+                                      ? 'Extracted text is only in this open session.'
+                                      : selectedFile.documentStorageStatus === 'failed'
+                                        ? 'Extracted text could not be saved.'
+                                        : 'Storage status is unavailable.'}
+                        </p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                          Original file: {selectedFile.originalStorageStatus === 'drive'
+                            ? 'backed up to Google Drive'
+                            : selectedFile.originalStorageStatus === 'device'
+                              ? 'saved on this device only'
+                            : selectedFile.originalStorageStatus === 'saving'
+                              ? 'backup pending'
+                              : selectedFile.originalStorageStatus === 'failed'
+                                ? 'Drive backup failed'
+                                : 'device copy only or no backup status'}
                         </p>
                       </div>
                     </div>

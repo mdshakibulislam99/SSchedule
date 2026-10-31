@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractDocumentFromFile } from './fileExtractor';
+import { assembleStructure, extractDocumentFromFile } from './fileExtractor';
 
 const mdContent = `# Course Notes
 
@@ -17,6 +17,18 @@ More content for the second chapter follows here.
 `;
 
 describe('extractDocumentFromFile', () => {
+  it('keeps printed lesson labels without inventing a Chapter 1 label', () => {
+    const extracted = assembleStructure(
+      [{ title: '第十一课 你去哪儿', text: 'A lesson excerpt.', startPage: 1, endPage: 3 }],
+      'chapter',
+      'Xia.pdf',
+    );
+
+    expect(extracted.text).toContain('第十一课 你去哪儿');
+    expect(extracted.text).not.toContain('[Chapter 1');
+    expect(extracted.structure?.chapters[0].index).toBe(1); // internal index only
+  });
+
   it('detects chapters in markdown text and computes offsets', async () => {
     const file = new File([mdContent], 'notes.md', { type: 'text/markdown' });
     const { text, structure } = await extractDocumentFromFile(file, 'notes.md');

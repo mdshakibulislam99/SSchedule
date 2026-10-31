@@ -150,7 +150,7 @@ export function ensureResourceAIContext(r: CourseResource): CourseResource {
     return r;
   }
   // Preserve an in-flight analysis exactly as-is.
-  if (r.aiContext?.status === 'analyzing') {
+  if (r.aiContext?.status === 'analyzing' || r.aiContext?.status === 'partial') {
     return r;
   }
   // Never fabricate a "ready" digest: a missing/failed analysis stays
@@ -173,7 +173,7 @@ export function ensureFileAIContext(f: StudyFile): StudyFile {
   if (f.aiContext && f.aiContext.status === 'ready' && f.aiContext.denseContext) {
     return f;
   }
-  if (f.aiContext?.status === 'analyzing') {
+  if (f.aiContext?.status === 'analyzing' || f.aiContext?.status === 'partial') {
     return f;
   }
   // Honest state only — an un-analyzed file is never presented as

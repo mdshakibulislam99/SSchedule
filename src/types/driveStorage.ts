@@ -241,6 +241,14 @@ export const COLLECTION_MAPPINGS: Record<string, CollectionMapping> = {
     rationale:
       'Small, independently-versioned documents (profile, notification settings, AI provider config, metrics) — one file per document id.',
   },
+  metrics: {
+    firestorePath: 'users/{uid}/metrics/current',
+    driveFolder: 'data/settings',
+    entityType: 'progress-metrics',
+    stableIdField: 'id',
+    partitionStrategy: 'single-document',
+    rationale: 'The current progress snapshot is stored as a single stable record.',
+  },
   reminders: {
     firestorePath: 'users/{uid}/tasks reminder state + top-level scheduledPushes',
     driveFolder: 'data/reminders',
@@ -441,6 +449,21 @@ export interface DriveStorageStatus {
  */
 export const DRIVE_ROLLOUT_ENABLED_COLLECTIONS: ReadonlySet<string> = new Set([
   'tasks',
+  'schedule',
+  'goals',
+  'courses',
+  'resources',
+  'files',
+  'notes',
+  'research',
+  'aiMemory',
+  'conversations',
+  'notifications',
+  'quizzes',
+  'flashcards',
+  'annotations',
+  'metrics',
+  'settings',
 ]);
 
 /**

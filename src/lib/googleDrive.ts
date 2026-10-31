@@ -1,6 +1,6 @@
-import { getAuth, signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
 import { Capacitor } from '@capacitor/core';
-import { app, auth } from './firebase';
+import { auth } from './firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { GoogleDriveSyncState } from '../types';
 import { GoogleApiError, GoogleAuthError, loadGis } from './googleCalendar';
@@ -171,39 +171,10 @@ export async function requestDriveToken(opts: { silent?: boolean } = {}): Promis
     throw new GoogleAuthError('redirect_pending', 'Google sign-in is opening — reconnect once it returns.');
   }
 
-  // 1. Firebase Auth GoogleAuthProvider popup (Firebase's official OAuth
-  // handler domain avoids origin_mismatch in Google Cloud).
-  let popupToken: string | null = null;
-  try {
-    const firebaseAuth = getAuth(app);
-    const provider = new GoogleAuthProvider();
-    GOOGLE_DRIVE_SCOPES.forEach((scope) => provider.addScope(scope));
-    provider.setCustomParameters({ prompt: 'select_account' });
-    const result = await signInWithPopup(firebaseAuth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      popupToken = credential.accessToken;
-      writeCachedToken(popupToken, 3600);
-    }
-  } catch (firebaseErr: any) {
-    const code = String(firebaseErr?.code || '');
-    const msg = String(firebaseErr?.message || firebaseErr || '').toLowerCase();
-    if (
-      code === 'auth/popup-closed-by-user' ||
-      code === 'auth/cancelled-popup-request' ||
-      msg.includes('popup window closed') ||
-      msg.includes('popup_closed') ||
-      msg.includes('window closed') ||
-      msg.includes('closed') ||
-      msg.includes('cancel')
-    ) {
-      throw new GoogleAuthError('cancelled', 'Sign-in popup was closed.');
-    }
-    console.warn('Firebase Drive popup attempt failed, falling back to GIS client:', firebaseErr);
-  }
-  if (popupToken) return popupToken;
-
-  // 2. Google Identity Services (GIS) Token Client — real account selector.
+  // Use a standalone Google OAuth token for Drive. A Firebase sign-in popup
+  // here would replace the app's signed-in Firebase account when a user
+  // chooses a different Google account for their files.
+  // Google Identity Services (GIS) Token Client — Drive-only account authorization.
   await loadGis();
   return new Promise<string>((resolve, reject) => {
     try {

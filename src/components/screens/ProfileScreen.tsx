@@ -77,12 +77,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [goals, setGoals] = useState<string[]>(user.goals || []);
   const [newGoal, setNewGoal] = useState('');
   const [justSaved, setJustSaved] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   // Keep the form in sync when the profile changes elsewhere (e.g. Google sign-in).
   useEffect(() => {
     setForm(formFromUser(user));
     setGoals(user.goals || []);
   }, [user]);
+
+  useEffect(() => {
+    setPhotoFailed(false);
+  }, [user.photoURL]);
 
   const update = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -147,15 +152,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       {/* User Header */}
       <div className="flex flex-col items-center text-center space-y-2 py-2">
         <div className="relative">
-          {user.photoURL ? (
+          {user.photoURL && !photoFailed ? (
             <img
               src={user.photoURL}
               alt={user.name}
               className="w-20 h-20 rounded-full object-cover ring-4 ring-indigo-500/20 shadow-md"
+              onError={() => setPhotoFailed(true)}
             />
           ) : (
             <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg shadow-indigo-500/20">
-              {user.name.charAt(0)}
+              {user.name.trim().charAt(0).toUpperCase() || <User className="w-8 h-8 opacity-80" />}
             </div>
           )}
           <span

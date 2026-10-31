@@ -29,7 +29,7 @@ export const DesktopSidebarNav: React.FC<DesktopSidebarNavProps> = ({
   return (
     <aside
       aria-label="Main Navigation"
-      className="hidden lg:flex flex-col w-60 xl:w-64 shrink-0 h-full border-r border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg p-4 pt-5"
+      className="ss-desktop-sidebar hidden lg:flex flex-col w-60 xl:w-64 shrink-0 h-full border-r border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg p-4 pt-5"
     >
       {/* Brand */}
       <div className="flex items-center gap-2.5 px-2 pb-5 shrink-0">
@@ -37,11 +37,11 @@ export const DesktopSidebarNav: React.FC<DesktopSidebarNavProps> = ({
           <Sparkles className="w-5 h-5" />
         </div>
         <div className="min-w-0">
-          <div className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+          <div className="ss-sidebar-brand text-sm font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
             SSchedule
           </div>
-          <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 leading-tight">
-            Smart Study Assistant
+          <div className="ss-sidebar-tagline text-[10px] font-semibold text-slate-400 dark:text-slate-500 leading-tight">
+            Your study, in sync
           </div>
         </div>
       </div>

@@ -18,17 +18,19 @@ import {
   ResourceAIContext,
   DocumentStructure,
   DocumentChapter,
+  DocumentPageSpan,
+  DocumentKnowledgeChunk,
 } from '../types';
 import { getLocalDateKey } from '../utils/dates';
 import { apiUrl } from '../lib/api';
-import { loadExtractedText } from '../utils/fileStorage';
 import {
   findTopicRelevantChapter,
+  findRelevantPassages,
   findReferencedPage,
   referencedPageNumber,
   wantsExhaustiveExtraction,
 } from './documentRetrieval';
-import { loadPageText } from './documentIndexStore';
+import { loadChapterText, loadDocumentIndexFromDrive, loadDocumentText, loadPageText } from './documentIndexStore';
 
 export interface AIExecutionContext {
   currentCourse?: Course | null;
@@ -42,6 +44,15 @@ export interface AIExecutionContext {
   energyLevel?: number;
   /** Firebase uid — enables Drive-mirror fallback for page retrieval. */
   pilotUid?: string;
+  /** The active attachment is passed separately so it cannot pollute the query. */
+  attachedMaterial?: {
+    name: string;
+    content: string;
+    file?: StudyFile;
+    pages?: DocumentPageSpan[] | null;
+  };
+  /** Read-only tutor surfaces must never generate schedule/task mutations. */
+  allowActions?: boolean;
 }
 
 export interface AIResponseWithActions {
@@ -312,11 +323,20 @@ export class ExternalProxyAIProvider implements IAIProvider {
  * Splits a document into chunks aligned to sentence boundaries so the
  * AI can reason over the ENTIRE file, not just its first few pages.
  */
-function splitIntoChunks(text: string, chunkSize = 12000): string[] {
-  const clean = (text || '').trim();
-  if (clean.length <= chunkSize) return clean ? [clean] : [];
+interface TextChunk {
+  index: number;
+  startChar: number;
+  endChar: number;
+  text: string;
+}
 
-  const chunks: string[] = [];
+function splitIntoChunks(text: string, chunkSize = 12000): TextChunk[] {
+  const clean = (text || '').trim();
+  if (clean.length <= chunkSize) {
+    return clean ? [{ index: 0, startChar: 0, endChar: clean.length, text: clean }] : [];
+  }
+
+  const chunks: TextChunk[] = [];
   let start = 0;
   while (start < clean.length) {
     let end = Math.min(start + chunkSize, clean.length);
@@ -327,8 +347,15 @@ function splitIntoChunks(text: string, chunkSize = 12000): string[] {
       if (breakAt <= start) breakAt = clean.lastIndexOf(' ', end);
       if (breakAt > start) end = breakAt + 1;
     }
-    const chunk = clean.slice(start, end).trim();
-    if (chunk) chunks.push(chunk);
+    const rawChunk = clean.slice(start, end);
+    const leftTrim = rawChunk.length - rawChunk.trimStart().length;
+    const chunk = rawChunk.trim();
+    if (chunk) chunks.push({
+      index: chunks.length,
+      startChar: start + leftTrim,
+      endChar: start + leftTrim + chunk.length,
+      text: chunk,
+    });
     start = end;
   }
   return chunks;
@@ -357,15 +384,23 @@ interface ChunkAnalysis {
   suggestedTasks: Array<{ title: string; priority: 'high' | 'medium' | 'low'; estimatedMinutes: number }>;
 }
 
+interface IndexedChunkAnalysis {
+  chunk: TextChunk;
+  analysis: ChunkAnalysis;
+}
+
 function dedupeStrings(items: string[]): string[] {
   return Array.from(new Set(items.map((s) => s.trim()).filter(Boolean)));
 }
 
 /** Deterministically merges per-chunk analyses into one ResourceAIContext. */
 function mergeChunkAnalyses(
-  chunkResults: ChunkAnalysis[],
-  material: { title: string; courseCode?: string }
+  indexedResults: IndexedChunkAnalysis[],
+  material: { title: string; courseCode?: string },
+  expectedChunks = indexedResults.length,
+  contentOffset = 0,
 ): ResourceAIContext {
+  const chunkResults = indexedResults.map((result) => result.analysis);
   const keyConcepts = dedupeStrings(chunkResults.flatMap((r) => r.keyConcepts)).slice(0, 14);
   const studyQuestions = dedupeStrings(chunkResults.flatMap((r) => r.studyQuestions)).slice(0, 8);
   const seenTasks = new Set<string>();
@@ -382,12 +417,13 @@ function mergeChunkAnalyses(
   // Fair digest budget: give every chunk an equal share of the
   // denseContext budget so late sections of long documents are never
   // cut entirely (the old join-then-slice kept only the beginning).
-  const perChunkBudget = Math.max(900, Math.floor(12000 / Math.max(chunkResults.length, 1)));
-  const denseContext = chunkResults
-    .map((r) => (r.sectionDigest || '').slice(0, perChunkBudget))
+  const perChunkBudget = Math.max(36, Math.floor((12000 - Math.max(indexedResults.length - 1, 0) * 2) / Math.max(indexedResults.length, 1)));
+  const denseContext = indexedResults
+    .map(({ chunk, analysis }) => `[Part ${chunk.index + 1}/${expectedChunks}] ${analysis.sectionDigest || ''}`.slice(0, perChunkBudget))
     .filter(Boolean)
     .join('\n\n')
     .slice(0, 12000);
+  const partial = chunkResults.length < expectedChunks;
   const summary = chunkResults
     .map((r) => r.summary)
     .filter(Boolean)
@@ -395,13 +431,23 @@ function mergeChunkAnalyses(
     .slice(0, 1200);
 
   return {
-    status: 'ready',
+    status: partial ? 'partial' : 'ready',
     analyzedAt: new Date().toISOString(),
-    summary: summary || `Academic resource covering ${material.title} for ${material.courseCode || 'course study'}.`,
+    summary: partial
+      ? `Partial index for "${material.title}": ${chunkResults.length} of ${expectedChunks} sections were analyzed. Re-index this file to retry missing sections. ${summary}`.trim()
+      : summary || `Academic resource covering ${material.title} for ${material.courseCode || 'course study'}.`,
     keyConcepts,
     denseContext,
     studyQuestions,
     suggestedTasks,
+    documentChunks: indexedResults.map(({ chunk, analysis }): DocumentKnowledgeChunk => ({
+      index: chunk.index + 1,
+      startChar: contentOffset + chunk.startChar,
+      endChar: contentOffset + chunk.endChar,
+      summary: analysis.summary,
+      digest: analysis.sectionDigest,
+      keyConcepts: analysis.keyConcepts,
+    })),
   };
 }
 
@@ -419,14 +465,20 @@ function findReferencedChapter(
   const refWord = ref[1].toLowerCase();
   const refNum = parseInt(ref[2], 10);
   const refToken = ref[2];
-  const numPattern = new RegExp(`(^|[^0-9])${refToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^0-9]|$)`);
+  const labeledUnitPattern = new RegExp(`\\b(?:chapters?|lessons?|units?|modules?|parts?|lectures?|weeks?)\\s+${refToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
   const isPageRef = refWord.startsWith('page');
   const isSlideRef = refWord.startsWith('slide');
 
   for (const file of files) {
-    const chapters = file.structure?.chapters?.length
-      ? file.structure.chapters
-      : file.aiContext?.chapters;
+    const structural = file.structure?.chapters || [];
+    const enriched = file.aiContext?.chapters || [];
+    const enrichedByIndex = new Map(enriched.map((chapter) => [chapter.index, chapter]));
+    const chapters = structural.length
+      ? structural.map((chapter) => ({ ...enrichedByIndex.get(chapter.index), ...chapter,
+          digest: chapter.digest || enrichedByIndex.get(chapter.index)?.digest,
+          keyConcepts: chapter.keyConcepts || enrichedByIndex.get(chapter.index)?.keyConcepts,
+        }))
+      : enriched;
     if (!chapters || chapters.length === 0) continue;
     const chapter = chapters.find((c) => {
       if (isSlideRef) return c.slide === refNum;
@@ -435,11 +487,69 @@ function findReferencedChapter(
         const end = c.endPage ?? c.startPage ?? 0;
         return start <= refNum && end >= refNum;
       }
-      return c.index === refNum || numPattern.test(c.title);
+      // `index` is an internal array/storage position, not a printed
+      // chapter number. Resolve numbered units only from their source title.
+      if (labeledUnitPattern.test(c.title)) return true;
+      // HSK books commonly print headings as 第十一课 / 第11课 rather
+      // than the English word "Chapter". Compare the printed lesson number.
+      const chineseHeading = c.title.match(/第\s*([一二三四五六七八九十百零〇\d]+)\s*(?:课|課|章|单元|單元)/);
+      if (chineseHeading && chineseNumberValue(chineseHeading[1]) === refNum) return true;
+      return false;
     });
     if (chapter) return { file, chapter };
   }
   return null;
+}
+
+function chineseNumberValue(value: string): number | null {
+  if (/^\d+$/.test(value)) return Number(value);
+  const digit: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  let total = 0;
+  let current = 0;
+  for (const char of value) {
+    if (char === '百') {
+      total += (current || 1) * 100;
+      current = 0;
+    } else if (char === '十') {
+      total += (current || 1) * 10;
+      current = 0;
+    } else if (char in digit) {
+      current = digit[char];
+    } else return null;
+  }
+  return total + current;
+}
+
+/** Finds a printed numbered unit directly in the extracted source text. */
+function findPrintedUnitSpan(
+  text: string,
+  requestedNumber: number,
+): { title: string; startChar: number; endChar: number } | null {
+  const headings: Array<{ number: number; title: string; startChar: number }> = [];
+  const patterns = [
+    /\b(?:chapter|lesson|unit|module|part|lecture|week)\s+(\d+)\b[^\n]*/gi,
+    /第\s*([一二三四五六七八九十百零〇\d]+)\s*(?:课|課|章|单元|單元)[^\n]*/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const startChar = match.index ?? 0;
+      const lineStart = text.lastIndexOf('\n', startChar) + 1;
+      const linePrefix = text.slice(lineStart, startChar).trimEnd();
+      // Old app versions inserted labels like `[Chapter 7 · Pages 61–70]`.
+      // Those are internal page ranges, not printed source headings.
+      if (linePrefix.endsWith('[')) continue;
+      const number = chineseNumberValue(match[1]);
+      if (number === null) continue;
+      headings.push({ number, title: match[0].trim().slice(0, 160), startChar });
+    }
+  }
+  headings.sort((a, b) => a.startChar - b.startChar);
+  const matchedIndex = headings.findIndex((heading) => heading.number === requestedNumber);
+  if (matchedIndex < 0) return null;
+  const heading = headings[matchedIndex];
+  const endChar = headings.slice(matchedIndex + 1).find((next) => next.startChar > heading.startChar)?.startChar ?? text.length;
+  if (endChar <= heading.startChar) return null;
+  return { title: heading.title, startChar: heading.startChar, endChar };
 }
 
 /**
@@ -516,7 +626,7 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
         const materialsText = context.courseResources
           .map((r) => {
             if (r.aiContext?.denseContext) {
-              return `- Resource "${r.title}": [SUMMARY: ${r.aiContext.summary}] [CONCEPTS: ${r.aiContext.keyConcepts.join(', ')}] [DIGEST: ${r.aiContext.denseContext}]`;
+              return `- Resource "${r.title}": [UNVERIFIED INDEX HINT — may be incomplete or stale; use only to find source passages, never as proof: ${r.aiContext.denseContext}]`;
             }
             return `- Resource "${r.title}": ${(r.content || '').slice(0, 500)}`;
           })
@@ -527,7 +637,7 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
         const filesText = context.courseFiles
           .map((f) => {
             if (f.aiContext?.denseContext) {
-              return `- File "${f.name}": [SUMMARY: ${f.aiContext.summary}] [DIGEST: ${f.aiContext.denseContext}]`;
+              return `- File "${f.name}": [UNVERIFIED INDEX HINT — may be incomplete or stale; use only to find source passages, never as proof: ${f.aiContext.denseContext}]`;
             }
             return `- File "${f.name}": ${f.summary || 'Course document'}`;
           })
@@ -540,7 +650,7 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     }
     if (context.currentFile) {
       if (context.currentFile.aiContext?.denseContext) {
-        contextPrompt += `Current Open File: "${context.currentFile.name}" [PRE-INDEXED CONTEXT: ${context.currentFile.aiContext.denseContext}, Key Concepts: ${context.currentFile.aiContext.keyConcepts.join(', ')}].\n`;
+        contextPrompt += `Current Open File: "${context.currentFile.name}" [UNVERIFIED INDEX HINT — may be incomplete or stale; use only to find source passages, never as proof: ${context.currentFile.aiContext.denseContext}].\n`;
       } else {
         contextPrompt += `Current Open File: "${context.currentFile.name}" (${context.currentFile.summary || 'Course document'}).\n`;
       }
@@ -570,10 +680,35 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     const todayDateKey = getLocalDateKey();
 
     // Build the candidate file list once.
-    const retrievalFiles = [
+    const attachedFile = context.attachedMaterial?.file && context.attachedMaterial.pages?.length
+      ? {
+          ...context.attachedMaterial.file,
+          pageIndex: context.attachedMaterial.file.pageIndex || {
+            unit: 'page' as const,
+            totalPages: context.attachedMaterial.pages.length,
+            pages: context.attachedMaterial.pages.map((page) => ({
+              ...page,
+              textKey: `attached-page-${page.page}`,
+              charCount: page.endChar - page.startChar,
+            })),
+          },
+        }
+      : context.attachedMaterial?.file;
+    const retrievalFiles = Array.from(new Map([
       ...(context.currentFile ? [context.currentFile] : []),
       ...(context.courseFiles || []),
-    ];
+      ...(attachedFile ? [attachedFile] : []),
+    ].map((file) => [file.id, file])).values());
+    const indexedRetrievalFiles = await Promise.all(retrievalFiles.map(async (file) => {
+      if (file.aiContext?.documentChunks?.length) return file;
+      const snapshot = await loadDocumentIndexFromDrive(context.pilotUid, file.id);
+      if (!snapshot) return file;
+      return {
+        ...file,
+        structure: file.structure || snapshot.structure,
+        aiContext: snapshot.aiContext,
+      };
+    }));
 
     // 1. Page-exact retrieval: an explicit single-page reference
     //    ("page 42", "p. 42") is answered from that page's COMPLETE
@@ -586,12 +721,19 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     // numbers that happen to live inside attached material must never
     // trigger a false page-specific answer.
     let chapterContext = '';
+    let verificationEvidence = '';
     const studentQuery = extractStudentQuery(userMessage);
-    const pageRef = findReferencedPage(studentQuery, retrievalFiles);
+    const pageRef = findReferencedPage(studentQuery, indexedRetrievalFiles);
     const askedAboutPage = referencedPageNumber(studentQuery) !== null;
     if (pageRef) {
-      const pageText = await loadPageText(context.pilotUid, pageRef.file, pageRef.page);
+      const attachedPage = context.attachedMaterial?.file?.id === pageRef.file.id
+        ? context.attachedMaterial.pages?.find((page) => page.page === pageRef.page)
+        : undefined;
+      const pageText = attachedPage
+        ? context.attachedMaterial!.content.slice(attachedPage.startChar, attachedPage.endChar)
+        : await loadPageText(context.pilotUid, pageRef.file, pageRef.page);
       if (pageText && pageText.trim()) {
+        verificationEvidence = `[${pageRef.file.name}, page ${pageRef.page}]\n${pageText}`;
         chapterContext = `The student is asking specifically about page ${pageRef.page} of "${pageRef.file.name}". This is the COMPLETE stored text of that exact page. Ground your answer strictly in this text:\n"""\n${pageText.slice(0, 80000)}\n"""\n\n`;
       } else {
         // The page exists in the index but holds no extractable text
@@ -615,31 +757,138 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     // 2. Chapter/section/slide-aware retrieval: an explicit reference
     //    loads that unit's COMPLETE stored text from IndexedDB.
     if (!chapterContext) {
-      const referenced = findReferencedChapter(userMessage, retrievalFiles);
+      let referenced = findReferencedChapter(studentQuery, indexedRetrievalFiles);
+      let sourceResolvedText: { fileId: string; text: string } | null = null;
+      const requestedUnit = studentQuery.match(/\b(chapters?|sections?|units?|modules?|lessons?|parts?|lectures?|weeks?)\s+(\d+(?:\.\d+)?)\b/i);
+      // Older indexes may contain only page ranges. Search the complete
+      // extracted source for the actual printed heading before declaring a
+      // chapter missing (and never use the old synthetic range labels).
+      if (!referenced && requestedUnit) {
+        const requestedNumber = Number(requestedUnit[2]);
+        for (const file of indexedRetrievalFiles) {
+          const attached = context.attachedMaterial?.file?.id === file.id
+            ? context.attachedMaterial.content
+            : null;
+          const fullText = attached || await loadDocumentText(context.pilotUid, file);
+          if (!fullText) continue;
+          const span = findPrintedUnitSpan(fullText, requestedNumber);
+          if (!span) continue;
+          const chapter: DocumentChapter = {
+            index: 0,
+            title: span.title,
+            textKey: file.extractedTextKey || '',
+            charCount: span.endChar - span.startChar,
+            startChar: span.startChar,
+            endChar: span.endChar,
+          };
+          referenced = { file, chapter };
+          sourceResolvedText = {
+            fileId: file.id,
+            text: fullText.slice(span.startChar, span.endChar),
+          };
+          break;
+        }
+      }
       if (referenced) {
         const { file, chapter } = referenced;
-        const chapterText = await loadExtractedText(chapter.textKey);
+        const chapterText = sourceResolvedText?.fileId === file.id
+          ? sourceResolvedText.text
+          : context.attachedMaterial?.file?.id === file.id
+          ? context.attachedMaterial.content.slice(chapter.startChar, chapter.endChar)
+          : await loadChapterText(context.pilotUid, file, chapter);
         if (chapterText && chapterText.trim()) {
-          const unit = file.structure?.unit || 'chapter';
-          chapterContext = `The student is asking specifically about ${unit} ${chapter.index} of "${file.name}" — "${chapter.title}". This is the COMPLETE stored text of that ${unit} (${chapter.charCount} characters). Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 80000)}\n"""\n\n`;
+          verificationEvidence = `[${file.name}, source heading: ${chapter.title}]\n${chapterText}`;
+          chapterContext = `The student is asking specifically about the source heading "${chapter.title}" in "${file.name}". This is the COMPLETE stored text for that indexed section (${chapter.charCount} characters). Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 80000)}\n"""\n\n`;
+        }
+      }
+      // Do not reinterpret an unavailable printed chapter as the Nth
+      // extracted segment or let a broad semantic search answer a different
+      // chapter. This is essential for books whose numbering starts at 11.
+      if (!referenced && requestedUnit && indexedRetrievalFiles.length > 0) {
+        const requestedLabel = `${requestedUnit[1]} ${requestedUnit[2]}`;
+        const names = indexedRetrievalFiles.map((file) => `"${file.name}"`).join(', ');
+        return {
+          text: `I couldn’t verify a printed heading for ${requestedLabel} in ${names}, so I can’t say what it covers from this PDF. I won’t use a different section as a substitute. If the PDF was updated, re-upload it so I can rebuild its index.`,
+          actions: [],
+          suggestedChips: [],
+        };
+      }
+    }
+
+    // 3. Search the complete extracted source before using broad chapter digests.
+    // This favors exact passages over summaries that may match only generally.
+    let attemptedDocumentTextSearch = false;
+    let unavailableSourceFile: StudyFile | null = null;
+    if (!chapterContext) {
+      const passageMatches: Array<{ file: StudyFile; passage: ReturnType<typeof findRelevantPassages>[number] }> = [];
+      for (const file of indexedRetrievalFiles) {
+        const attached = context.attachedMaterial?.file?.id === file.id
+          ? context.attachedMaterial
+          : undefined;
+        let fullText = attached?.content || '';
+        if (!fullText) {
+          try { fullText = (await loadDocumentText(context.pilotUid, file)) || ''; }
+          catch (err) { console.warn(`Could not load source text for ${file.name}:`, err); }
+        }
+        if (!fullText.trim()) {
+          if (file.extractedTextKey && (context.currentFile?.id === file.id || attached)) unavailableSourceFile = file;
+          continue;
+        }
+        attemptedDocumentTextSearch = true;
+        const pageSpans = attached?.pages?.length
+          ? attached.pages
+          : file.pageIndex?.pages || [];
+        const passages = findRelevantPassages(studentQuery, fullText, pageSpans, 4);
+        for (const passage of passages) passageMatches.push({ file, passage });
+      }
+      passageMatches.sort((a, b) => b.passage.score - a.passage.score);
+      const selected = passageMatches.slice(0, 4);
+      if (selected.length) {
+        verificationEvidence = selected.map(({ file, passage }, index) =>
+          `[Source ${index + 1}: ${file.name}${passage.page ? `, page ${passage.page}` : ''}]\n${passage.text}`
+        ).join('\n\n');
+        chapterContext = `Exact source passages retrieved from the uploaded study material. Base claims about the book on these passages, and cite the file and page when a page number is supplied:\n\n` +
+          selected.map(({ file, passage }, index) =>
+            `[Source ${index + 1}: ${file.name}${passage.page ? `, page ${passage.page}` : ''}]\n${passage.text}`
+          ).join('\n\n') + '\n\n';
+      }
+    }
+    // If exact text search has no match, use the indexed chapter digest to
+    // find a semantically related unit and ground the reply in its source text.
+    if (!chapterContext) {
+      const topicMatch = findTopicRelevantChapter(studentQuery, indexedRetrievalFiles);
+      if (topicMatch) {
+        const { file, chapter } = topicMatch;
+        const chapterText = context.attachedMaterial?.file?.id === file.id
+          ? context.attachedMaterial.content.slice(chapter.startChar, chapter.endChar)
+          : await loadChapterText(context.pilotUid, file, chapter);
+        if (chapterText && chapterText.trim()) {
+          verificationEvidence = `[${file.name}, source heading: ${chapter.title}]\n${chapterText}`;
+          chapterContext = `Retrieved the most relevant indexed section of "${file.name}" for this question — source heading: "${chapter.title}". This is the COMPLETE stored text of that section. Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 60000)}\n"""\n\n`;
         }
       }
     }
 
-    // 3. Topic-style questions ("what does the file say about X") with no
-    //    explicit chapter/page reference: retrieve the best-matching
-    //    chapter by keyword overlap and ground the answer in its full
-    //    stored text instead of guessing from the digest alone.
-    if (!chapterContext) {
-      const topicMatch = findTopicRelevantChapter(userMessage, retrievalFiles);
-      if (topicMatch) {
-        const { file, chapter } = topicMatch;
-        const chapterText = await loadExtractedText(chapter.textKey);
-        if (chapterText && chapterText.trim()) {
-          const unit = file.structure?.unit || 'chapter';
-          chapterContext = `Retrieved the most relevant ${unit} of "${file.name}" for this question — ${unit} ${chapter.index}: "${chapter.title}". This is the COMPLETE stored text of that ${unit}. Ground your answer strictly in this text:\n"""\n${chapterText.slice(0, 60000)}\n"""\n\n`;
-        }
-      }
+    if (!chapterContext && unavailableSourceFile && context.currentFile?.id === unavailableSourceFile.id) {
+      return {
+        text: `I can’t access the extracted text for "${unavailableSourceFile.name}" right now. Reconnect its Google Drive, then ask again so I can answer from the book instead of guessing.`,
+        actions: [],
+        suggestedChips: ['Reconnect Google Drive'],
+      };
+    }
+    const longAttachmentWithoutMatch =
+      !chapterContext &&
+      Boolean(context.attachedMaterial?.content && context.attachedMaterial.content.length > 20000);
+    const openFileWithoutMatch =
+      !chapterContext &&
+      attemptedDocumentTextSearch &&
+      Boolean(context.currentFile);
+    if (longAttachmentWithoutMatch || openFileWithoutMatch) {
+      return {
+        text: `I couldn’t locate a matching passage in the available text for this book. Try rephrasing the question with a key term from the book or ask about a specific page or chapter.`,
+        actions: [],
+        suggestedChips: [],
+      };
     }
 
     const recentHistory = history
@@ -650,32 +899,42 @@ Ground your advice, answers, quiz questions, flashcards, and study tasks EXCLUSI
     // Grounding rule: whenever document context is in play, answers
     // must come from that context — never from the model's imagination.
     const hasDocumentContext = Boolean(
-      chapterContext || context.currentFile || (context.courseFiles?.length ?? 0) > 0
+      chapterContext || context.attachedMaterial?.content || context.currentFile ||
+      (context.courseFiles?.length ?? 0) > 0 || (context.courseResources?.length ?? 0) > 0
     );
     const groundingRule = hasDocumentContext
-      ? 'DOCUMENT GROUNDING RULE: The student has uploaded study material in this conversation. Answer strictly from the provided document context (pre-indexed digests and any retrieved chapter/page text above). If the provided context does not contain the information needed, say so plainly and suggest which chapter/section to ask about next — never invent facts and attribute them to the document.\n\n'
+      ? 'DOCUMENT GROUNDING RULE: The student has uploaded study material in this conversation. Treat summaries and digests as retrieval hints only; they can be stale or incorrect. Make claims about the material only from the actual retrieved source text supplied below. If no relevant source passage is supplied, do not claim the file says something. Cite the actual file/page/heading when available.\n\n'
       : '';
     // Exhaustive-extraction rule: when the student explicitly asks for the
     // COMPLETE set ("chapter 5 all word list", "every term", "list all
     // phrases", 所有单词) and we retrieved that unit's full text, the model
     // must output EVERY item found in the text — never a sample or summary.
     const exhaustiveRule =
-      chapterContext && wantsExhaustiveExtraction(userMessage)
+      chapterContext && wantsExhaustiveExtraction(studentQuery)
         ? 'EXHAUSTIVE EXTRACTION REQUIRED: The student asked for the COMPLETE list (e.g. every word/term/phrase). The provided context contains the full stored text of the referenced unit. Extract and present EVERY matching item from that text — do not summarize, truncate, or give only a few examples. If the text is long, still include all items, organized cleanly.\n\n'
         : '';
     const conversationPrompt =
       groundingRule +
       exhaustiveRule +
       chapterContext +
+      (context.attachedMaterial?.content &&
+        !chapterContext &&
+        context.attachedMaterial.content.length <= 20000
+        ? `Attached study material (${context.attachedMaterial.name}) — use the complete short source text:\n"""${context.attachedMaterial.content}"""\n\n`
+        : '') +
       (recentHistory
-        ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current message:\n${userMessage}`
-        : userMessage);
+        ? `Recent conversation history (oldest to newest):\n${recentHistory}\n\nStudent's current question:\n${studentQuery}`
+        : studentQuery);
+    if (!verificationEvidence && context.attachedMaterial?.content && context.attachedMaterial.content.length <= 20000) {
+      verificationEvidence = `[${context.attachedMaterial.name}]\n${context.attachedMaterial.content}`;
+    }
     const systemInstruction = `${contextPrompt}
 Today's Date: ${todayDateKey}.
 Use the recent conversation history to understand references and follow-up questions. Continue the established topic unless the student clearly changes subjects. Answer the specific question first; do not redirect to scheduling or generic study suggestions unless requested. Keep replies consistent with prior explanations, and ask a brief clarifying question only when the thread does not provide enough context.
 Format your reply with clean markdown: put each list item on its own line (numbered items as "1. ", bullet items as "- "), bold key terms with **double asterisks**, and use short headings when helpful. Never run list items together in one paragraph.
 Respond warmly, concisely, and supportively. Keep responses focused on actionable student study tactics.
 ${enableSearch ? 'Google Search Grounding is enabled. Provide factual, cited answers.' : ''}
+When answering from an uploaded document, the retrieved source text is authoritative. Treat summaries and prior chat messages as hints only. A plausible answer is not a verified answer.
 
 CRITICAL AI CAPABILITY - SCHEDULE & TASK ACTIONS:
 You have direct authorization to add, edit, reschedule, or delete tasks and calendar blocks for the student.
@@ -708,13 +967,17 @@ When the user asks to add, schedule, move, edit, or delete any task or calendar 
 9. Add Module to Course:
 [ACTION: {"type": "create_module", "targetCourseCode": "CS101", "targetCourseId": "course-123", "title": "Week 4: Memory Management", "description": "Pointers, stack vs heap, and dynamic memory allocation"}]
 
-Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only create an action when the student clearly asks you to add, move, edit, schedule, break down, or remove something.`;
+Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only create an action when the student clearly asks you to add, move, edit, schedule, break down, or remove something.
+${context.allowActions === false ? 'READ-ONLY TUTOR MODE OVERRIDE: Do not create, edit, schedule, or delete tasks or events. Never emit an [ACTION] block.' : ''}`;
 
     try {
       let rawText = '';
       let citationsText = '';
 
-      if (enableSearch && provider.type === 'gemini') {
+      // An uploaded source takes priority over web results. Search is used
+      // for questions without source evidence, or as an explicitly labeled
+      // fallback after the source answer fails verification.
+      if (enableSearch && provider.type === 'gemini' && !verificationEvidence) {
         const gemini = new GeminiAIProvider(config.apiKeys.gemini);
         const groundedRes = await gemini.generateGroundedText(conversationPrompt, systemInstruction);
         rawText = groundedRes.text;
@@ -730,6 +993,50 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
         rawText = await provider.generateText(conversationPrompt, systemInstruction);
       }
 
+      if (verificationEvidence.trim()) {
+        const draft = rawText.replace(/\[ACTION:\s*\{[\s\S]*?\}\]/g, '').trim();
+        const verifyPrompt = `Check whether the DRAFT ANSWER is fully supported by the SOURCE EVIDENCE. Treat the source as the only authority for claims about the uploaded file. Do not use outside knowledge to fill gaps. A chapter number, title, definition, event, or detail absent from the evidence is unsupported. If the question asks what the file says, reject claims that are merely plausible.
+
+Return JSON only: {"supported": boolean, "reason": "short reason"}.
+
+QUESTION:\n${studentQuery.slice(0, 4000)}
+
+SOURCE EVIDENCE:\n"""\n${verificationEvidence.slice(0, 60000)}\n"""
+
+DRAFT ANSWER:\n"""\n${draft.slice(0, 12000)}\n"""`;
+        let isSupported = false;
+        let verificationReason = 'The answer could not be checked against the uploaded source.';
+        try {
+          const verificationRaw = await provider.generateText(
+            verifyPrompt,
+            'You are a strict evidence checker. A claim is supported only when the supplied source directly entails it. Return the requested JSON and nothing else.'
+          );
+          const json = verificationRaw.match(/\{[\s\S]*\}/)?.[0];
+          if (json) {
+            const verdict = JSON.parse(json) as { supported?: unknown; reason?: unknown };
+            isSupported = verdict.supported === true;
+            verificationReason = typeof verdict.reason === 'string' ? verdict.reason : verificationReason;
+          }
+        } catch (verifyError) {
+          console.warn('Document answer verification failed:', verifyError);
+        }
+
+        if (!isSupported) {
+          const generalPrompt = `The uploaded document did not support a reliable answer to this question. Answer the student's question using general knowledge only. Do not claim that your answer comes from the uploaded file. If the question is specifically asking what an absent chapter or section says, say that the document does not contain enough evidence to answer that.\n\nQuestion: ${studentQuery}\n\nSource-check note: ${verificationReason}`;
+          const generalInstruction = 'Separate general knowledge from document-based claims. Never invent what an uploaded book contains. Be direct when the document evidence is missing.';
+          if (enableSearch && provider.type === 'gemini') {
+            const groundedRes = await new GeminiAIProvider(config.apiKeys.gemini).generateGroundedText(generalPrompt, generalInstruction);
+            rawText = `**Document check:** I couldn’t verify an answer from the uploaded file.\n\n**General answer:** ${groundedRes.text}`;
+            if (groundedRes.sources.length) {
+              citationsText = `\n\n🔍 **Web sources:**\n${groundedRes.sources.slice(0, 4).map((source, index) => `${index + 1}. [${source.title}](${source.uri})`).join('\n')}`;
+            }
+          } else {
+            const generalAnswer = await provider.generateText(generalPrompt, generalInstruction);
+            rawText = `**Document check:** I couldn’t verify an answer from the uploaded file.\n\n**General answer:** ${generalAnswer}`;
+          }
+        }
+      }
+
       // Extract actions if present
       const actions: AIActionProposal[] = [];
       const actionMatches = rawText.match(/\[ACTION:\s*({[\s\S]*?})\]/g);
@@ -737,8 +1044,9 @@ Always pick realistic, valid YYYY-MM-DD dates and HH:MM 24-hour times. Only crea
 
       if (actionMatches) {
         actionMatches.forEach((match, idx) => {
+          cleanText = cleanText.replace(match, '').trim();
+          if (context.allowActions === false) return;
           try {
-            cleanText = cleanText.replace(match, '').trim();
             const jsonStr = match.replace(/^\[ACTION:\s*/, '').replace(/\]$/, '');
             const parsed = JSON.parse(jsonStr);
 
@@ -1561,7 +1869,9 @@ Return valid JSON only in this format:
     config: AIProviderConfig
   ): Promise<ResourceAIContext> {
     const provider = this.getProvider(config, 'routine');
-    const fullContent = (material.content || '').trim();
+    const sourceContent = material.content || '';
+    const contentOffset = sourceContent.length - sourceContent.trimStart().length;
+    const fullContent = sourceContent.trim();
     const courseLabel = material.courseCode || 'General study';
 
     if (!fullContent) {
@@ -1572,17 +1882,19 @@ Return valid JSON only in this format:
     // Process all chunks to preserve complete document context.
     const chunks = splitIntoChunks(fullContent);
 
-    const analyzeChunk = async (chunk: string, index: number, total: number): Promise<ChunkAnalysis | null> => {
+    const analyzeChunk = async (chunk: TextChunk, index: number, total: number): Promise<ChunkAnalysis | null> => {
       const isSection = total > 1;
       const prompt = `STRICT COURSE INDIVIDUALITY RULE:
 Perform an in-depth academic indexing analysis of this ${isSection ? `section` : 'newly added learning material'}${isSection ? ` (part ${index + 1} of ${total} of the document)` : ''} specifically for the course "${courseLabel}".
 Title: "${material.title}"
 Type: ${material.type}
 Course: ${courseLabel}
-${isSection ? `Document section ${index + 1}/${total}:` : 'Full document content:'}
+${isSection ? `Document section ${index + 1}/${total} (internal processing position only):` : 'Full document content:'}
 """
-${chunk}
+${chunk.text}
 """
+
+Preserve every chapter, lesson, unit, and page number exactly as printed in the supplied source. Internal section positions and page ranges are not chapter numbers. Never infer, renumber, or invent chapter numbers or a chapter count; if the source does not state a number, call it an unnumbered section.
 
 Analyze and return valid JSON only with this exact shape:
 {
@@ -1610,7 +1922,7 @@ Analyze and return valid JSON only with this exact shape:
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed) {
+          if (parsed && String(parsed.sectionDigest || '').trim()) {
             return {
               summary: String(parsed.summary || ''),
               keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map(String) : [],
@@ -1633,13 +1945,13 @@ Analyze and return valid JSON only with this exact shape:
     };
 
     try {
-      const chunkResults: ChunkAnalysis[] = [];
+      const chunkResults: IndexedChunkAnalysis[] = [];
       for (let i = 0; i < chunks.length; i++) {
         const result = await analyzeChunk(chunks[i], i, chunks.length);
-        if (result) chunkResults.push(result);
+        if (result) chunkResults.push({ chunk: chunks[i], analysis: result });
       }
       if (chunkResults.length > 0) {
-        const merged = mergeChunkAnalyses(chunkResults, material);
+        const merged = mergeChunkAnalyses(chunkResults, material, chunks.length, contentOffset);
         merged.chapters = await this.analyzeChapters(material, fullContent, provider, courseLabel);
         return merged;
       }
@@ -1676,11 +1988,11 @@ Analyze and return valid JSON only with this exact shape:
         continue;
       }
       const chapterText = fullContent.slice(chapter.startChar, chapter.endChar).slice(0, 24000);
-      const label = unit === 'slide' ? `Slide ${chapter.slide}` : `${unit === 'page-range' ? 'Page range' : 'Chapter'} ${chapter.index}`;
+      const label = unit === 'slide' ? `Slide ${chapter.slide}` : `Source heading: ${chapter.title}`;
       try {
         const raw = await provider.generateText(
-          `You are indexing ONE ${unit} of the document "${material.title}" for the course "${courseLabel}".
-${label}: "${chapter.title}"
+          `You are indexing ONE source section of the document "${material.title}" for the course "${courseLabel}".
+${label}. The numeric position in the internal index is not the printed chapter number.
 Complete text of this ${unit}:
 """
 ${chapterText}
@@ -1691,7 +2003,7 @@ Return valid JSON only with this exact shape:
   "digest": "A 100-150 word study digest covering ONLY this ${unit} — its key definitions, theorems, formulas, arguments and takeaways for ${courseLabel}.",
   "keyConcepts": ["Concept from this ${unit}", "Another concept"]
 }`,
-          `You are an expert research librarian indexing study material for "${courseLabel}". Digest ONLY this ${unit}, never other parts of the document.`
+          `You are an expert research librarian indexing study material for "${courseLabel}". Digest ONLY this source section, preserve its printed heading, and never infer a chapter number from its position.`
         );
         const jsonMatch = raw.match(/\{[\s\S]*\}/);
         if (jsonMatch) {

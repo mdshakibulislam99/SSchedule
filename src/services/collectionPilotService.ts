@@ -175,7 +175,9 @@ function readQueue<V>(key: string): V[] {
 function writeQueue<V>(key: string, items: V[]): void {
   try {
     localStorage.setItem(key, JSON.stringify(items));
-  } catch {}
+  } catch (error) {
+    throw new Error('Could not save the pending Google Drive change on this device. Keep this app open and reconnect before closing it.', { cause: error });
+  }
 }
 
 export function getPendingCollectionChanges<T>(
@@ -598,7 +600,18 @@ export async function retryPendingCollectionChanges<T extends PilotRecord>(
         change.baseRevision !== undefined &&
         existing.record.revision > change.baseRevision
       ) {
-        continue; // newer revision already landed — never roll back
+        if (change.record) {
+          await backend.preserveConflict({
+            collection,
+            recordId: change.recordId,
+            baseRevision: change.baseRevision,
+            driveRevision: existing.record.revision,
+            localVersion: change.record,
+            detectedAt: new Date().toISOString(),
+            deviceId: getDeviceId(),
+          });
+        }
+        continue; // conflict copy is durable; never roll back a newer version
       }
       if (
         change.op === 'create' &&
@@ -607,6 +620,20 @@ export async function retryPendingCollectionChanges<T extends PilotRecord>(
         JSON.stringify(existing.record.payload) === JSON.stringify(change.record)
       ) {
         continue; // idempotent duplicate-create
+      }
+      if (change.op === 'create' && existing && !existing.record.deletedAt) {
+        if (change.record) {
+          await backend.preserveConflict({
+            collection,
+            recordId: change.recordId,
+            baseRevision: existing.record.revision,
+            driveRevision: existing.record.revision,
+            localVersion: change.record,
+            detectedAt: new Date().toISOString(),
+            deviceId: getDeviceId(),
+          });
+        }
+        continue; // do not let a retried create overwrite another device's record
       }
       const envelope = createRecordEnvelope(change.record, {
         entityType,

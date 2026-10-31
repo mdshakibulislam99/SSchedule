@@ -21,8 +21,20 @@ const STOPWORDS = new Set([
  * removed, 2+ chars). Exported for tests.
  */
 export function tokenizeQuery(message: string): string[] {
-  const tokens = (message || '').toLowerCase().match(/[a-z0-9][a-z0-9'’-]*/g) || [];
-  return tokens.filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+  const words = (message || '').toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || [];
+  const tokens: string[] = [];
+  for (const word of words) {
+    // Chinese/Japanese text commonly has no spaces. Add character bigrams
+    // so adjacent topic terms can still match extracted document text.
+    if (/\p{Script=Han}/u.test(word) && word.length > 2) {
+      for (let i = 0; i < word.length - 1; i++) tokens.push(word.slice(i, i + 2));
+    } else if (word.length >= 2 && !STOPWORDS.has(word)) {
+      tokens.push(word);
+    } else if (/\p{Script=Han}/u.test(word)) {
+      tokens.push(word);
+    }
+  }
+  return tokens;
 }
 
 /**
@@ -90,9 +102,7 @@ export function findTopicRelevantChapter(
 ): { file: StudyFile; chapter: DocumentChapter; score: number } | null {
   let best: { file: StudyFile; chapter: DocumentChapter; score: number } | null = null;
   for (const file of files) {
-    const chapters = file.structure?.chapters?.length
-      ? file.structure.chapters
-      : file.aiContext?.chapters;
+    const chapters = mergeIndexedChapters(file);
     if (!chapters || chapters.length === 0) continue;
     for (const chapter of chapters) {
       const score = scoreChapterForMessage(message, chapter);
@@ -100,8 +110,120 @@ export function findTopicRelevantChapter(
         best = { file, chapter, score };
       }
     }
+    if (file.extractedTextKey) {
+      for (const indexed of file.aiContext?.documentChunks || []) {
+        const chapter: DocumentChapter = {
+          index: indexed.index,
+          title: indexed.summary || `Document section ${indexed.index}`,
+          textKey: file.extractedTextKey,
+          charCount: indexed.endChar - indexed.startChar,
+          startChar: indexed.startChar,
+          endChar: indexed.endChar,
+          digest: indexed.digest,
+          keyConcepts: indexed.keyConcepts,
+        };
+        const score = scoreChapterForMessage(message, chapter);
+        if (score > (best?.score ?? 0)) best = { file, chapter, score };
+      }
+    }
   }
   return best && best.score >= minScore ? best : null;
+}
+
+export interface RelevantPassage {
+  startChar: number;
+  endChar: number;
+  text: string;
+  score: number;
+  page?: number;
+}
+
+/**
+ * Finds exact source windows when a question's wording is missing from AI
+ * summaries or a document has no useful chapter headings.
+ */
+export function findRelevantPassages(
+  message: string,
+  text: string,
+  pageSpans: Array<{ page: number; startChar: number; endChar: number }> = [],
+  limit = 4,
+  maxChars = 2600,
+): RelevantPassage[] {
+  if (!text?.trim() || limit < 1) return [];
+  const terms = [...new Set(tokenizeQuery(message))];
+  if (terms.length === 0) return [];
+  const lowerText = text.toLowerCase();
+  const weights = new Map<string, number>();
+  for (const term of terms) {
+    const count = Math.max(0, lowerText.split(term).length - 1);
+    if (count > 0) weights.set(term, Math.log(1 + (lowerText.length + 1) / (count + 1)));
+  }
+  if (weights.size === 0) return [];
+
+  const segments: RelevantPassage[] = [];
+  const addRange = (rangeStart: number, rangeEnd: number, page?: number) => {
+    const start = Math.max(0, Math.min(text.length, rangeStart));
+    const end = Math.max(start, Math.min(text.length, rangeEnd));
+    if (end <= start) return;
+    let windowStart = start;
+    while (windowStart < end) {
+      let windowEnd = Math.min(windowStart + maxChars, end);
+      if (windowEnd < end) {
+        const lineBreak = text.lastIndexOf('\n', windowEnd);
+        const sentenceBreak = text.lastIndexOf('. ', windowEnd);
+        const preferred = Math.max(lineBreak, sentenceBreak);
+        if (preferred > windowStart + 500) windowEnd = preferred + 1;
+      }
+      const passage = text.slice(windowStart, windowEnd).trim();
+      if (passage) segments.push({ startChar: windowStart, endChar: windowEnd, text: passage, score: 0, page });
+      if (windowEnd >= end) break;
+      windowStart = Math.max(windowStart + 600, windowEnd - 350);
+    }
+  };
+
+  const validSpans = pageSpans.filter((span) =>
+    Number.isFinite(span.startChar) && Number.isFinite(span.endChar) &&
+    span.startChar >= 0 && span.endChar > span.startChar && span.startChar < text.length
+  );
+  if (validSpans.length > 0) {
+    for (const span of validSpans) addRange(span.startChar, span.endChar, span.page);
+  } else {
+    addRange(0, text.length);
+  }
+
+  for (const passage of segments) {
+    const lowerPassage = passage.text.toLowerCase();
+    let matched = 0;
+    for (const [term, weight] of weights) {
+      if (lowerPassage.includes(term)) { passage.score += weight; matched += 1; }
+    }
+    passage.score += matched / Math.max(weights.size, 1) * 2;
+  }
+  const queryPhrase = message.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const results = segments.filter((passage) => passage.score > 0);
+  for (const passage of results) {
+    const normalizedPassage = passage.text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ');
+    if (queryPhrase.length >= 8 && normalizedPassage.includes(queryPhrase)) passage.score += 4;
+  }
+  results.sort((a, b) => b.score - a.score || a.startChar - b.startChar);
+  const selected: RelevantPassage[] = [];
+  for (const passage of results) {
+    if (selected.some((current) => current.startChar < passage.endChar && passage.startChar < current.endChar)) continue;
+    selected.push(passage);
+    if (selected.length >= limit) break;
+  }
+  return selected.sort((a, b) => a.startChar - b.startChar);
+}
+/** Keep physical offsets/text keys from extraction and enrich them with AI metadata. */
+export function mergeIndexedChapters(file: StudyFile): DocumentChapter[] {
+  const structural = file.structure?.chapters || [];
+  const enriched = file.aiContext?.chapters || [];
+  if (structural.length === 0) return enriched;
+  const byIndex = new Map(enriched.map((chapter) => [chapter.index, chapter]));
+  return structural.map((chapter) => ({ ...byIndex.get(chapter.index), ...chapter,
+    digest: chapter.digest || byIndex.get(chapter.index)?.digest,
+    keyConcepts: chapter.keyConcepts || byIndex.get(chapter.index)?.keyConcepts,
+  }));
 }
 
 /**

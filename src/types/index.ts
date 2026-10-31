@@ -126,6 +126,16 @@ export interface DocumentStructure {
   chapters: DocumentChapter[];
 }
 
+/** Compact AI index for one contiguous range of extracted document text. */
+export interface DocumentKnowledgeChunk {
+  index: number;
+  startChar: number;
+  endChar: number;
+  summary: string;
+  digest: string;
+  keyConcepts: string[];
+}
+
 /** Character span of one physical page inside the full extracted text. */
 export interface DocumentPageSpan {
   /** 1-based page number. */
@@ -155,7 +165,7 @@ export interface DocumentPageIndex {
 }
 
 export interface ResourceAIContext {
-  status: 'pending' | 'analyzing' | 'ready' | 'error';
+  status: 'pending' | 'analyzing' | 'ready' | 'partial' | 'error';
   analyzedAt?: string;
   summary: string;
   keyConcepts: string[];
@@ -168,6 +178,8 @@ export interface ResourceAIContext {
   }>;
   /** Per-chapter digests when the document was structurally indexed. */
   chapters?: DocumentChapter[];
+  /** Queryable per-range summaries for documents with no useful headings. */
+  documentChunks?: DocumentKnowledgeChunk[];
 }
 
 export interface CourseResource {
@@ -415,6 +427,12 @@ export interface StudyFile {
   structure?: DocumentStructure;
   /** Per-page index (PDFs / slide decks): every page addressable by number. */
   pageIndex?: DocumentPageIndex;
+  /** Where the complete extracted text can be restored from. */
+  documentStorageStatus?: 'saving' | 'device' | 'drive' | 'device-and-drive' | 'session-only' | 'failed';
+  /** Where the queryable AI index is backed up. */
+  documentIndexStorageStatus?: 'saving' | 'drive' | 'firebase' | 'failed';
+  /** Whether the original file bytes are backed up in Drive. */
+  originalStorageStatus?: 'saving' | 'device' | 'drive' | 'failed';
   aiContext?: ResourceAIContext;
 }
 
@@ -426,6 +444,8 @@ export interface StudyFile {
  */
 export interface StudyFileUpload extends Partial<StudyFile> {
   extractedContent?: string;
+  /** Original bytes, passed through so Drive backup can succeed if IndexedDB is full. */
+  originalBlob?: Blob;
   structure?: DocumentStructure;
   /** Per-page spans from the extractor (PDFs/slide decks). */
   pages?: DocumentPageSpan[] | null;

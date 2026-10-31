@@ -308,6 +308,8 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   metrics: ProgressMetrics | null;
   calendarSync: GoogleCalendarSyncState | null;
   driveSync: GoogleDriveSyncState | null;
+  /** Collections that could not be read; migration must stop if this is non-empty. */
+  collectionReadErrors: string[];
 }> {
   // Small helpers so every collection can be fetched in parallel — a
   // sequential chain of getDocs() would take many round trips on mobile.
@@ -318,6 +320,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
   // which made a returning user look like a brand-new account and
   // sent them back through onboarding. Each read now degrades to its
   // empty value on its own so the rest of the data still loads.
+  const collectionReadErrors: string[] = [];
   const readCol = async <T,>(name: string): Promise<T[]> => {
     try {
       const snap = await getDocs(collection(db, 'users', userId, name));
@@ -325,6 +328,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
       snap.forEach((d) => out.push(d.data() as T));
       return out;
     } catch (err) {
+      collectionReadErrors.push(name);
       console.warn(
         `[Firestore] Restore: failed to read '${name}' for ${userId}:`,
         err,
@@ -415,6 +419,7 @@ export async function fetchUserDataFromFirestore(userId: string): Promise<{
     metrics,
     calendarSync,
     driveSync,
+    collectionReadErrors,
   };
 }
 

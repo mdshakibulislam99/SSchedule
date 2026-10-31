@@ -620,7 +620,13 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
     const type = typeFromFilename(file.name);
     const fileSize = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
     const mime = file.type || undefined;
-    const fileStorageKey = await saveFileBlob(file, `file-${crypto.randomUUID()}`);
+    let fileStorageKey = `file-${crypto.randomUUID()}`;
+    try {
+      await saveFileBlob(file, fileStorageKey);
+    } catch (err) {
+      console.warn('Original file could not be persisted locally:', err);
+      setUploadNotice(`The text can still be analyzed, but the original file could not be saved on this device.`);
+    }
 
     // Automatically extract textual context for instant AI understanding & permanent context caching.
     // The FULL text is persisted with the file record (IndexedDB); the resource
@@ -646,6 +652,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
       type: studyFileType(file.name),
       courseCode: course.code,
       fileStorageKey,
+      originalBlob: file,
       extractedContent: extractedText,
       structure: structure ?? undefined,
       pages: pages ?? null,
@@ -712,6 +719,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
         keyTopics: [course.code, 'Course library'],
         dataUrl: review.dataUrl,
         fileStorageKey: review.fileStorageKey,
+        originalBlob: review.file,
       })?.id;
     }
 
@@ -1750,7 +1758,7 @@ Be concise, practical, and highly clear. If you recommend a specific next study 
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.markdown,.csv,.json,.log,.png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.mov,.url"
+              accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.csv,.json,.log,.ts,.js,.tsx,.jsx,.py,.java,.c,.cpp,.html,.css,.xml,.yaml,.yml,.rst,.tex"
               onChange={handleFilePicked}
             />
 

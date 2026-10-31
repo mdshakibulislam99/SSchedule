@@ -134,12 +134,15 @@ export function assembleStructure(
   let fullText = '';
   const chapters: DocumentChapter[] = sections.map((section, i) => {
     const startChar = fullText.length;
-    const header =
-      unit === 'slide'
-        ? `\n[Slide ${section.slide ?? i + 1}]: ${section.title}\n`
-        : section.startPage != null
-          ? `\n[Chapter ${i + 1}${section.endPage && section.endPage !== section.startPage ? ` · Pages ${section.startPage}–${section.endPage}` : section.startPage ? ` · Page ${section.startPage}` : ''}]: ${section.title}\n`
-          : `\n[Section ${i + 1}]: ${section.title}\n`;
+    // `i + 1` is only our internal storage position. Never present it as a
+    // printed chapter number: books can begin at Chapter 11 (or use lessons,
+    // units, etc.), and generated numbering contaminates the AI index.
+    const pageLabel = section.startPage != null
+      ? ` · Pages ${section.startPage}${section.endPage && section.endPage !== section.startPage ? `–${section.endPage}` : ''}`
+      : '';
+    const header = unit === 'slide'
+      ? `\n[Slide ${section.slide ?? i + 1}: ${section.title}]\n`
+      : `\n[Source heading: ${section.title || 'Detected segment'}${pageLabel}]\n`;
     fullText += `${header}${section.text}\n`;
     return {
       index: i + 1,
@@ -205,6 +208,9 @@ function looksLikeHeading(line: PdfLine, bodySize: number): boolean {
   if (len < 2 || len > 140) return false;
   // Explicit structural labels: "Chapter 6", "Unit 3.2", "Appendix A", "Week 4"
   if (/^(chapter|unit|part|module|lecture|week|appendix|lesson)\s+[0-9]+[a-z]?/i.test(text)) return true;
+  // HSK and other Chinese course books use numbered lesson headings such
+  // as 第十一课 / 第11课. Preserve these as source headings for retrieval.
+  if (/第\s*[一二三四五六七八九十百零〇\d]+\s*(?:课|課|章|单元|單元)/.test(text)) return true;
   // Markdown-style heading
   if (/^#{1,6}\s+\S/.test(text)) return true;
   // Numbered headings like "6.2 Graph Traversal" (must also be visually larger)

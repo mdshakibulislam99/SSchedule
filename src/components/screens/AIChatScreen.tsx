@@ -44,6 +44,7 @@ import {
 import { AIOrchestrator, AIExecutionContext } from '../../services/aiOrchestrator';
 import { getLocalDateKey } from '../../utils/dates';
 import { extractDocumentFromFile } from '../../utils/fileExtractor';
+import { saveFileBlob } from '../../utils/fileStorage';
 import { StudyStorage } from '../../utils/storage';
 
 interface AIChatScreenProps {
@@ -63,7 +64,7 @@ interface AIChatScreenProps {
   onClearContext?: () => void;
   onOpenVoiceModal: () => void;
   onExecuteAction: (action: AIActionProposal) => void;
-  onUploadFile?: (file: StudyFileUpload) => void;
+  onUploadFile?: (file: StudyFileUpload) => StudyFile | void;
   config: AIProviderConfig;
   allTasks: Task[];
   schedule?: ScheduleEvent[];
@@ -104,6 +105,15 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   const [currentConversationId, setCurrentConversationId] = useState<string>(() => `conv-${Date.now()}`);
   const [conversationToDelete, setConversationToDelete] = useState<AIConversation | null>(null);
 
+  useEffect(() => {
+    const refreshConversations = (event: Event) => {
+      const updated = (event as CustomEvent<AIConversation[]>).detail;
+      if (Array.isArray(updated)) setConversations(updated);
+    };
+    window.addEventListener('sschedule:conversations-updated', refreshConversations);
+    return () => window.removeEventListener('sschedule:conversations-updated', refreshConversations);
+  }, []);
+
   // Helper to extract clean concise course title, e.g. CS101, Calculus
   const getShortCourseTitle = (c: Course): string => {
     if (c.code?.toUpperCase() === 'CS101') return 'CS101';
@@ -124,7 +134,13 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Attached dynamic context from chat
-  const [attachedMaterial, setAttachedMaterial] = useState<{ name: string; content?: string } | null>(null);
+  const [attachedMaterial, setAttachedMaterial] = useState<{
+    name: string;
+    content?: string;
+    structure?: StudyFileUpload['structure'];
+    pages?: StudyFileUpload['pages'];
+    file?: StudyFile;
+  } | null>(null);
   const [attachedTask, setAttachedTask] = useState<Task | null>(contextTask || null);
 
   // Auto-detect course if explicitly opened with a contextTask or contextFile
@@ -393,10 +409,25 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         return;
       }
 
+      let fileStorageKey = `file-${crypto.randomUUID()}`;
+      try {
+        await saveFileBlob(file, fileStorageKey);
+      } catch (err) {
+        console.warn('Original chat attachment could not be saved locally:', err);
+      }
+
       const newStudyFile: StudyFileUpload = {
         name: file.name,
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-        type: file.name.endsWith('.pdf') ? 'pdf' : 'text',
+        type: file.name.toLowerCase().endsWith('.pdf')
+          ? 'pdf'
+          : file.name.toLowerCase().endsWith('.docx')
+            ? 'docx'
+            : file.name.toLowerCase().endsWith('.pptx')
+              ? 'ppt'
+              : 'text',
+        fileStorageKey,
+        originalBlob: file,
         extractedContent: extracted,
         structure: structure ?? undefined,
         pages: pages ?? null,
@@ -404,11 +435,14 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         summary: `Document uploaded during study chat: ${file.name}.`,
       };
 
-      if (onUploadFile) {
-        onUploadFile(newStudyFile);
-      }
-
-      setAttachedMaterial({ name: file.name, content: extracted });
+      const savedFile = onUploadFile?.(newStudyFile);
+      setAttachedMaterial({
+        name: file.name,
+        content: extracted,
+        structure: structure ?? undefined,
+        pages: pages ?? null,
+        file: savedFile || undefined,
+      });
       setIsPlusMenuOpen(false);
       setPlusMenuTab('main');
 
@@ -470,15 +504,17 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         user,
         energyLevel: user?.energyLevel,
         pilotUid: user?.firebaseUid,
+        attachedMaterial: attachedMaterial?.content
+          ? {
+              name: attachedMaterial.name,
+              content: attachedMaterial.content,
+              file: attachedMaterial.file || (contextFile?.name === attachedMaterial.name ? contextFile : undefined),
+              pages: attachedMaterial.pages,
+            }
+          : undefined,
       };
 
-      // Add attached material text into the prompt context if present
-      let messageToSend = text;
-      if (attachedMaterial?.content) {
-        messageToSend = `[ATTACHED STUDY MATERIAL: "${attachedMaterial.name}"]\n${attachedMaterial.content.slice(0, 20000)}\n\nStudent Query: ${text}`;
-      }
-
-      const aiResponse = await AIOrchestrator.chatWithContext(messageToSend, messages, context, config);
+      const aiResponse = await AIOrchestrator.chatWithContext(text, messages, context, config);
 
       const aiMsg: AIMessage = {
         id: `ai-${Date.now()}`,
@@ -561,7 +597,7 @@ export const AIChatScreen: React.FC<AIChatScreenProps> = ({
         type="file"
         ref={fileInputRef}
         onChange={handleFileUpload}
-        accept=".pdf,.docx,.txt,.md,.json,image/*"
+        accept=".pdf,.docx,.pptx,.txt,.md,.markdown,.json,.csv,.ts,.js,.tsx,.py,.java,.c,.cpp,.html,.css,.xml,.yaml,.yml,.rst,.tex"
         className="hidden"
       />
 

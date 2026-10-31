@@ -2,6 +2,10 @@ import { useEffect, useRef } from 'react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { offlineSyncService } from '../services/offlineSyncService';
 import type { OfflineSyncCollection } from '../types';
+import { isCollectionDriveAuthoritative } from '../services/storageInterface';
+import { deleteCollectionRecord } from '../services/collectionPilotService';
+import { COLLECTION_MAPPINGS } from '../types/driveStorage';
+import { deleteTaskOnDrive } from '../services/taskPilotService';
 
 /**
  * Mirrors local deletions into Firestore for one collection.
@@ -12,7 +16,9 @@ import type { OfflineSyncCollection } from '../types';
  * from the cloud instead of resurrecting on the next restore.
  *
  * The first run after a sign-in only establishes the snapshot without
- * deleting, so the login-time restore can never wipe cloud data.
+ * deleting, so the login-time restore can never wipe cloud data. Restore
+ * and sign-out pause this hook; an intentional clear of the last item still
+ * produces a remote tombstone.
  */
 export function useCloudDeleteSync<T extends { id: string }>(
   items: T[],
@@ -31,12 +37,24 @@ export function useCloudDeleteSync<T extends { id: string }>(
     const nextIds = new Set(items.map((item) => item.id));
     const knownIds = knownIdsRef.current;
 
-    // Safety guard: only delete individual items when transitioning between non-empty states.
-    // If the entire collection was cleared (nextIds.size === 0), that happens on logout,
-    // account switch, or state resets, and must NEVER wipe the user's remote cloud database.
-    if (knownIds && knownIds.size > 0 && nextIds.size > 0) {
+    if (knownIds && knownIds.size > 0) {
       knownIds.forEach((id) => {
-        if (!nextIds.has(id)) offlineSyncService.enqueueDelete(uid, collection, id);
+        if (nextIds.has(id)) return;
+        if (isCollectionDriveAuthoritative(collection, uid)) {
+          const deletion = collection === 'tasks'
+            ? deleteTaskOnDrive(uid, id)
+            : deleteCollectionRecord(
+              collection,
+              COLLECTION_MAPPINGS[collection]?.entityType ?? collection,
+              uid,
+              id,
+            );
+          void deletion.catch((error) => {
+            console.warn(`Drive deletion failed for ${collection}/${id}:`, error);
+          });
+        } else {
+          offlineSyncService.enqueueDelete(uid, collection, id);
+        }
       });
     }
     knownIdsRef.current = nextIds;

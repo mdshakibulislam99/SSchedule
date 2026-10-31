@@ -156,6 +156,8 @@ export interface DriveService {
    * name-contains clause (used by the per-page document index mirror).
    */
   listFolderFiles(folderPath: string, nameContains?: string): Promise<DriveFileRef[]>;
+  /** Removes matching files from one logical folder. */
+  deleteFolderFiles(folderPath: string, nameStartsWith: string, keepNames?: string[]): Promise<number>;
   /** Downloads the raw text of any Drive file by id. */
   readFileText(fileId: string): Promise<string>;
   recoverStaging(): Promise<string[]>;
@@ -649,11 +651,17 @@ export function createDriveService(options: DriveServiceOptions): DriveService {
         throw new DriveApiError(400, `Unknown collection: ${collection}`);
       }
       const folderId = folderIds[mapping.driveFolder];
-      const res = await api.listFiles(
-        `name contains '.json' and '${folderId}' in parents`,
-        { pageSize: 200 },
-      );
-      return res.files;
+      const files: DriveFileRef[] = [];
+      let pageToken: string | undefined;
+      do {
+        const res = await api.listFiles(
+          `name contains '.json' and '${folderId}' in parents and trashed = false`,
+          { pageSize: 200, pageToken },
+        );
+        files.push(...res.files);
+        pageToken = res.nextPageToken;
+      } while (pageToken);
+      return files;
     },
 
     async readPartition(collection: string, fileId: string): Promise<DrivePartition> {
@@ -719,11 +727,28 @@ export function createDriveService(options: DriveServiceOptions): DriveService {
         throw new DriveApiError(400, `Unknown Drive folder path: ${folderPath}`);
       }
       const nameClause = nameContains ? ` and name contains '${nameContains}'` : '';
-      const res = await api.listFiles(
-        `'${folderId}' in parents and trashed = false${nameClause}`,
-        { pageSize: 200 },
-      );
-      return res.files;
+      const files: DriveFileRef[] = [];
+      let pageToken: string | undefined;
+      do {
+        const res = await api.listFiles(
+          `'${folderId}' in parents and trashed = false${nameClause}`,
+          { pageSize: 200, pageToken },
+        );
+        files.push(...res.files);
+        pageToken = res.nextPageToken;
+      } while (pageToken);
+      return files;
+    },
+
+    async deleteFolderFiles(folderPath: string, nameStartsWith: string, keepNames: string[] = []): Promise<number> {
+      const refs = await this.listFolderFiles(folderPath, nameStartsWith);
+      let deleted = 0;
+      for (const ref of refs) {
+        if (!ref.name.startsWith(nameStartsWith) || keepNames.includes(ref.name)) continue;
+        await api.deleteFile(ref.id);
+        deleted += 1;
+      }
+      return deleted;
     },
 
     async readFileText(fileId: string): Promise<string> {

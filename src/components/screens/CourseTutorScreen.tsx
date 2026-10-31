@@ -26,15 +26,21 @@ import {
   CourseResource,
   CourseTutorMessage,
   Task,
+  StudyFile,
+  UserProfile,
+  AIMessage,
 } from '../../types';
 import { AIOrchestrator } from '../../services/aiOrchestrator';
+import type { AIExecutionContext } from '../../services/aiOrchestrator';
 import { computeCourseProgress, getCourseResources, getCourseTasks } from '../../utils/courses';
 import { calculateSM2, isCardDueForReview, speakText, stopSpeaking } from '../../utils/sm2';
 
 interface CourseTutorScreenProps {
   course: Course;
   resources: CourseResource[];
+  files?: StudyFile[];
   tasks: Task[];
+  user?: UserProfile;
   quizzes: CourseQuiz[];
   flashcards: CourseFlashcard[];
   config: AIProviderConfig;
@@ -54,7 +60,9 @@ type TutorTab = 'learn' | 'tutor' | 'quiz' | 'cards';
 export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   course,
   resources,
+  files = [],
   tasks,
+  user,
   quizzes,
   flashcards,
   config,
@@ -73,6 +81,11 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
   const courseCards = useMemo(() => flashcards.filter((c) => c.courseId === course.id), [flashcards, course.id]);
   const progress = useMemo(() => computeCourseProgress(course, tasks, resources), [course, tasks, resources]);
   const courseTasks = useMemo(() => getCourseTasks(course, tasks), [course, tasks]);
+  const courseFiles = useMemo(() => files.filter((file) =>
+    file.courseCode?.toLowerCase() === course.code.toLowerCase() ||
+    course.materialsFileIds?.includes(file.id) ||
+    courseResources.some((resource) => resource.studyFileId === file.id)
+  ), [files, course, courseResources]);
 
   const [tab, setTab] = useState<TutorTab>(initialTab || (initialQuizResourceId ? 'quiz' : 'learn'));
 
@@ -196,35 +209,27 @@ export const CourseTutorScreen: React.FC<CourseTutorScreenProps> = ({
     setChatInput('');
     setChatLoading(true);
 
-    const preIndexedMaterialKnowledge = courseResources
-      .map((r) => {
-        if (r.aiContext?.denseContext) {
-          return `[RESOURCE "${r.title}"]: Summary: ${r.aiContext.summary}\nKey Concepts: ${r.aiContext.keyConcepts.join(', ')}\nPre-indexed Knowledge Digest:\n${r.aiContext.denseContext}`;
-        }
-        return `[RESOURCE "${r.title}"]: ${(r.content || '').slice(0, 500)}`;
-      })
-      .join('\n\n');
-
-    const systemInstruction = `You are StudyAI, a focused tutor for the course "${course.name}" (${course.code}).
-Course objectives: ${course.objectives.join('; ') || 'n/a'}.
-Modules: ${course.modules.map((m) => `${m.title}${m.completed ? ' (done)' : ''}`).join('; ') || 'n/a'}.
-Open tasks: ${courseTasks.filter((t) => !t.completed).map((t) => t.title).join('; ') || 'none'}.
-Student progress: ${progress.percent}%.
-
-Pre-Indexed Course Materials & Core Knowledge:
-${preIndexedMaterialKnowledge || 'No materials uploaded yet.'}
-
-Answer with accurate, course-specific help directly drawing from the above course materials and knowledge digests. Keep replies clear and concise.`;
-
     try {
-      const provider = AIOrchestrator.getProvider(config, 'routine');
-      const history = messages.slice(-6).map((m) => `${m.sender === 'user' ? 'Student' : 'Tutor'}: ${m.text}`).join('\n');
-      const reply = await provider.generateText(`${history}\nStudent: ${text}\nTutor:`, systemInstruction);
+      const history: AIMessage[] = messages.slice(-8).map((message) => ({
+        ...message,
+        id: message.sender === 'ai' ? `ai-${message.id}` : message.id,
+      }));
+      const context: AIExecutionContext = {
+        currentCourse: course,
+        courseResources,
+        courseFiles,
+        tasks: courseTasks,
+        user,
+        pilotUid: user?.firebaseUid,
+        allowActions: false,
+      };
+      const result = await AIOrchestrator.chatWithContext(text, history, context, config);
       setMessages((prev) => [
         ...prev,
-        { id: `a-${Date.now()}`, sender: 'ai', text: reply?.trim() || 'Let me think about that differently — try rephrasing.', timestamp: 'Now' },
+        { id: `a-${Date.now()}`, sender: 'ai', text: result.text?.trim() || 'I could not find enough information in this course material. Try asking about a specific topic or chapter.', timestamp: 'Now' },
       ]);
     } catch (e) {
+      console.warn('Course tutor chat failed:', e);
       setMessages((prev) => [
         ...prev,
         { id: `a-${Date.now()}`, sender: 'ai', text: 'I could not reach the AI provider just now. Check your AI provider settings and try again.', timestamp: 'Now' },

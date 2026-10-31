@@ -3,6 +3,7 @@ import {
   tokenizeQuery,
   scoreChapterForMessage,
   findTopicRelevantChapter,
+  findRelevantPassages,
   findReferencedPage,
   referencedPageNumber,
   wantsExhaustiveExtraction,
@@ -102,6 +103,26 @@ describe('findTopicRelevantChapter', () => {
 
   it('returns null when no file has chapter structure', () => {
     expect(findTopicRelevantChapter('photosynthesis', [file([])])).toBeNull();
+  });
+});
+
+describe('findRelevantPassages', () => {
+  it('finds a relevant passage deep in a long book and preserves its page number', () => {
+    const opening = 'This is unrelated introductory material about the course. '.repeat(500);
+    const target = 'The Moon Quartz correction rule subtracts the atmospheric drift before calculating the final measurement.';
+    const text = opening + target;
+    const passages = findRelevantPassages(
+      'Explain the Moon Quartz correction rule',
+      text,
+      [{ page: 55, startChar: opening.length, endChar: text.length }],
+    );
+    expect(passages.length).toBeGreaterThan(0);
+    expect(passages[0].text).toContain(target);
+    expect(passages[0].page).toBe(55);
+  });
+
+  it('returns no passage when none of the query terms occur in the source', () => {
+    expect(findRelevantPassages('explain volcanology', 'A short section about cellular biology.')).toEqual([]);
   });
 });
 

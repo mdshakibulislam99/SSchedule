@@ -346,8 +346,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       )}
 
       {/* 2. RECOMMENDED WORK */}
-      <section className="rounded-2xl bg-slate-900 border border-slate-800 shadow-sm overflow-hidden">
-        <div className="p-4 sm:p-5 flex flex-col gap-3 sm:gap-4 bg-gradient-to-r from-slate-900 via-indigo-950/70 to-slate-900">
+      <section className="ss-focus-card rounded-[26px] bg-slate-900 border border-slate-800 shadow-md overflow-hidden">
+        <div className="ss-focus-card-inner p-4 sm:p-5 flex flex-col gap-3 sm:gap-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-[11px] text-slate-300 min-w-0">
@@ -376,7 +376,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             {dueLabel && (
               <div className="shrink-0 rounded-lg bg-white/10 border border-white/10 px-2.5 py-1.5">
-                <p className="text-[11px] font-bold text-amber-300 leading-tight whitespace-nowrap">
+                <p className="text-[11px] font-bold text-[#e4f586] leading-tight whitespace-nowrap">
                   {dueLabel}
                 </p>
               </div>
@@ -408,7 +408,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     onOpenTasks();
                   }
                 }}
-                className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold shadow-sm active:scale-95 transition-all cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl bg-[#d7ee70] hover:bg-[#e4f586] text-[#182b35] text-xs font-extrabold shadow-sm active:scale-95 transition-all cursor-pointer"
               >
                 {primaryTask ? (
                   <>

@@ -264,12 +264,67 @@ export class DriveStorageAdapter implements StorageAdapter {
 // ---------------------------------------------------------------------------
 
 const PILOT_FLAG_KEY = 'sschedule_drive_pilot';
+const DRIVE_FILE_STORAGE_FLAG_PREFIX = 'sschedule_drive_file_storage_';
+const COLLECTIONS_MIGRATED_FLAG_PREFIX = 'sschedule_drive_collections_migrated_';
+
+/**
+ * Book originals and their chat indexes can live in the user's own Drive
+ * without migrating the app's other records out of Firestore.
+ */
+export function isDriveFileStorageEnabled(userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  if (isDrivePilotEnabled(userId)) return true;
+  try {
+    return localStorage.getItem(`${DRIVE_FILE_STORAGE_FLAG_PREFIX}${userId}`) === 'enabled';
+  } catch {
+    return false;
+  }
+}
+
+/** Enable Drive-backed book files after the user completes Drive OAuth. */
+export function enableDriveFileStorage(userId: string): void {
+  try {
+    localStorage.setItem(`${DRIVE_FILE_STORAGE_FLAG_PREFIX}${userId}`, 'enabled');
+  } catch {
+    // Uploads remain usable in-session; the UI reports persistence failures.
+  }
+}
 
 /** Is this Firebase user explicitly selected as a Drive pilot? */
 export function isDrivePilotEnabled(userId: string | null | undefined): boolean {
   if (!userId) return false;
   try {
     return localStorage.getItem(PILOT_FLAG_KEY) === userId;
+  } catch {
+    return false;
+  }
+}
+
+/** All application collections may use Drive only after a verified migration. */
+export function areDriveCollectionsMigrated(userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  try {
+    return localStorage.getItem(`${COLLECTIONS_MIGRATED_FLAG_PREFIX}${userId}`) === 'complete';
+  } catch {
+    return false;
+  }
+}
+
+export function markDriveCollectionsMigrated(userId: string): void {
+  try { localStorage.setItem(`${COLLECTIONS_MIGRATED_FLAG_PREFIX}${userId}`, 'complete'); } catch {}
+}
+
+/** Restore Drive authority on a second device from the account's Drive manifest. */
+export function restoreDrivePilotFromAccountMetadata(
+  userId: string,
+  storageRole: 'legacy' | 'pilot' | undefined,
+  migrationStatus: string | undefined,
+): boolean {
+  if (storageRole !== 'pilot' || migrationStatus !== 'COMPLETE') return false;
+  try {
+    localStorage.setItem(PILOT_FLAG_KEY, userId);
+    markDriveCollectionsMigrated(userId);
+    return true;
   } catch {
     return false;
   }
@@ -321,6 +376,7 @@ export function isCollectionDriveAuthoritative(
   collection: string,
   userId: string | null | undefined,
 ): boolean {
+  if (collection !== 'tasks' && !areDriveCollectionsMigrated(userId)) return false;
   return isCollectionDriveEnabled(collection, userId, isDrivePilotEnabled(userId));
 }
 

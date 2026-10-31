@@ -32,10 +32,21 @@ import {
   cleanForFirestore,
 } from './lib/firebase';
 import { connectDrive, disconnectDrive } from './lib/googleDrive';
-import { enableDrivePilot, isDrivePilotEnabled, isCollectionDriveAuthoritative } from './services/storageInterface';
+import {
+  enableDrivePilot,
+  enableDriveFileStorage,
+  isDriveFileStorageEnabled,
+  isDrivePilotEnabled,
+  areDriveCollectionsMigrated,
+  isCollectionDriveAuthoritative,
+  restoreDrivePilotFromAccountMetadata,
+} from './services/storageInterface';
+import { loadRoutedCollection } from './services/driveRolloutRouter';
+import { COLLECTION_MAPPINGS } from './types/driveStorage';
 import {
   deleteCollectionRecord,
   persistCollectionChange as persistGenericCollectionChange,
+  reconcileCollectionSignals,
   retryPendingCollectionChanges,
   DriveCollectionConflictError,
 } from './services/collectionPilotService';
@@ -115,9 +126,16 @@ import {
 import { StudyStorage, ThemeMode, INITIAL_CALENDAR_SYNC, INITIAL_DRIVE_SYNC } from './utils/storage';
 import { playChime } from './utils/audio';
 import { extractDocumentFromFile } from './utils/fileExtractor';
-import { saveExtractedText, loadExtractedText, deleteFileBlob, deleteExtractedText } from './utils/fileStorage';
+import { saveExtractedText, loadExtractedText, loadFileBlob, saveFileBlob, deleteFileBlob, deleteExtractedText } from './utils/fileStorage';
 import { AIOrchestrator } from './services/aiOrchestrator';
-import { persistPageIndexLocal, mirrorPageIndexToDrive } from './services/documentIndexStore';
+import {
+  persistPageIndexLocal,
+  mirrorDocumentTextToDrive,
+  mirrorDocumentIndexToDrive,
+  deleteDocumentTextFromDrive,
+  loadDocumentText,
+  mirrorOriginalFileToDrive,
+} from './services/documentIndexStore';
 import { getLocalDateKey } from './utils/dates';
 import { computeCourseProgress, getCourseResources } from './utils/courses';
 import { useGoogleCalendarSync } from './hooks/useGoogleCalendarSync';
@@ -164,7 +182,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => StudyStorage.getTasks());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>(() => StudyStorage.getSchedule());
   const [goals, setGoals] = useState<Goal[]>(() => StudyStorage.getGoals());
-  const [files, setFiles] = useState<StudyFile[]>(() => StudyStorage.getFiles(firebaseUser?.uid));
+  const [files, setFiles] = useState<StudyFile[]>(() => StudyStorage.getFiles());
   const [notes, setNotes] = useState<StudyNote[]>(() => StudyStorage.getNotes());
   const [research, setResearch] = useState<ResearchItem[]>(() => StudyStorage.getResearch());
   const [aiConfig, setAIConfig] = useState<AIProviderConfig>(() => StudyStorage.getAIConfig());
@@ -198,9 +216,6 @@ export default function App() {
     const target = schedule.find((s) => s.id === id);
     if (target && calendarSync.connected) gcal.queueDelete(target);
     setSchedule((prev) => prev.filter((s) => s.id !== id));
-    if (firebaseUser) {
-      offlineSyncService.enqueueDelete(firebaseUser.uid, 'schedule', id);
-    }
   };
 
   const updateScheduleEvent = (event: ScheduleEvent) => {
@@ -274,6 +289,7 @@ export default function App() {
   const [isGraceModalDismissed, setIsGraceModalDismissed] = useState(false);
   const [isDriveConnecting, setIsDriveConnecting] = useState(false);
   const [isDriveInitializing, setIsDriveInitializing] = useState(false);
+  const [driveMigrationProgress, setDriveMigrationProgress] = useState<{ collection: string; complete: number; total: number } | null>(null);
   const [drivePilotEnabled, setDrivePilotEnabled] = useState<boolean>(() =>
     isDrivePilotEnabled(firebaseUser?.uid),
   );
@@ -295,30 +311,22 @@ export default function App() {
   const isLoggingOutRef = useRef(false);
   const isDeleteSyncPaused = isFirebaseSyncing || isLoggingOutRef.current;
 
-  // Mirror local deletions into Firestore for every cloud-synced collection,
-  // so items removed here don't resurrect on the next restore.
-  // Paused during initial cloud sync, restore, or logout to prevent wiping cloud state!
-  // The tasks collection is additionally paused for Drive-pilot accounts:
-  // their deletions become Drive tombstones (handleDeleteTask) and any
-  // pre-existing Firestore task records must be preserved untouched.
-  // Every other collection pauses its Firestore delete mirror while its own
-  // rollout gate is enabled: Drive tombstones are the deletion record and
-  // the Firestore copy (if any) must be preserved, never wiped.
-  const isDriveCollectionPaused = (collection: string): boolean =>
-    Boolean(firebaseUser) && isCollectionDriveAuthoritative(collection, firebaseUser!.uid);
+  // Route local deletions to the authoritative store. Restore and logout pause
+  // the hook; Drive accounts receive tombstones and legacy accounts enqueue
+  // Firestore deletes.
   useCloudDeleteSync(tasks, 'tasks', firebaseUser, isDeleteSyncPaused || isTaskPilotOn);
-  useCloudDeleteSync(schedule, 'schedule', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('schedule'));
-  useCloudDeleteSync(courses, 'courses', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('courses'));
-  useCloudDeleteSync(resources, 'resources', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('resources'));
-  useCloudDeleteSync(goals, 'goals', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('goals'));
-  useCloudDeleteSync(files, 'files', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('files'));
-  useCloudDeleteSync(notes, 'notes', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('notes'));
-  useCloudDeleteSync(research, 'research', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('research'));
-  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('aiMemory'));
-  useCloudDeleteSync(notifications, 'notifications', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('notifications'));
-  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('quizzes'));
-  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('flashcards'));
-  useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused || isDriveCollectionPaused('annotations'));
+  useCloudDeleteSync(schedule, 'schedule', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(courses, 'courses', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(resources, 'resources', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(goals, 'goals', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(files, 'files', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(notes, 'notes', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(research, 'research', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(aiMemory, 'aiMemory', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(notifications, 'notifications', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(quizzes, 'quizzes', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(flashcards, 'flashcards', firebaseUser, isDeleteSyncPaused);
+  useCloudDeleteSync(annotations, 'annotations', firebaseUser, isDeleteSyncPaused);
 
   const checkAppUpdates = async () => {
     // The forced-update flow installs an APK, so it only makes sense inside the
@@ -531,6 +539,9 @@ export default function App() {
   // local profile (e.g. isOnboarded: false right after sign-out) back to the
   // cloud on top of the freshly restored one.
   const restoreInFlightRef = useRef(false);
+  const attemptedDocumentDriveSyncRef = useRef(new Set<string>());
+  const attemptedOriginalDriveSyncRef = useRef(new Set<string>());
+  const attemptedDocumentIndexDriveSyncRef = useRef(new Set<string>());
 
   // Last-synced content signature per "<collection>:<id>". Lets every
   // sync effect push only the items that actually changed instead of
@@ -586,11 +597,24 @@ export default function App() {
     const knownIds = conversationsIdsRef.current;
     if (knownIds) {
       knownIds.forEach((id) => {
-        if (!nextIds.has(id)) offlineSyncService.enqueueDelete(uid, 'conversations', id);
+        if (!nextIds.has(id)) {
+          const revisions = driveCollectionRevisionsRef.current.get('conversations');
+          if (isCollectionDriveAuthoritative('conversations', uid)) {
+            void deleteCollectionRecord('conversations', 'ai-conversation', uid, id, revisions?.get(id));
+          } else {
+            offlineSyncService.enqueueDelete(uid, 'conversations', id);
+          }
+        }
       });
     }
     conversationsIdsRef.current = nextIds;
-    offlineSyncService.enqueueBatchUpsert(uid, 'conversations', convs.map((c) => ({ ...c })));
+    if (isCollectionDriveAuthoritative('conversations', uid)) {
+      for (const conversation of convs) {
+        persistRoutedCollectionChange(uid, 'conversations', 'ai-conversation', conversation, conversation.title || 'Conversation');
+      }
+    } else {
+      offlineSyncService.enqueueBatchUpsert(uid, 'conversations', convs.map((c) => ({ ...c })));
+    }
   };
 
   /**
@@ -661,6 +685,58 @@ export default function App() {
     return active.length;
   };
 
+  const reloadDriveCollection = async (collection: string): Promise<void> => {
+    if (!firebaseUser) return;
+    const result = await loadRoutedCollection<any>(collection, firebaseUser.uid);
+    if (!result.viaDrive) return;
+    driveCollectionRevisionsRef.current.set(collection, result.revisions);
+    switch (collection) {
+      case 'schedule': setSchedule(result.records); StudyStorage.saveSchedule(result.records); markSynced('schedule', result.records); break;
+      case 'goals': setGoals(result.records); StudyStorage.saveGoals(result.records); markSynced('goals', result.records); break;
+      case 'courses': setCourses(result.records); StudyStorage.saveCourses(result.records); markSynced('courses', result.records); break;
+      case 'resources': setResources(result.records); StudyStorage.saveResources(result.records); markSynced('resources', result.records); break;
+      case 'files': setFiles(result.records); StudyStorage.saveFiles(result.records); markSynced('files', result.records); break;
+      case 'notes': setNotes(result.records); StudyStorage.saveNotes(result.records); markSynced('notes', result.records); break;
+      case 'research': setResearch(result.records); StudyStorage.saveResearch(result.records); markSynced('research', result.records); break;
+      case 'aiMemory': setAIMemory(result.records); StudyStorage.saveAIMemory(result.records); markSynced('aiMemory', result.records); break;
+      case 'notifications': setNotifications(result.records); StudyStorage.saveNotifications(result.records); markSynced('notifications', result.records); break;
+      case 'quizzes': setQuizzes(result.records); StudyStorage.saveQuizzes(result.records); markSynced('quizzes', result.records); break;
+      case 'flashcards': setFlashcards(result.records); StudyStorage.saveFlashcards(result.records); markSynced('flashcards', result.records); break;
+      case 'annotations': setAnnotations(result.records); StudyStorage.saveAnnotations(result.records); markSynced('annotations', result.records); break;
+      case 'conversations':
+        StudyStorage.saveConversations(result.records);
+        conversationsIdsRef.current = new Set(result.records.map((record: AIConversation) => record.id));
+        window.dispatchEvent(new CustomEvent('sschedule:conversations-updated', { detail: result.records }));
+        break;
+      case 'metrics': {
+        const current = result.records.find((record: { id: string }) => record.id === 'current');
+        if (current) {
+          const { id: _id, ...metricsRecord } = current;
+          setMetrics(metricsRecord);
+          StudyStorage.saveMetrics(metricsRecord);
+          syncedSigsRef.current.set('metrics:current', itemSignature(metricsRecord));
+        }
+        break;
+      }
+      case 'settings': {
+        const preferences = result.records.find((record: { id: string }) => record.id === 'preferences');
+        if (preferences) {
+          const { id: _id, ...savedPreferences } = preferences;
+          syncedSigsRef.current.set('settings:preferences', itemSignature(savedPreferences));
+        }
+        if (preferences?.themeMode) {
+          setThemeMode(preferences.themeMode);
+          StudyStorage.saveThemeMode(preferences.themeMode);
+        }
+        if (preferences?.notificationSettings) {
+          setNotificationSettings(preferences.notificationSettings);
+          StudyStorage.saveNotificationSettings(preferences.notificationSettings);
+        }
+        break;
+      }
+    }
+  };
+
   /**
    * Generic Drive write pipeline for every NON-task routed collection.
    * Mirrors persistPilotTaskChange: serialized through a per-collection
@@ -706,6 +782,11 @@ export default function App() {
         } catch (err) {
           if (err instanceof DriveCollectionConflictError) {
             showToast(err.message);
+            try {
+              await reloadDriveCollection(collection);
+            } catch (reloadError) {
+              console.warn(`Could not reload conflicted ${collection}:`, reloadError);
+            }
           } else {
             console.warn(`Drive ${collection} write failed:`, err);
             showToast(
@@ -782,6 +863,57 @@ export default function App() {
           }
 
           const cloudData = await fetchUserDataFromFirestore(fUser.uid);
+          const restoredPilot = restoreDrivePilotFromAccountMetadata(
+            fUser.uid,
+            cloudData.driveSync?.storageRole,
+            cloudData.driveSync?.migrationStatus,
+          );
+          if (restoredPilot) setDrivePilotEnabled(true);
+          if (restoredPilot) {
+            const driveCollections = [
+              ['schedule', 'schedule'], ['goals', 'goals'], ['courses', 'courses'],
+              ['resources', 'resources'], ['files', 'files'], ['notes', 'notes'],
+              ['research', 'research'], ['aiMemory', 'aiMemory'], ['conversations', 'conversations'],
+              ['notifications', 'notifications'], ['quizzes', 'quizzes'],
+              ['flashcards', 'flashcards'], ['annotations', 'annotations'],
+              ['metrics', 'metrics'], ['settings', 'settings'],
+            ] as const;
+            for (const [key, collection] of driveCollections) {
+              try {
+                const result = await loadRoutedCollection<{ id: string }>(collection, fUser.uid);
+                if (!result.viaDrive) continue;
+                if (collection === 'metrics') {
+                  const current = result.records.find((record) => record.id === 'current');
+                  if (current) {
+                    const { id: _id, ...metricsRecord } = current as any;
+                    cloudData.metrics = metricsRecord as ProgressMetrics;
+                  } else {
+                    cloudData.metrics = null;
+                  }
+                } else if (collection === 'settings') {
+                  const preferences = result.records.find((record) => record.id === 'preferences') as any;
+                  if (preferences) {
+                    const { id: _id, ...savedPreferences } = preferences;
+                    syncedSigsRef.current.set('settings:preferences', itemSignature(savedPreferences));
+                  }
+                  if (preferences?.themeMode) {
+                    setThemeMode(preferences.themeMode);
+                    StudyStorage.saveThemeMode(preferences.themeMode);
+                  }
+                  if (preferences?.notificationSettings) {
+                    setNotificationSettings(preferences.notificationSettings);
+                    StudyStorage.saveNotificationSettings(preferences.notificationSettings);
+                  }
+                } else {
+                  (cloudData as any)[key] = result.records;
+                }
+                driveCollectionRevisionsRef.current.set(collection, result.revisions);
+              } catch (error) {
+                console.warn(`Drive restore failed for ${collection}:`, error);
+                throw new Error(`Could not restore ${collection} from Google Drive. Reconnect Drive and retry; Firestore data was left untouched.`);
+              }
+            }
+          }
 
           const hasCloudData =
             cloudData.tasks.length +
@@ -921,47 +1053,47 @@ export default function App() {
           }
 
           // Restore or merge schedule
-          if (cloudData.schedule && cloudData.schedule.length > 0) {
+          if (restoredPilot || cloudData.schedule.length > 0) {
             setSchedule(cloudData.schedule);
             StudyStorage.saveSchedule(cloudData.schedule);
             markSynced('schedule', cloudData.schedule);
-          } else if (schedule.length > 0) {
+          } else if (!restoredPilot && schedule.length > 0) {
             await syncScheduleToFirestore(fUser.uid, schedule);
             markSynced('schedule', schedule);
           }
 
           // Restore or merge courses
-          if (cloudData.courses && cloudData.courses.length > 0) {
+          if (restoredPilot || cloudData.courses.length > 0) {
             setCourses(cloudData.courses);
             StudyStorage.saveCourses(cloudData.courses);
             markSynced('courses', cloudData.courses);
-          } else if (courses.length > 0) {
+          } else if (!restoredPilot && courses.length > 0) {
             await syncCoursesToFirestore(fUser.uid, courses);
             markSynced('courses', courses);
           }
 
           // Restore or merge resources
-          if (cloudData.resources && cloudData.resources.length > 0) {
+          if (restoredPilot || cloudData.resources.length > 0) {
             setResources(cloudData.resources);
             StudyStorage.saveResources(cloudData.resources);
             markSynced('resources', cloudData.resources);
-          } else if (resources.length > 0) {
+          } else if (!restoredPilot && resources.length > 0) {
             await syncResourcesToFirestore(fUser.uid, resources);
             markSynced('resources', resources);
           }
 
           // Restore or merge goals
-          if (cloudData.goals && cloudData.goals.length > 0) {
+          if (restoredPilot || cloudData.goals.length > 0) {
             setGoals(cloudData.goals);
             StudyStorage.saveGoals(cloudData.goals);
             markSynced('goals', cloudData.goals);
-          } else if (goals.length > 0) {
+          } else if (!restoredPilot && goals.length > 0) {
             offlineSyncService.enqueueBatchUpsert(fUser.uid, 'goals', goals.map((g) => ({ ...g })));
             markSynced('goals', goals);
           }
 
           // Restore files
-          if (cloudData.files && cloudData.files.length > 0) {
+          if (restoredPilot || cloudData.files.length > 0) {
             setFiles(cloudData.files);
             StudyStorage.saveFiles(cloudData.files);
             const safeFiles = cloudData.files.map((f) =>
@@ -973,49 +1105,49 @@ export default function App() {
           }
 
           // Restore notes
-          if (cloudData.notes && cloudData.notes.length > 0) {
+          if (restoredPilot || cloudData.notes.length > 0) {
             setNotes(cloudData.notes);
             StudyStorage.saveNotes(cloudData.notes);
             markSynced('notes', cloudData.notes);
           }
 
           // Restore research
-          if (cloudData.research && cloudData.research.length > 0) {
+          if (restoredPilot || cloudData.research.length > 0) {
             setResearch(cloudData.research);
             StudyStorage.saveResearch(cloudData.research);
             markSynced('research', cloudData.research);
           }
 
           // Restore AI memory
-          if (cloudData.aiMemory && cloudData.aiMemory.length > 0) {
+          if (restoredPilot || cloudData.aiMemory.length > 0) {
             setAIMemory(cloudData.aiMemory);
             StudyStorage.saveAIMemory(cloudData.aiMemory);
             markSynced('aiMemory', cloudData.aiMemory);
           }
 
           // Restore notifications
-          if (cloudData.notifications && cloudData.notifications.length > 0) {
+          if (restoredPilot || cloudData.notifications.length > 0) {
             setNotifications(cloudData.notifications);
             StudyStorage.saveNotifications(cloudData.notifications);
             markSynced('notifications', cloudData.notifications);
           }
 
           // Restore quizzes
-          if (cloudData.quizzes && cloudData.quizzes.length > 0) {
+          if (restoredPilot || cloudData.quizzes.length > 0) {
             setQuizzes(cloudData.quizzes);
             StudyStorage.saveQuizzes(cloudData.quizzes);
             markSynced('quizzes', cloudData.quizzes);
           }
 
           // Restore flashcards
-          if (cloudData.flashcards && cloudData.flashcards.length > 0) {
+          if (restoredPilot || cloudData.flashcards.length > 0) {
             setFlashcards(cloudData.flashcards);
             StudyStorage.saveFlashcards(cloudData.flashcards);
             markSynced('flashcards', cloudData.flashcards);
           }
 
           // Restore annotations
-          if (cloudData.annotations && cloudData.annotations.length > 0) {
+          if (restoredPilot || cloudData.annotations.length > 0) {
             setAnnotations(cloudData.annotations);
             StudyStorage.saveAnnotations(cloudData.annotations);
             markSynced('annotations', cloudData.annotations);
@@ -1032,7 +1164,7 @@ export default function App() {
           }
 
           // Restore conversations
-          if (cloudData.conversations && cloudData.conversations.length > 0) {
+          if (restoredPilot || cloudData.conversations.length > 0) {
             StudyStorage.saveConversations(cloudData.conversations);
             conversationsIdsRef.current = new Set(cloudData.conversations.map((c) => c.id));
           }
@@ -1413,7 +1545,11 @@ export default function App() {
       const sig = itemSignature(metrics);
       if (syncedSigsRef.current.get(key) !== sig) {
         syncedSigsRef.current.set(key, sig);
-        offlineSyncService.enqueueUpsert(firebaseUser.uid, 'metrics', 'current', { ...metrics });
+        if (isCollectionDriveAuthoritative('metrics', firebaseUser.uid)) {
+          persistRoutedCollectionChange(firebaseUser.uid, 'metrics', 'progress-metrics', { id: 'current', ...metrics }, 'Progress metrics');
+        } else {
+          offlineSyncService.enqueueUpsert(firebaseUser.uid, 'metrics', 'current', { ...metrics });
+        }
       }
     }
   }, [metrics, firebaseUser]);
@@ -1467,6 +1603,27 @@ export default function App() {
       const state = await connectDrive();
       setDriveSync(state);
       StudyStorage.saveDriveSync(state);
+      if (firebaseUser) enableDriveFileStorage(firebaseUser.uid);
+      if (firebaseUser) {
+        for (const file of files) {
+          if (file.originalStorageStatus !== 'drive') attemptedOriginalDriveSyncRef.current.delete(file.id);
+          if (file.documentStorageStatus !== 'drive' && file.documentStorageStatus !== 'device-and-drive') {
+            attemptedDocumentDriveSyncRef.current.delete(file.id);
+          }
+          if (file.documentIndexStorageStatus !== 'drive') {
+            attemptedDocumentIndexDriveSyncRef.current.delete(file.id);
+          }
+        }
+        setFiles((previous) => previous.map((file) => ({
+          ...file,
+          originalStorageStatus: file.fileStorageKey && file.originalStorageStatus !== 'drive'
+            ? 'saving'
+            : file.originalStorageStatus,
+          documentStorageStatus: file.extractedTextKey && file.documentStorageStatus !== 'drive' && file.documentStorageStatus !== 'device-and-drive'
+            ? 'saving'
+            : file.documentStorageStatus,
+        })));
+      }
       showToast(`Google Drive connected — "${state.folderName}" folder ready`);
       // Reconnection: flush any task changes queued while Drive was
       // offline/unauthed, then reload the authoritative list. Uses the
@@ -1487,6 +1644,18 @@ export default function App() {
           showToast(
             'Reconnected, but flushing queued tasks failed — use "Refresh tasks from Drive" to retry.',
           );
+        }
+      }
+      if (firebaseUser && areDriveCollectionsMigrated(firebaseUser.uid)) {
+        for (const [collection, mapping] of Object.entries(COLLECTION_MAPPINGS)) {
+          if (collection === 'tasks' || !isCollectionDriveAuthoritative(collection, firebaseUser.uid)) continue;
+          try {
+            await retryPendingCollectionChanges(collection, mapping.entityType, firebaseUser.uid);
+            await reconcileCollectionSignals(collection, mapping.entityType, firebaseUser.uid);
+            await reloadDriveCollection(collection);
+          } catch (err) {
+            console.warn(`Drive reconnect refresh failed for ${collection}:`, err);
+          }
         }
       }
     } catch (err: any) {
@@ -1511,23 +1680,46 @@ export default function App() {
     }
     setIsDriveInitializing(true);
     try {
-      const result = await enableDrivePilot(firebaseUser.uid);
+      let completedMigration = false;
+      let migratedRecords = 0;
+      if (areDriveCollectionsMigrated(firebaseUser.uid)) {
+        await enableDrivePilot(firebaseUser.uid);
+      } else {
+        const { migrateFirestoreToDrive } = await import('./services/storageMigrationService');
+        const result = await migrateFirestoreToDrive(firebaseUser.uid, (collection, complete, total) => {
+          setDriveMigrationProgress({ collection, complete, total });
+        });
+        migratedRecords = result.migratedRecords;
+        completedMigration = true;
+      }
+      setDriveSync((previous) => ({
+        ...previous,
+        migrationStatus: 'COMPLETE',
+        storageRole: 'pilot',
+      }));
       setDrivePilotEnabled(true);
-      showToast(
-        `Drive storage initialized — ${result.createdFolderCount} folders ready. Migration state: ${result.migrationState}`,
-      );
-      // Make Drive authoritative for this account's task list. For a
-      // fresh test account this is (correctly) empty; any pre-existing
-      // Firestore task records stay untouched in Firestore and are
-      // NOT copied into Drive.
+      setFiles((previous) => previous.map((file) => ({
+        ...file,
+        originalStorageStatus: file.fileStorageKey || file.dataUrl ? 'drive' : file.originalStorageStatus,
+        documentStorageStatus: file.extractedTextKey ? 'drive' : file.documentStorageStatus,
+        documentIndexStorageStatus: file.aiContext?.documentChunks?.length
+          ? 'drive'
+          : file.documentIndexStorageStatus,
+      })));
+      for (const [collection] of Object.entries(COLLECTION_MAPPINGS)) {
+        if (collection === 'tasks' || !isCollectionDriveAuthoritative(collection, firebaseUser.uid)) continue;
+        const loaded = await loadRoutedCollection<{ id: string }>(collection, firebaseUser.uid);
+        driveCollectionRevisionsRef.current.set(collection, loaded.revisions);
+      }
+      showToast(completedMigration
+        ? `Drive storage verified — ${migratedRecords} records copied. Firestore recovery copies were retained.`
+        : 'Drive storage is already migrated and ready.');
       try {
         const count = await reloadDriveTasks();
-        showToast(
-          `Drive pilot active — showing ${count} Drive-backed task(s). Existing Firestore tasks were not migrated.`,
-        );
+        showToast(`Drive storage is active — ${count} tasks restored from your Drive.`);
       } catch (err) {
         console.warn('Initial Drive task load failed:', err);
-        showToast('Drive initialized, but loading tasks from Drive failed — reconnect to retry.');
+        showToast('Migration completed, but tasks could not be loaded from Drive. Reconnect and retry.');
       }
     } catch (err: any) {
       console.warn('Drive storage initialization failed:', err);
@@ -1537,6 +1729,7 @@ export default function App() {
       }
     } finally {
       setIsDriveInitializing(false);
+      setDriveMigrationProgress(null);
     }
   };
 
@@ -1585,11 +1778,9 @@ export default function App() {
   }, [firebaseUser?.uid]);
 
   /**
-   * Cross-device task pilot sync: watch the MINIMAL sync-signal
-   * documents (identifiers + revisions only — never task content)
-   * and refresh the authoritative task set from Drive whenever
-   * another device publishes a change. Own writes also land here and
-   * simply re-read Drive, which is idempotent.
+   * Cross-device Drive sync: watch MINIMAL sync signals (identifiers and
+   * revisions only — never record content), then refresh the affected Drive
+   * collection.
    */
   useEffect(() => {
     if (!firebaseUser || !isTaskPilotOn) return;
@@ -1597,17 +1788,30 @@ export default function App() {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     let unsub = () => {};
     let cancelled = false;
+    const pendingCollections = new Set<string>();
     void import('firebase/firestore').then(({ collection, onSnapshot }) => {
       if (cancelled) return;
       unsub = onSnapshot(
         collection(db, 'users', uid, 'sync-signals'),
-        () => {
+        (snapshot) => {
           if (restoreInFlightRef.current) return;
+          for (const change of snapshot.docChanges()) {
+            const entityType = change.doc.data()?.entityType;
+            if (entityType === 'task') pendingCollections.add('tasks');
+            for (const [name, mapping] of Object.entries(COLLECTION_MAPPINGS)) {
+              if (mapping.entityType === entityType && isCollectionDriveAuthoritative(name, uid)) {
+                pendingCollections.add(name);
+              }
+            }
+          }
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => {
-            reloadDriveTasks().catch((err) =>
-              console.warn('Signal-driven Drive task refresh failed:', err),
-            );
+            const changed = [...pendingCollections];
+            pendingCollections.clear();
+            void Promise.all(changed.map((name) => name === 'tasks'
+              ? reloadDriveTasks()
+              : reloadDriveCollection(name)))
+              .catch((err) => console.warn('Signal-driven Drive refresh failed:', err));
           }, 2000);
         },
         (err) => console.warn('sync-signals listener failed:', err),
@@ -1622,6 +1826,27 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firebaseUser?.uid, isTaskPilotOn]);
+
+  // Retry queued Drive writes after reconnect, and reconcile minimal signal
+  // records so other signed-in devices can observe completed writes.
+  useEffect(() => {
+    if (!firebaseUser || !isDrivePilotEnabled(firebaseUser.uid) || !areDriveCollectionsMigrated(firebaseUser.uid)) return;
+    const uid = firebaseUser.uid;
+    const reconcile = async () => {
+      for (const [collection, mapping] of Object.entries(COLLECTION_MAPPINGS)) {
+        if (collection === 'tasks' || !isCollectionDriveAuthoritative(collection, uid)) continue;
+        try {
+          await retryPendingCollectionChanges(collection, mapping.entityType, uid);
+          await reconcileCollectionSignals(collection, mapping.entityType, uid);
+        } catch (error) {
+          console.warn(`Drive reconciliation failed for ${collection}:`, error);
+        }
+      }
+    };
+    void reconcile();
+    window.addEventListener('online', reconcile);
+    return () => window.removeEventListener('online', reconcile);
+  }, [firebaseUser?.uid, drivePilotEnabled]);
 
   const handleDriveDisconnect = async () => {
     try {
@@ -1653,17 +1878,22 @@ export default function App() {
 
     try {
       if (firebaseUser) {
-        // 1. Explicitly ensure all current state is pushed to Firestore before session terminates
+        // 1. Flush only the account data's authoritative store before sign-out.
         try {
           await syncUserProfileToFirestore(firebaseUser.uid, user);
-          // Drive-pilot accounts keep task content in their own Drive —
-          // only minimal sync signals are ever published, so the
-          // pre-logout flush must not copy task payloads into Firestore.
-          if (!isTaskPilotOn && tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
-          if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
-          if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
-          if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
-          await offlineSyncService.syncNow();
+          if (areDriveCollectionsMigrated(firebaseUser.uid)) {
+            await retryPendingTaskChanges(firebaseUser.uid);
+            for (const [collection, mapping] of Object.entries(COLLECTION_MAPPINGS)) {
+              if (collection === 'tasks' || !isCollectionDriveAuthoritative(collection, firebaseUser.uid)) continue;
+              await retryPendingCollectionChanges(collection, mapping.entityType, firebaseUser.uid);
+            }
+          } else {
+            if (!isTaskPilotOn && tasks.length > 0) await syncTasksToFirestore(firebaseUser.uid, tasks);
+            if (schedule.length > 0) await syncScheduleToFirestore(firebaseUser.uid, schedule);
+            if (courses.length > 0) await syncCoursesToFirestore(firebaseUser.uid, courses);
+            if (resources.length > 0) await syncResourcesToFirestore(firebaseUser.uid, resources);
+            await offlineSyncService.syncNow();
+          }
         } catch (err) {
           console.warn('Sync before logout failed:', err);
         }
@@ -1763,6 +1993,99 @@ export default function App() {
     StudyStorage.saveFiles(files);
   }, [files]);
 
+  // Backfill previous uploads and retry interrupted Drive mirrors when a
+  // user has connected their own Drive. Failed attempts wait for the next online event,
+  // so a transient Drive outage cannot create a render/retry loop.
+  useEffect(() => {
+    const uid = firebaseUser?.uid;
+    if (!uid || !driveSync.connected || restoreInFlightRef.current || !isDriveFileStorageEnabled(uid)) return;
+    const syncPendingText = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      for (const file of files) {
+        if (file.fileStorageKey && file.originalStorageStatus !== 'drive' && !attemptedOriginalDriveSyncRef.current.has(file.id)) {
+          attemptedOriginalDriveSyncRef.current.add(file.id);
+          try {
+            const blob = await loadFileBlob(file.fileStorageKey);
+            if (blob) {
+              const saved = await mirrorOriginalFileToDrive(uid, file.id, file.name, blob);
+              if (saved) setFiles((prev) => prev.map((item) => item.id === file.id
+                ? { ...item, originalStorageStatus: 'drive' }
+                : item));
+            } else {
+              setFiles((prev) => prev.map((item) => item.id === file.id
+                ? { ...item, originalStorageStatus: 'failed' }
+                : item));
+            }
+          } catch (err) {
+            console.warn(`Drive original backup failed for ${file.name}:`, err);
+            setFiles((prev) => prev.map((item) => item.id === file.id
+              ? { ...item, originalStorageStatus: 'failed' }
+              : item));
+          }
+        }
+        if (
+          file.aiContext?.documentChunks?.length &&
+          file.documentIndexStorageStatus !== 'drive' &&
+          !attemptedDocumentIndexDriveSyncRef.current.has(file.id)
+        ) {
+          attemptedDocumentIndexDriveSyncRef.current.add(file.id);
+          try {
+            const saved = await mirrorDocumentIndexToDrive(
+              uid,
+              file.id,
+              file.name,
+              file.structure,
+              file.aiContext,
+            );
+            setFiles((prev) => prev.map((item) => item.id === file.id
+              ? { ...item, documentIndexStorageStatus: saved ? 'drive' : 'failed' }
+              : item));
+          } catch (err) {
+            console.warn(`Drive document index backup failed for ${file.name}:`, err);
+            setFiles((prev) => prev.map((item) => item.id === file.id
+              ? { ...item, documentIndexStorageStatus: 'failed' }
+              : item));
+          }
+        }
+        if (file.documentStorageStatus === 'saving') continue;
+        if (!file.extractedTextKey || file.documentStorageStatus === 'drive' || file.documentStorageStatus === 'device-and-drive') continue;
+        if (attemptedDocumentDriveSyncRef.current.has(file.id)) continue;
+        attemptedDocumentDriveSyncRef.current.add(file.id);
+        try {
+          const text = await loadDocumentText(uid, file);
+          if (!text) {
+            setFiles((prev) => prev.map((item) => item.id === file.id
+              ? { ...item, documentStorageStatus: 'failed' }
+              : item));
+            continue;
+          }
+          const saved = await mirrorDocumentTextToDrive(uid, file.id, file.name, text);
+          if (saved) {
+            const hasDeviceCopy = typeof indexedDB !== 'undefined';
+            setFiles((prev) => prev.map((item) => item.id === file.id
+              ? { ...item, documentStorageStatus: hasDeviceCopy ? 'device-and-drive' : 'drive' }
+              : item));
+          }
+        } catch (err) {
+          console.warn(`Drive document backup failed for ${file.name}:`, err);
+        }
+      }
+    };
+    void syncPendingText();
+    const retryOnline = () => {
+      for (const file of files) {
+        if (file.originalStorageStatus !== 'drive') attemptedOriginalDriveSyncRef.current.delete(file.id);
+        if (file.documentIndexStorageStatus !== 'drive') attemptedDocumentIndexDriveSyncRef.current.delete(file.id);
+        if (file.documentStorageStatus !== 'drive' && file.documentStorageStatus !== 'device-and-drive') {
+          attemptedDocumentDriveSyncRef.current.delete(file.id);
+        }
+      }
+      void syncPendingText();
+    };
+    window.addEventListener('online', retryOnline);
+    return () => window.removeEventListener('online', retryOnline);
+  }, [files, firebaseUser?.uid, driveSync.connected]);
+
   useEffect(() => {
     StudyStorage.saveNotes(notes);
   }, [notes]);
@@ -1785,7 +2108,19 @@ export default function App() {
 
   useEffect(() => {
     StudyStorage.saveNotificationSettings(notificationSettings);
-  }, [notificationSettings]);
+    if (firebaseUser && !restoreInFlightRef.current && isCollectionDriveAuthoritative('settings', firebaseUser.uid)) {
+      const preferences = {
+        id: 'preferences',
+        themeMode,
+        notificationSettings,
+      };
+      const signature = itemSignature({ themeMode, notificationSettings });
+      if (syncedSigsRef.current.get('settings:preferences') !== signature) {
+        syncedSigsRef.current.set('settings:preferences', signature);
+        persistRoutedCollectionChange(firebaseUser.uid, 'settings', 'app-settings', preferences, 'App preferences');
+      }
+    }
+  }, [notificationSettings, themeMode, firebaseUser]);
 
   const isWithinQuietHours = (settings: NotificationSettings): boolean => {
     if (!settings.quietHoursEnabled) return false;
@@ -2067,7 +2402,19 @@ export default function App() {
   // Persist the chosen theme mode
   useEffect(() => {
     StudyStorage.saveThemeMode(themeMode);
-  }, [themeMode]);
+    if (firebaseUser && !restoreInFlightRef.current && isCollectionDriveAuthoritative('settings', firebaseUser.uid)) {
+      const preferences = {
+        id: 'preferences',
+        themeMode,
+        notificationSettings,
+      };
+      const signature = itemSignature({ themeMode, notificationSettings });
+      if (syncedSigsRef.current.get('settings:preferences') !== signature) {
+        syncedSigsRef.current.set('settings:preferences', signature);
+        persistRoutedCollectionChange(firebaseUser.uid, 'settings', 'app-settings', preferences, 'App preferences');
+      }
+    }
+  }, [themeMode, notificationSettings, firebaseUser]);
 
   // Only tick the clock while in 'default' (auto) mode
   useEffect(() => {
@@ -2229,8 +2576,10 @@ export default function App() {
     }
 
     if (firebaseUser) {
-      deleteCourseFromFirestore(firebaseUser.uid, courseId);
-      offlineSyncService.enqueueDelete(firebaseUser.uid, 'courses', courseId);
+      if (!isCollectionDriveAuthoritative('courses', firebaseUser.uid)) {
+        deleteCourseFromFirestore(firebaseUser.uid, courseId);
+        offlineSyncService.enqueueDelete(firebaseUser.uid, 'courses', courseId);
+      }
     }
 
     showToast(`Deleted course "${course.name}"`);
@@ -2338,11 +2687,15 @@ export default function App() {
       keyTopics: newF.keyTopics || ['Study Notes'],
       courseCode: newF.courseCode,
       dataUrl: newF.dataUrl,
-      fileStorageKey: newF.fileStorageKey,
+      fileStorageKey: newF.fileStorageKey || (newF.originalBlob ? `file-${fileId}` : undefined),
       extractedTextKey: newF.extractedContent?.trim() ? `text-${fileId}` : undefined,
       extractedChars: newF.extractedContent?.length || 0,
       structure,
       userId: firebaseUser?.uid,
+      documentStorageStatus: newF.extractedContent?.trim() ? 'saving' : undefined,
+      originalStorageStatus: (newF.fileStorageKey || newF.originalBlob)
+        ? 'saving'
+        : undefined,
       aiContext: {
         status: 'analyzing',
         summary: 'AI is analyzing and indexing document context…',
@@ -2353,36 +2706,72 @@ export default function App() {
     setFiles((prev) => [f, ...prev]);
     playChime('success');
 
-    // Persist the FULL extracted text so the complete document context
-    // stays available for AI learning sessions (IndexedDB, not localStorage).
+    if (newF.originalBlob && f.fileStorageKey) {
+      const driveActive = Boolean(firebaseUser && isDriveFileStorageEnabled(firebaseUser.uid));
+      if (driveActive) attemptedOriginalDriveSyncRef.current.add(f.id);
+      void (async () => {
+        let savedOnDevice = false;
+        try {
+          await saveFileBlob(newF.originalBlob!, f.fileStorageKey!);
+          savedOnDevice = true;
+        } catch (err) {
+          console.warn('Original file could not be saved to this device:', err);
+        }
+        try {
+          const savedToDrive = driveActive
+            ? await mirrorOriginalFileToDrive(firebaseUser?.uid, f.id, f.name, newF.originalBlob!)
+            : false;
+          setFiles((prev) => prev.map((item) => item.id === f.id
+            ? { ...item, originalStorageStatus: savedToDrive ? 'drive' : savedOnDevice ? 'device' : 'failed' }
+            : item));
+        } catch (err) {
+          console.warn('Original file Drive backup failed:', err);
+          setFiles((prev) => prev.map((item) => item.id === f.id
+            ? { ...item, originalStorageStatus: savedOnDevice ? 'device' : 'failed' }
+            : item));
+        }
+      })();
+    }
+
+    // Save locally and mirror the complete extracted text to Drive for pilot
+    // accounts. Either copy can serve retrieval if the other is unavailable.
     if (f.extractedTextKey && newF.extractedContent) {
-      saveExtractedText(f.extractedTextKey, newF.extractedContent)
-        .then(() => Promise.all(chapterSaves))
-        .then(async () => {
-          // Build the per-page index so "page 42" / "chapter 5 all words"
-          // retrieves exact stored page text instead of a digest.
-          if (newF.pages && newF.pages.length > 0) {
-            const pageIndex = await persistPageIndexLocal(
-              f.id,
-              newF.extractedContent!,
-              newF.pages,
-            );
+      const localSave = (async () => {
+        await saveExtractedText(f.extractedTextKey!, newF.extractedContent!);
+        await Promise.allSettled(chapterSaves);
+        if (newF.pages?.length) {
+          try {
+            const pageIndex = await persistPageIndexLocal(f.id, newF.extractedContent!, newF.pages);
             if (pageIndex) {
-              setFiles((prev) =>
-                prev.map((item) => (item.id === f.id ? { ...item, pageIndex } : item)),
-              );
-              // Durable cross-device copy for pilot accounts (best-effort).
-              void mirrorPageIndexToDrive(
-                firebaseUser?.uid,
-                f.id,
-                f.name,
-                newF.extractedContent!,
-                newF.pages,
-              ).catch((err) => console.warn('Page-index Drive mirror failed:', err));
+              setFiles((prev) => prev.map((item) => item.id === f.id ? { ...item, pageIndex } : item));
             }
+          } catch (err) {
+            console.warn('Page-index cache failed:', err);
           }
-        })
-        .catch((err) => console.warn('Full-text persistence failed:', err));
+        }
+      })();
+      const driveSave = mirrorDocumentTextToDrive(
+        firebaseUser?.uid,
+        f.id,
+        f.name,
+        newF.extractedContent,
+      );
+      void Promise.allSettled([localSave, driveSave]).then(([localResult, driveResult]) => {
+        const savedToDevice = localResult.status === 'fulfilled' && typeof indexedDB !== 'undefined';
+        const savedToDrive = driveResult.status === 'fulfilled' && driveResult.value;
+        if (localResult.status === 'rejected') console.warn('Local extracted-text save failed:', localResult.reason);
+        if (driveResult.status === 'rejected') console.warn('Drive extracted-text mirror failed:', driveResult.reason);
+        const documentStorageStatus: StudyFile['documentStorageStatus'] = savedToDevice && savedToDrive
+          ? 'device-and-drive'
+          : savedToDrive
+            ? 'drive'
+            : savedToDevice
+              ? 'device'
+              : localResult.status === 'fulfilled'
+                ? 'session-only'
+                : 'failed';
+        setFiles((prev) => prev.map((item) => item.id === f.id ? { ...item, documentStorageStatus } : item));
+      });
     }
 
     // Auto-send to AI for deep background analysis and permanent context caching
@@ -2409,6 +2798,21 @@ export default function App() {
               : item
           )
         );
+        if (firebaseUser && driveSync.connected && isDriveFileStorageEnabled(firebaseUser.uid)) {
+          attemptedDocumentIndexDriveSyncRef.current.add(f.id);
+        }
+        void mirrorDocumentIndexToDrive(firebaseUser?.uid, f.id, f.name, structure, aiCtx)
+          .then((saved) => {
+            setFiles((prev) => prev.map((item) => item.id === f.id
+              ? { ...item, documentIndexStorageStatus: saved ? 'drive' : 'firebase' }
+              : item));
+          })
+          .catch((err) => {
+            console.warn('Drive document index mirror failed:', err);
+            setFiles((prev) => prev.map((item) => item.id === f.id
+              ? { ...item, documentIndexStorageStatus: 'failed' }
+              : item));
+          });
       })
       .catch((err) => {
         console.warn('Auto AI indexing failed for file:', err);
@@ -2479,6 +2883,7 @@ export default function App() {
                 keyConcepts: [],
                 denseContext: '',
               },
+              documentIndexStorageStatus: 'saving',
             }
           : f
       )
@@ -2489,7 +2894,7 @@ export default function App() {
     let fullText = '';
     if (target.extractedTextKey) {
       try {
-        fullText = (await loadExtractedText(target.extractedTextKey)) || '';
+        fullText = (await loadDocumentText(firebaseUser?.uid, target)) || '';
       } catch (err) {
         console.warn('Re-index full-text load failed:', err);
       }
@@ -2518,6 +2923,18 @@ export default function App() {
               : item
           )
         );
+        void mirrorDocumentIndexToDrive(firebaseUser?.uid, target.id, target.name, target.structure, aiCtx)
+          .then((saved) => {
+            setFiles((prev) => prev.map((item) => item.id === target.id
+              ? { ...item, documentIndexStorageStatus: saved ? 'drive' : 'firebase' }
+              : item));
+          })
+          .catch((err) => {
+            console.warn('Drive document index mirror failed:', err);
+            setFiles((prev) => prev.map((item) => item.id === target.id
+              ? { ...item, documentIndexStorageStatus: 'failed' }
+              : item));
+          });
       })
       .catch((err) => {
         console.warn('File re-indexing failed:', err);
@@ -2589,8 +3006,7 @@ export default function App() {
       for (const key of textKeys) {
         await deleteExtractedText(key);
       }
-      // Drive page-index mirror cleanup is best-effort and pilot-only;
-      // local deletion above is authoritative for retrieval.
+      await deleteDocumentTextFromDrive(firebaseUser?.uid, target.id);
     } catch (err) {
       console.warn('File deletion cleanup failed:', err);
     }
@@ -3281,7 +3697,9 @@ export default function App() {
         <CourseTutorScreen
           course={selectedCourse}
           resources={resources}
+          files={files}
           tasks={tasks}
+          user={user}
           quizzes={quizzes}
           flashcards={flashcards}
           config={aiConfig}
@@ -3525,6 +3943,7 @@ export default function App() {
           isDriveConnecting={isDriveConnecting}
           isDrivePilot={drivePilotEnabled}
           isDriveInitializing={isDriveInitializing}
+          driveMigrationProgress={driveMigrationProgress}
           isDriveRefreshing={isDriveRefreshing}
           onDriveTasksRefresh={handleDriveTasksRefresh}
           isDriveVerifying={isDriveVerifying}
@@ -3812,8 +4231,8 @@ export default function App() {
   useEffect(() => registerBackHandler(() => nativeBackRef.current()), []);
 
   return (
-    <div className="w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
-      <div className="w-full flex-1 flex flex-col justify-between h-full min-h-0 relative bg-slate-50 dark:bg-slate-950 overflow-hidden">
+    <div className="ss-app-frame w-full h-full h-[100dvh] max-h-[100dvh] flex flex-col pt-safe bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors overflow-hidden">
+      <div className="w-full flex-1 flex flex-col justify-between h-full min-h-0 relative bg-transparent overflow-hidden">
         {/* Onboarding Overlay Flow if active */}
         {showOnboarding ? (
           <ErrorBoundary fallbackTitle="Welcome Screen">
@@ -3937,7 +4356,7 @@ export default function App() {
             {/* Fixed Mobile Bottom Nav Bar — hidden while the soft keyboard is
                 open so only the chat input box shows above it. */}
             {!isTaskComposerOpen && !isKeyboardOpen && (
-              <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden pb-safe bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80">
+              <div className="ss-mobile-dock-shell fixed bottom-0 left-0 right-0 z-40 lg:hidden px-3 pt-2 pb-safe">
                 <MobileBottomNav
                   currentTab={currentTab}
                   onTabChange={handleTabChange}

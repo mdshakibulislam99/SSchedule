@@ -5,6 +5,8 @@ import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CourseResource, ResourceAnnotation } from '../../types';
 import { detectViewer } from '../../utils/viewer';
 import { loadFileBlob } from '../../utils/fileStorage';
+import { StudyStorage } from '../../utils/storage';
+import { loadOriginalFileFromDrive } from '../../services/documentIndexStore';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -702,6 +704,10 @@ export const FileViewer: React.FC<FileViewerProps> = ({
   const [zoom, setZoom] = useState(1);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [storedBlobUrl, setStoredBlobUrl] = useState<string | null>(null);
+  const [originalLoadStatus, setOriginalLoadStatus] = useState<'loading' | 'missing'>(
+    resource.fileData || resource.fileStorageKey ? 'loading' : 'missing',
+  );
+  const [originalLoadAttempt, setOriginalLoadAttempt] = useState(0);
 
   const isImage = viewer === 'image';
   const hasData = Boolean(resource.fileData || resource.fileStorageKey);
@@ -714,6 +720,7 @@ export const FileViewer: React.FC<FileViewerProps> = ({
     if (!resource.fileData || isImage) return;
     const url = dataUrlToBlobUrl(resource.fileData);
     setBlobUrl(url);
+    setOriginalLoadStatus(url ? 'loading' : 'missing');
     return () => {
       if (url) URL.revokeObjectURL(url);
     };
@@ -721,20 +728,47 @@ export const FileViewer: React.FC<FileViewerProps> = ({
 
   useEffect(() => {
     let active = true;
-    if (!resource.fileStorageKey) return undefined;
-    loadFileBlob(resource.fileStorageKey)
+    if (!resource.fileStorageKey) {
+      if (!resource.fileData) setOriginalLoadStatus('missing');
+      return undefined;
+    }
+    setOriginalLoadStatus('loading');
+    const loadOriginal = async () => {
+      const local = await loadFileBlob(resource.fileStorageKey!);
+      if (local) return local;
+      if (!resource.studyFileId) return null;
+      return loadOriginalFileFromDrive(
+        StudyStorage.getUser()?.firebaseUid,
+        resource.studyFileId,
+        resource.fileStorageKey!,
+      );
+    };
+    let timeoutId: number | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timeoutId = window.setTimeout(() => resolve(null), 12000);
+    });
+    Promise.race([loadOriginal(), timeout])
       .then((blob) => {
-        if (active && blob) setStoredBlobUrl(URL.createObjectURL(blob));
+        if (!active) return;
+        if (blob) {
+          setStoredBlobUrl(URL.createObjectURL(blob));
+          setOriginalLoadStatus('loading');
+        } else {
+          setOriginalLoadStatus('missing');
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) setOriginalLoadStatus('missing');
+      });
     return () => {
       active = false;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       setStoredBlobUrl((url) => {
         if (url) URL.revokeObjectURL(url);
         return null;
       });
     };
-  }, [resource.fileStorageKey]);
+  }, [resource.fileStorageKey, resource.studyFileId, originalLoadAttempt]);
 
   if (!hasData) return null;
 
@@ -759,8 +793,24 @@ export const FileViewer: React.FC<FileViewerProps> = ({
       )}
 
       {viewer === 'pdf' && !resolvedFileUrl && (
-        <div className="w-full h-full min-h-[320px] flex items-center justify-center text-sm text-white/70">
-          Loading original PDF…
+        <div className="w-full h-full min-h-[320px] flex items-center justify-center p-5 text-center" aria-live="polite">
+          {originalLoadStatus === 'loading' ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">Loading original PDF…</p>
+          ) : (
+            <div className="max-w-sm rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-sm">
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Could not open the original PDF</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Reconnect Google Drive in Settings and retry. If it still fails, re-upload the original file.
+              </p>
+              <button
+                type="button"
+                onClick={() => setOriginalLoadAttempt((attempt) => attempt + 1)}
+                className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Retry loading
+              </button>
+            </div>
+          )}
         </div>
       )}
 

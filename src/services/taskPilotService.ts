@@ -196,7 +196,9 @@ function readQueue<T>(key: string): T[] {
 function writeQueue<T>(key: string, items: T[]): void {
   try {
     localStorage.setItem(key, JSON.stringify(items));
-  } catch {}
+  } catch (error) {
+    throw new Error('Could not save the pending Google Drive change on this device. Keep this app open and reconnect before closing it.', { cause: error });
+  }
 }
 
 export function getPendingTaskChanges(uid: string): PendingTaskChange[] {
@@ -665,8 +667,14 @@ export async function retryPendingTaskChanges(
         change.baseRevision !== undefined &&
         existing.record.revision > change.baseRevision
       ) {
-        // A newer revision already landed (ours or another
-        // device's) — never roll it back.
+        await backend.preserveConflict({
+          taskId: change.taskId,
+          baseRevision: change.baseRevision,
+          driveRevision: existing.record.revision,
+          localVersion: change.task,
+          detectedAt: new Date().toISOString(),
+          deviceId: getDeviceId(),
+        });
         continue;
       }
       // Idempotent duplicate-create: the queued create re-applies
@@ -677,6 +685,17 @@ export async function retryPendingTaskChanges(
         !existing.record.deletedAt &&
         JSON.stringify(existing.record.payload) === JSON.stringify(change.task)
       ) {
+        continue;
+      }
+      if (change.op === 'create' && existing && !existing.record.deletedAt) {
+        await backend.preserveConflict({
+          taskId: change.taskId,
+          baseRevision: existing.record.revision,
+          driveRevision: existing.record.revision,
+          localVersion: change.task,
+          detectedAt: new Date().toISOString(),
+          deviceId: getDeviceId(),
+        });
         continue;
       }
       const envelope = createRecordEnvelope(change.task, {

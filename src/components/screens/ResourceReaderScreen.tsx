@@ -69,7 +69,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
   const [focus, setFocus] = useState(false);
   const [readerTab, setReaderTab] = useState<'view' | 'summarize' | 'notes'>(hasFile ? 'view' : 'summarize');
   const [currentPage, setCurrentPage] = useState(resource.reading.lastPage || 1);
-  const [pageCount, setPageCount] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [annotationTool, setAnnotationTool] = useState<'pen' | 'highlight' | 'eraser'>('pen');
   const [draftAnnotations, setDraftAnnotations] = useState(annotations);
@@ -338,9 +338,12 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
                   <input
                     type="number"
                     min={1}
-                    max={pageCount}
+                    max={pageCount || undefined}
+                    placeholder="—"
+                    disabled={pageCount <= 0}
                     value={currentPage}
                     onChange={(event) => {
+                      if (pageCount <= 0) return;
                       const p = Math.max(1, Math.min(pageCount, Number(event.target.value) || 1));
                       setCurrentPage(p);
                       onUpdateReading(resource.id, { lastPage: p, lastReadAt: new Date().toISOString() });
@@ -348,7 +351,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
                     className="w-10 bg-transparent text-center text-xs font-bold outline-none"
                     aria-label="Current page number"
                   />
-                  <span className="text-slate-400 text-xs">/ {pageCount}</span>
+                  <span className="text-slate-400 text-xs">/ {pageCount || '—'}</span>
                 </div>
                 <button
                   type="button"
@@ -357,7 +360,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
                     setCurrentPage(next);
                     onUpdateReading(resource.id, { lastPage: next, lastReadAt: new Date().toISOString() });
                   }}
-                  disabled={currentPage >= pageCount}
+                  disabled={pageCount <= 0 || currentPage >= pageCount}
                   className="p-1 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
                   aria-label="Next Page"
                   title="Next Page"
@@ -439,6 +442,7 @@ export const ResourceReaderScreen: React.FC<ResourceReaderScreenProps> = ({
             onAnnotationsChange={setDraftAnnotations}
             pageNumber={currentPage}
             onPageChange={(page, count) => {
+              if (count <= 0) return;
               setCurrentPage(page);
               setPageCount(count);
               const pct = Math.round((page / count) * 100);

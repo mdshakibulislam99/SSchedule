@@ -26,7 +26,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   return (
     <nav
       aria-label="Main Navigation"
-      className="w-full bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 px-2 py-1.5 pb-safe z-40 transition-colors"
+      className="ss-mobile-dock w-full px-2 py-1.5 z-40 transition-colors"
     >
       <div className="flex items-center justify-around w-full max-w-xl mx-auto pb-1.5">
         {tabs.map((tab) => {
@@ -39,29 +39,29 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`group relative flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] max-w-[68px] py-1.5 px-[5px] rounded transition-all cursor-pointer active:scale-95 ${
+                className={`group relative flex flex-1 min-w-0 flex-col items-center justify-center min-h-[44px] max-w-[68px] py-1.5 px-[5px] rounded-2xl transition-all cursor-pointer active:scale-95 ${
                   isActive
-                    ? 'bg-indigo-100 dark:bg-indigo-950/60'
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25 -translate-y-1'
                     : 'bg-indigo-50 dark:bg-indigo-950/40'
                 }`}
                 title="AI Study Assistant"
               >
                 <Icon
                   className={`w-5 h-5 transition-colors ${
-                    isActive ? 'stroke-[2.4] text-indigo-600 dark:text-indigo-400' : 'stroke-[1.8] text-slate-400 dark:text-slate-500'
+                    isActive ? 'stroke-[2.4] text-white' : 'stroke-[1.8] text-indigo-500 dark:text-indigo-300'
                   }`}
                 />
                 <span
                   className={`text-[10px] font-bold mt-1 tracking-tight ${
                     isActive
-                      ? 'text-indigo-600 dark:text-indigo-400'
+                      ? 'text-white'
                       : 'text-slate-500 dark:text-slate-400'
                   }`}
                 >
                   {tab.label}
                 </span>
                 {isActive && (
-                  <span className="w-1.5 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400 mt-0.5" />
+                  <span className="w-1.5 h-0.5 rounded-full bg-white mt-0.5" />
                 )}
               </button>
             );
