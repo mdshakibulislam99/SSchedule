@@ -22,7 +22,7 @@ import {
   CalendarOutboxItem,
 } from '../types';
 import { getLocalDateKey } from './dates';
-import { fetchAIConfigFromFirestore, syncAIConfigToFirestore } from '../lib/firebase';import { fetchAIConfigFromFirestore, syncAIConfigToFirestore } from '../lib/firebase';
+import { fetchAIConfigFromFirestore, syncAIConfigToFirestore } from '../lib/firebase';;
 
 const INITIAL_SCHEDULE_DATE = getLocalDateKey();
 
@@ -306,11 +306,14 @@ export const StudyStorage = {
     localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(goals));
   },
 
-  getFiles(): StudyFile[] {
+  getFiles(userId?: string): StudyFile[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.FILES);
       const list: StudyFile[] = data ? JSON.parse(data) : [];
-      return list.map(ensureFileAIContext);
+      const filtered = userId
+        ? list.filter((f: StudyFile) => f.userId === userId)
+        : list;
+      return filtered.map(ensureFileAIContext);
     } catch {
       return [];
     }

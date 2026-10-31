@@ -402,6 +402,8 @@ export interface StudyFile {
   dataUrl?: string;
   /** IndexedDB key for larger files that cannot fit in localStorage. */
   fileStorageKey?: string;
+  /** Firebase UID of the document owner. */
+  userId?: string;
   /**
    * IndexedDB key for the FULL extracted text of this file, so the entire
    * document context is preserved and can be reloaded for AI learning.

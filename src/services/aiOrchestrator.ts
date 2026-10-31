@@ -1568,10 +1568,9 @@ Return valid JSON only in this format:
       return this.buildFallbackIndex(material, courseLabel);
     }
 
-    // Analyze the ENTIRE document: split into sentence-aligned chunks and
-    // reason over each one (sampling evenly across very long documents so
-    // the beginning, middle and end are all covered).
-    const chunks = sampleArray(splitIntoChunks(fullContent), 12);
+    // Analyze the ENTIRE document: split into manageable chunks.
+    // Process all chunks to preserve complete document context.
+    const chunks = splitIntoChunks(fullContent);
 
     const analyzeChunk = async (chunk: string, index: number, total: number): Promise<ChunkAnalysis | null> => {
       const isSection = total > 1;

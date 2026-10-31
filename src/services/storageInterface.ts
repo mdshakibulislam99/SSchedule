@@ -136,7 +136,10 @@ export class FirestoreLegacyAdapter implements StorageAdapter {
       case 'goals': return StudyStorage.getGoals() as unknown as T[];
       case 'courses': return StudyStorage.getCourses() as unknown as T[];
       case 'resources': return StudyStorage.getResources() as unknown as T[];
-      case 'files': return StudyStorage.getFiles() as unknown as T[];
+      case 'files': {
+    const uid = this.currentUid();
+    return uid ? StudyStorage.getFiles(uid) as unknown as T[] : [];
+  }
       case 'notes': return StudyStorage.getNotes() as unknown as T[];
       case 'research': return StudyStorage.getResearch() as unknown as T[];
       case 'aiMemory': case 'ai-memory': return StudyStorage.getAIMemory() as unknown as T[];

@@ -164,7 +164,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => StudyStorage.getTasks());
   const [schedule, setSchedule] = useState<ScheduleEvent[]>(() => StudyStorage.getSchedule());
   const [goals, setGoals] = useState<Goal[]>(() => StudyStorage.getGoals());
-  const [files, setFiles] = useState<StudyFile[]>(() => StudyStorage.getFiles());
+  const [files, setFiles] = useState<StudyFile[]>(() => StudyStorage.getFiles(firebaseUser?.uid));
   const [notes, setNotes] = useState<StudyNote[]>(() => StudyStorage.getNotes());
   const [research, setResearch] = useState<ResearchItem[]>(() => StudyStorage.getResearch());
   const [aiConfig, setAIConfig] = useState<AIProviderConfig>(() => StudyStorage.getAIConfig());
@@ -2342,6 +2342,7 @@ export default function App() {
       extractedTextKey: newF.extractedContent?.trim() ? `text-${fileId}` : undefined,
       extractedChars: newF.extractedContent?.length || 0,
       structure,
+      userId: firebaseUser?.uid,
       aiContext: {
         status: 'analyzing',
         summary: 'AI is analyzing and indexing document context…',
